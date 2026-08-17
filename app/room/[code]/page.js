@@ -836,15 +836,19 @@ export default function Room() {
       const audioUrl = URL.createObjectURL(aacBlob);
       if (extAudioRef.current) {
         extAudioRef.current.src = audioUrl;
+        extAudioRef.current.muted = false;
+        extAudioRef.current.volume = volume;
         if (videoRef.current) {
           extAudioRef.current.currentTime = videoRef.current.currentTime;
           extAudioRef.current.playbackRate = videoRef.current.playbackRate;
+          if (!videoRef.current.paused) {
+            extAudioRef.current.play().catch((e) => console.warn('Audio auto-play:', e));
+          }
         }
-        extAudioRef.current.volume = volume;
-        if (playing) extAudioRef.current.play().catch(() => {});
       }
       setExtAudioName('Auto-transcoded (AAC Stereo)');
       setTranscodingAudio(false);
+      toast('✓ EAC-3 audio converted & active in sync!');
     } catch (err) {
       console.error('[ReelSync Transcoder Error]:', err);
       const errMsg = err?.message || String(err) || 'Unknown error';
