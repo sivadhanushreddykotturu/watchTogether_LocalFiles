@@ -200,23 +200,37 @@ input[type="text"]::placeholder { color: #525b70; }
   padding: 6px 12px;
   color: var(--ink);
   transition: border-color 0.15s ease;
+  flex-shrink: 0;
 }
 .code-slate:hover { border-color: var(--accent); }
 .slate-label { font-size: 10px; font-weight: 600; letter-spacing: 0.2em; color: var(--dim); }
 .slate-code { font-family: var(--font-mono); font-size: 17px; font-weight: 600; letter-spacing: 0.3em; color: var(--accent); }
 
-.sync-status { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; }
+.sync-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+  font-size: 13px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 .sync-status .dot {
-  width: 8px; height: 8px; border-radius: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
   background: #4ecdc4;
   box-shadow: 0 0 8px #4ecdc4;
   animation: pulse 2.4s ease-in-out infinite;
+  flex-shrink: 0;
 }
 .sync-status.behind .dot { background: var(--live); box-shadow: 0 0 8px var(--live); }
 
 @keyframes pulse { 50% { opacity: 0.45; } }
 
-.spacer { flex: 1; }
+.spacer { flex: 1; min-width: 0; }
+
+.desktop-only { display: flex; }
 
 /* phone-only "now playing" strip — one glance tells the call what's happening */
 .nowstrip {
@@ -902,14 +916,32 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   .volume { display: none; }
 }
 
-/* phone / small screens: stacked layout (Aniwave style: video on top, chat below, no tab switching) */
+/* phone / small screens: clean Aniwave-style stacked layout */
 @media (max-width: 768px) {
+  .desktop-only { display: none !important; }
+
   .room {
     display: flex;
     flex-direction: column;
     height: 100vh;
     overflow: hidden;
   }
+  .room-bar {
+    padding: 10px 14px;
+    gap: 10px;
+  }
+  .room-bar .brand {
+    font-size: 20px;
+  }
+  .sync-status {
+    font-size: 11px;
+    gap: 6px;
+  }
+  .sync-status .dot {
+    width: 6px;
+    height: 6px;
+  }
+
   .stage {
     display: flex;
     flex-direction: column;
@@ -919,7 +951,23 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
     overflow: hidden;
   }
   .beam { display: none; }
-  .mobile-actions-bar { display: flex; }
+
+  .mobile-actions-bar {
+    display: flex;
+    padding: 8px 12px;
+    background: var(--panel);
+    border-top: none;
+    border-bottom: 1px solid var(--line);
+    gap: 8px;
+    align-items: center;
+  }
+  .mobile-actions-bar .code-slate {
+    padding: 4px 8px;
+    gap: 6px;
+  }
+  .mobile-actions-bar .slate-label { font-size: 9px; }
+  .mobile-actions-bar .slate-code { font-size: 13px; letter-spacing: 0.15em; }
+
   .screen-col {
     flex: none;
     width: 100%;
@@ -929,9 +977,9 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
     border-radius: 0;
     border-left: none;
     border-right: none;
-    min-height: 220px;
-    height: 32vh;
-    max-height: 38vh;
+    min-height: 200px;
+    height: 30vh;
+    max-height: 36vh;
   }
   .screen video {
     max-height: none;
@@ -941,28 +989,61 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
     border-radius: 0;
     border-left: none;
     border-right: none;
-    padding: 8px 12px;
+    padding: 6px 10px;
     gap: 8px;
   }
   .t-btn { width: 34px; height: 34px; }
+  
+  .picker {
+    padding: 12px 16px;
+    max-width: 92%;
+  }
+  .picker-title {
+    font-size: 26px;
+    margin-bottom: 4px;
+  }
+  .pick-orb {
+    width: 52px;
+    height: 52px;
+    margin-bottom: 8px;
+    box-shadow: 0 0 0 4px var(--accent-soft), 0 4px 18px rgba(139, 92, 246, 0.4);
+  }
+  .pick-orb svg {
+    width: 22px;
+    height: 22px;
+    margin-left: 3px;
+  }
+  .picker-text {
+    font-size: 12px;
+    line-height: 1.35;
+    margin-bottom: 6px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .picker-format { display: none; }
+  
   .side {
     flex: 1;
     border-radius: 0;
     border: none;
     min-height: 0;
   }
+  .side-top-bar {
+    padding: 8px 12px;
+  }
+  .viewers {
+    padding: 8px 12px;
+    max-height: 60px;
+  }
   .chat {
     flex: 1;
-    padding: 10px 12px;
+    padding: 8px 12px;
   }
   .chat-form {
     padding: 8px 12px;
   }
-  .picker { padding: 20px 16px; }
-  .picker-title { font-size: 32px; }
-  .pick-orb { width: 64px; height: 64px; margin-bottom: 12px; }
-  .picker-text { font-size: 13px; margin-bottom: 12px; }
-  .picker-format { display: none; }
   
   .msg .m-text {
     display: inline-block;

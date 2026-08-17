@@ -710,7 +710,7 @@ export default function Room() {
     <main className={'room' + (dimmed ? ' theater-dim' : '')} data-tab={tab}>
       <header className="room-bar">
         <span className="brand">REEL<span className="brand-accent">SYNC</span></span>
-        <button className="code-slate" onClick={copyCode} title="Copy room code">
+        <button className="code-slate desktop-only" onClick={copyCode} title="Copy room code">
           <span className="slate-label">ROOM</span>
           <span className="slate-code">{code}</span>
         </button>
@@ -718,13 +718,6 @@ export default function Room() {
           <span className="dot"></span><span>{syncOk ? 'in sync' : 'catching up…'}</span>
         </span>
         <span className="spacer"></span>
-        <button
-          className={'btn ghost' + (dimmed ? ' active' : '')}
-          onClick={() => setDimmed(!dimmed)}
-          title="Theater mode (L)"
-        >
-          {dimmed ? '💡 Lights on' : '💡 Dim'}
-        </button>
         <button className="btn ghost" onClick={leave}>Leave</button>
       </header>
 
@@ -794,11 +787,13 @@ export default function Room() {
 
             <div className={'picker' + (pickerOpen ? '' : ' hidden')}>
               <label className="pick-orb" htmlFor="fileInput" title="Choose video file">
-                <svg viewBox="0 0 24 24" width="34" height="34"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
+                <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor" style={{ transform: 'translateX(2px)' }}>
+                  <path d="M8 5.14v13.72c0 .86.94 1.38 1.66.92l10.78-6.86c.69-.44.69-1.4 0-1.84L9.66 4.22A1.08 1.08 0 0 0 8 5.14z"/>
+                </svg>
               </label>
               <h2 className="picker-title">Reel it in</h2>
-              <p className="picker-text">Pick your copy of the file this room is watching. It never leaves your machine — only play, pause and seek are shared.</p>
-              <p className="picker-format">MP4 (H.264), WebM, and MKV with embedded or external subtitles & audio tracks.</p>
+              <p className="picker-text">Pick your copy of the file this room is watching. It stays on your machine — only playback is synced.</p>
+              <p className="picker-format">MP4 (H.264), WebM, and MKV with embedded subtitles & audio tracks.</p>
               <input type="file" id="fileInput" ref={fileInputRef} accept="video/*,.mkv,.mp4,.webm" hidden onChange={onPickFile} />
               <p className="picker-hint">{pickerHint}</p>
             </div>
@@ -909,8 +904,16 @@ export default function Room() {
 
             <div className="transport">
               <button className="t-btn" onClick={togglePlay} disabled={playDisabled} title="Play / pause (space)">
-                <svg viewBox="0 0 24 24" width="20" height="20" className={playing ? 'hidden' : ''}><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
-                <svg viewBox="0 0 24 24" width="20" height="20" className={playing ? '' : 'hidden'}><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>
+                {playing ? (
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                    <rect x="6" y="4.5" width="3.5" height="15" rx="1.5"/>
+                    <rect x="14.5" y="4.5" width="3.5" height="15" rx="1.5"/>
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style={{ transform: 'translateX(1.5px)' }}>
+                    <path d="M8 5.14v13.72c0 .86.94 1.38 1.66.92l10.78-6.86c.69-.44.69-1.4 0-1.84L9.66 4.22A1.08 1.08 0 0 0 8 5.14z"/>
+                  </svg>
+                )}
               </button>
 
               <div
