@@ -450,6 +450,39 @@ input[type="text"]::placeholder { color: #525b70; }
   text-transform: uppercase;
   color: var(--ink);
 }
+
+.transcode-indicator {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  background: rgba(18, 22, 34, 0.92);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--accent);
+  color: var(--ink);
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 40;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+  animation: panel-pop 0.2s ease-out;
+}
+
+.transcode-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 .sub-close-btn {
   display: flex;
   align-items: center;

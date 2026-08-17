@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
+import { transcodeAudioToMp3 } from '../../../lib/audioTranscoder';
 
 // ---------- helpers ----------
 function fmt(t) {
@@ -62,10 +63,13 @@ export default function Room() {
   const [subPanelOpen, setSubPanelOpen] = useState(false);
   const [subStyle, setSubStyle] = useState(SUB_STYLE_DEFAULT);
   const [extAudioName, setExtAudioName] = useState('');
+  const [transcodingAudio, setTranscodingAudio] = useState(false);
+  const [transcodeProgress, setTranscodeProgress] = useState(0);
 
   // ---------- element refs ----------
   const videoRef = useRef(null);
   const extAudioRef = useRef(null);
+  const loadedFileRef = useRef(null);
   const screenRef = useRef(null);
   const chatOpenRef = useRef(true);
   const danmakuEnabledRef = useRef(true);
@@ -814,10 +818,39 @@ export default function Room() {
     toast(`Loaded external audio: “${file.name}”`);
   };
 
+  const runAudioTranscode = async (file) => {
+    const targetFile = file || loadedFileRef.current;
+    if (!targetFile || transcodingAudio) return;
+    setTranscodingAudio(true);
+    setTranscodeProgress(0);
+    toast('⚡ Converting EAC-3 audio for browser...');
+    try {
+      const mp3Blob = await transcodeAudioToMp3(targetFile, (p) => setTranscodeProgress(p));
+      const audioUrl = URL.createObjectURL(mp3Blob);
+      if (extAudioRef.current) {
+        extAudioRef.current.src = audioUrl;
+        if (videoRef.current) {
+          extAudioRef.current.currentTime = videoRef.current.currentTime;
+          extAudioRef.current.playbackRate = videoRef.current.playbackRate;
+        }
+        extAudioRef.current.volume = volume;
+        if (playing) extAudioRef.current.play().catch(() => {});
+      }
+      setExtAudioName('Auto-transcoded (Stereo MP3)');
+      setTranscodingAudio(false);
+      toast('✓ EAC-3 audio converted & active!');
+    } catch (err) {
+      console.warn('Audio transcoding error:', err);
+      setTranscodingAudio(false);
+      toast('⚠️ In-browser audio conversion error. You can add an MP3 audio file in CC menu.');
+    }
+  };
+
   // ---------- UI handlers ----------
   const onPickFile = async (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
+    loadedFileRef.current = file;
     const v = videoRef.current;
     if (v) {
       v.src = URL.createObjectURL(file);
@@ -856,6 +889,17 @@ export default function Room() {
         audioTracksRef.current = media.audio;
         setAudioTracks(media.audio);
         selectAudioTrack(media.audio[0].id, false);
+
+        // Auto-check if the audio track is EAC-3, AC-3, or DTS (which browsers cannot decode)
+        const firstAudio = media.audio[0];
+        const isUnsupported = firstAudio && (
+          firstAudio.codec.includes('AC3') ||
+          firstAudio.codec.includes('EAC3') ||
+          firstAudio.codec.includes('DTS')
+        );
+        if (isUnsupported) {
+          runAudioTranscode(file);
+        }
       } else {
         const defAudio = [{ id: 'default', index: 0, label: 'Default Audio Track' }];
         audioTracksRef.current = defAudio;
@@ -1046,6 +1090,13 @@ export default function Room() {
               </div>
             )}
 
+            {transcodingAudio && (
+              <div className="transcode-indicator" aria-live="polite">
+                <span className="transcode-spinner"></span>
+                <span>Converting EAC-3 audio in background... {transcodeProgress > 0 ? `${transcodeProgress}%` : ''}</span>
+              </div>
+            )}
+
             <div className={'picker' + (pickerOpen ? '' : ' hidden')}>
               <label className="pick-orb" htmlFor="fileInput" title="Choose video file">
                 <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor" style={{ transform: 'translateX(2px)' }}>
@@ -1093,6 +1144,22 @@ export default function Room() {
                         </option>
                       ))}
                     </select>
+                  </div>
+
+                  <div className="sub-row">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                      <span className="sub-label">Auto EAC-3 Transcoder</span>
+                      {transcodingAudio && <span className="sub-badge">Converting {transcodeProgress}%</span>}
+                    </div>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      style={{ width: '100%', justifyContent: 'center' }}
+                      disabled={transcodingAudio || !fileLoadedRef.current}
+                      onClick={() => runAudioTranscode()}
+                    >
+                      {transcodingAudio ? `Converting (${transcodeProgress}%)...` : '⚡ Auto-Convert EAC-3 Audio to MP3'}
+                    </button>
                   </div>
 
                   <div className="sub-row">
