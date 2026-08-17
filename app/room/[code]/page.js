@@ -61,9 +61,11 @@ export default function Room() {
   const [subOffset, setSubOffset] = useState(0);
   const [subPanelOpen, setSubPanelOpen] = useState(false);
   const [subStyle, setSubStyle] = useState(SUB_STYLE_DEFAULT);
+  const [extAudioName, setExtAudioName] = useState('');
 
   // ---------- element refs ----------
   const videoRef = useRef(null);
+  const extAudioRef = useRef(null);
   const screenRef = useRef(null);
   const chatOpenRef = useRef(true);
   const danmakuEnabledRef = useRef(true);
@@ -77,6 +79,7 @@ export default function Room() {
   const chatScrollRef = useRef(null);
   const chatInputRef = useRef(null);
   const fileInputRef = useRef(null);
+  const audioInputRef = useRef(null);
 
   // ---------- logic refs (mutable, survive renders; no stale closures) ----------
   const sessionRef = useRef(null);   // { code, name }
@@ -211,6 +214,10 @@ export default function Room() {
       videoRef.current.volume = val;
       videoRef.current.muted = false;
     }
+    if (extAudioRef.current) {
+      extAudioRef.current.volume = val;
+      extAudioRef.current.muted = false;
+    }
   };
 
   // ---------- synced playback speed ----------
@@ -218,6 +225,7 @@ export default function Room() {
     const spd = Number(s) || 1;
     setSpeed(spd);
     if (videoRef.current) videoRef.current.playbackRate = spd;
+    if (extAudioRef.current) extAudioRef.current.playbackRate = spd;
     const socket = getSocket();
     if (socket.connected) socket.emit('playback-speed', spd);
     if (announce) toast(`Playback speed: ${spd}x`);
@@ -351,6 +359,16 @@ export default function Room() {
       guard.seek++;
       video.currentTime = state.time;
     }
+    if (extAudioRef.current && extAudioRef.current.src) {
+      if (Math.abs(extAudioRef.current.currentTime - state.time) > 0.5) {
+        extAudioRef.current.currentTime = state.time;
+      }
+      if (state.playing) {
+        if (extAudioRef.current.paused) extAudioRef.current.play().catch(() => {});
+      } else if (!extAudioRef.current.paused) {
+        extAudioRef.current.pause();
+      }
+    }
     if (state.playing) {
       if (video.paused) {
         guard.play++;
@@ -416,6 +434,9 @@ export default function Room() {
       if (playing && !video.paused && Math.abs(drift) > 1.5) {
         guardRef.current.seek++;
         video.currentTime = expected;
+        if (extAudioRef.current && extAudioRef.current.src) {
+          extAudioRef.current.currentTime = expected;
+        }
         setSyncStatus(false);
         setTimeout(() => setSyncStatus(true), 1200);
       } else if (playing && video.paused && Date.now() - lastLocalPauseRef.current > 5000) {
@@ -460,6 +481,9 @@ export default function Room() {
       setPlaying(true);
       setSyncStatus(true);
       ensureWakeLock();
+      if (extAudioRef.current && extAudioRef.current.src && extAudioRef.current.paused) {
+        extAudioRef.current.play().catch(() => {});
+      }
       if (guardRef.current.play > 0) { guardRef.current.play--; return; }
       if (userIntentRef.current) {
         userIntentRef.current = false;
@@ -469,6 +493,9 @@ export default function Room() {
     const onPause = () => {
       setPlaying(false);
       releaseWakeLock();
+      if (extAudioRef.current && extAudioRef.current.src && !extAudioRef.current.paused) {
+        extAudioRef.current.pause();
+      }
       if (guardRef.current.pause > 0) { guardRef.current.pause--; return; }
       if (userIntentRef.current) {
         userIntentRef.current = false;
@@ -479,6 +506,9 @@ export default function Room() {
     const onSeeked = () => {
       updateTimeline();
       updateSubtitles();
+      if (extAudioRef.current && extAudioRef.current.src && videoRef.current) {
+        extAudioRef.current.currentTime = videoRef.current.currentTime;
+      }
       if (guardRef.current.seek > 0) { guardRef.current.seek--; return; }
       emitPlayback('seek');
     };
@@ -766,6 +796,24 @@ export default function Room() {
     reader.readAsText(file);
   };
 
+  const onPickExternalAudio = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    if (extAudioRef.current) {
+      extAudioRef.current.src = url;
+      if (videoRef.current) {
+        extAudioRef.current.currentTime = videoRef.current.currentTime;
+        extAudioRef.current.playbackRate = videoRef.current.playbackRate;
+      }
+      extAudioRef.current.volume = volume;
+      if (playing) extAudioRef.current.play().catch(() => {});
+    }
+    setExtAudioName(file.name);
+    toast(`Loaded external audio: “${file.name}”`);
+  };
+
   // ---------- UI handlers ----------
   const onPickFile = async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -951,6 +999,7 @@ export default function Room() {
 
           <div className="screen" ref={screenRef}>
             <video ref={videoRef} playsInline></video>
+            <audio ref={extAudioRef} playsInline style={{ display: 'none' }}></audio>
 
             {danmakuEnabled && danmakuList.length > 0 && (
               <div className="danmaku-layer" aria-hidden="true">
@@ -1044,6 +1093,17 @@ export default function Room() {
                         </option>
                       ))}
                     </select>
+                  </div>
+
+                  <div className="sub-row">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                      <span className="sub-label">External Audio (MP3 / AAC / M4A)</span>
+                      {extAudioName && <span className="sub-badge">Loaded</span>}
+                    </div>
+                    <label className="btn ghost sm" htmlFor="audioInput" style={{ cursor: 'pointer' }}>
+                      {extAudioName ? `Replace: ${extAudioName.slice(0, 18)}...` : '+ Add audio file'}
+                    </label>
+                    <input id="audioInput" ref={audioInputRef} type="file" accept="audio/*,.mp3,.aac,.m4a,.wav,.ogg,.opus" hidden onChange={onPickExternalAudio} />
                   </div>
 
                   <div className="sub-row">
