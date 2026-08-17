@@ -45,6 +45,12 @@ export default function Room() {
   const [chatOpen, setChatOpen] = useState(true);
   const [dimmed, setDimmed] = useState(false);
   const [floatingBubbles, setFloatingBubbles] = useState([]);
+  const [reactions, setReactions] = useState([]);
+  const [speed, setSpeed] = useState(1);
+  const [volume, setVolume] = useState(1);
+  const [danmakuEnabled, setDanmakuEnabled] = useState(true);
+  const [danmakuList, setDanmakuList] = useState([]);
+  const [fileMatch, setFileMatch] = useState(null);
   const [joinError, setJoinError] = useState('');
   const [subTracks, setSubTracks] = useState([{ id: 'off', label: 'Off / Disabled', cues: [] }]);
   const [activeTrackId, setActiveTrackId] = useState('off');
@@ -60,6 +66,10 @@ export default function Room() {
   const videoRef = useRef(null);
   const screenRef = useRef(null);
   const chatOpenRef = useRef(true);
+  const danmakuEnabledRef = useRef(true);
+  const audioCtxRef = useRef(null);
+  const gainNodeRef = useRef(null);
+  const peerFilesRef = useRef(new Map());
   const timelineRef = useRef(null);
   const fillRef = useRef(null);
   const headRef = useRef(null);
@@ -187,6 +197,127 @@ export default function Room() {
 
   const setStateLatest = (playing, time) => {
     latestStateRef.current = { playing, time, at: Date.now() };
+  };
+
+  // ---------- audio booster (up to 200%) ----------
+  const initAudioBoost = () => {
+    if (audioCtxRef.current || !videoRef.current) return;
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const source = ctx.createMediaElementSource(videoRef.current);
+      const gain = ctx.createGain();
+      gain.gain.value = volume;
+      source.connect(gain);
+      gain.connect(ctx.destination);
+      audioCtxRef.current = ctx;
+      gainNodeRef.current = gain;
+    } catch (err) {
+      console.warn('AudioContext boost not available:', err);
+    }
+  };
+
+  const setVol = (v) => {
+    const val = Math.max(0, Math.min(2, Number(v) || 0));
+    setVolume(val);
+    initAudioBoost();
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume();
+    }
+    if (gainNodeRef.current) {
+      gainNodeRef.current.gain.value = val;
+    } else if (videoRef.current) {
+      videoRef.current.volume = Math.min(1, val);
+    }
+  };
+
+  // ---------- synced playback speed ----------
+  const changeSpeed = (s, announce = true) => {
+    const spd = Number(s) || 1;
+    setSpeed(spd);
+    if (videoRef.current) videoRef.current.playbackRate = spd;
+    const socket = getSocket();
+    if (socket.connected) socket.emit('playback-speed', spd);
+    if (announce) toast(`Playback speed: ${spd}x`);
+  };
+
+  // ---------- subtle live reactions ----------
+  const sendReaction = (emoji) => {
+    const socket = getSocket();
+    if (socket.connected) socket.emit('reaction', emoji);
+    const id = Date.now() + Math.random();
+    setReactions((prev) => [...prev.slice(-8), { id, emoji }]);
+    setTimeout(() => {
+      setReactions((prev) => prev.filter((r) => r.id !== id));
+    }, 2200);
+  };
+
+  // ---------- timestamp jump in chat ----------
+  const seekToSeconds = (seconds) => {
+    const v = videoRef.current;
+    if (!v || !fileLoadedRef.current) return;
+    v.currentTime = Math.min(v.duration || seconds, Math.max(0, seconds));
+    emitPlayback('seek');
+    toast(`Jumped to ${fmt(seconds)}`);
+  };
+
+  const renderChatText = (text) => {
+    if (!text) return '';
+    const regex = /\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(text.substring(lastIndex, match.index));
+      }
+      const fullMatch = match[0];
+      const hours = Number(match[1] || 0);
+      const minutes = Number(match[2]);
+      const seconds = Number(match[3]);
+      const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+      parts.push(
+        <button
+          key={match.index}
+          className="time-link"
+          onClick={() => seekToSeconds(totalSeconds)}
+          title={`Jump to ${fullMatch}`}
+          type="button"
+        >
+          {fullMatch}
+        </button>
+      );
+      lastIndex = regex.lastIndex;
+    }
+    if (lastIndex < text.length) {
+      parts.push(text.substring(lastIndex));
+    }
+    return parts.length > 0 ? parts : text;
+  };
+
+  // ---------- smart file match detection ----------
+  const checkFileMatch = (myDuration, peerData) => {
+    if (!myDuration || !peerData || peerData.size === 0) {
+      setFileMatch(null);
+      return;
+    }
+    let maxDelta = 0;
+    let mismatchedPeer = null;
+    for (const [id, meta] of peerData.entries()) {
+      if (meta && meta.duration > 0) {
+        const delta = Math.abs(myDuration - meta.duration);
+        if (delta > maxDelta) {
+          maxDelta = delta;
+          mismatchedPeer = meta;
+        }
+      }
+    }
+    if (maxDelta <= 1.5) {
+      setFileMatch({ match: true, delta: 0 });
+    } else {
+      setFileMatch({ match: false, delta: Math.round(maxDelta), peerName: mismatchedPeer ? mismatchedPeer.name : '' });
+    }
   };
 
   // ---------- player core ----------
@@ -392,6 +523,14 @@ export default function Room() {
       updateTimeline();
       updateSubtitles();
       const v = videoRef.current;
+      if (v && v.duration && socket.connected) {
+        socket.emit('file-meta', {
+          duration: v.duration,
+          size: fileLoadedRef.current ? fileLoadedRef.current.size : 0,
+          name: fileLoadedRef.current ? fileLoadedRef.current.name : '',
+        });
+        checkFileMatch(v.duration, peerFilesRef.current);
+      }
       if (v && v.audioTracks && v.audioTracks.length > 1) {
         const list = [];
         for (let i = 0; i < v.audioTracks.length; i++) {
@@ -433,6 +572,14 @@ export default function Room() {
     };
     const onChat = (msg) => {
       setMessages((prev) => [...prev.slice(-499), msg]);
+      if (!msg.system && danmakuEnabledRef.current) {
+        const dId = Date.now() + Math.random();
+        const topPct = 8 + Math.floor(Math.random() * 42);
+        setDanmakuList((prev) => [...prev.slice(-12), { id: dId, text: msg.text, top: topPct }]);
+        setTimeout(() => {
+          setDanmakuList((prev) => prev.filter((d) => d.id !== dId));
+        }, 7000);
+      }
       if (!msg.system && (!chatOpenRef.current || document.fullscreenElement || window.innerWidth <= 768)) {
         const bId = Date.now() + Math.random();
         setFloatingBubbles((prev) => [...prev.slice(-3), { id: bId, text: msg.text, name: msg.name, color: msg.color }]);
@@ -441,6 +588,26 @@ export default function Room() {
         }, 4500);
       }
       if (!chatVisible()) bumpUnread();
+    };
+
+    const onPlaybackSpeed = ({ speed: spd, name: actor }) => {
+      setSpeed(spd);
+      if (videoRef.current) videoRef.current.playbackRate = spd;
+      toast(`${actor} set speed to ${spd}x`);
+    };
+
+    const onReaction = ({ emoji, id }) => {
+      setReactions((prev) => [...prev.slice(-8), { id: id || Date.now() + Math.random(), emoji }]);
+      setTimeout(() => {
+        setReactions((prev) => prev.filter((r) => r.id !== id));
+      }, 2200);
+    };
+
+    const onPeerFileMeta = ({ id, duration, size, name: fileName }) => {
+      peerFilesRef.current.set(id, { duration, size, name: fileName });
+      if (videoRef.current && videoRef.current.duration) {
+        checkFileMatch(videoRef.current.duration, peerFilesRef.current);
+      }
     };
 
     const onPeerTime = ({ id, time }) => {
@@ -457,6 +624,13 @@ export default function Room() {
         setUsers(res.users);
         applyState(latestStateRef.current);
         setSyncStatus(true);
+        if (videoRef.current && videoRef.current.duration) {
+          socket.emit('file-meta', {
+            duration: videoRef.current.duration,
+            size: fileLoadedRef.current ? fileLoadedRef.current.size : 0,
+            name: fileLoadedRef.current ? fileLoadedRef.current.name : '',
+          });
+        }
         toast('Reconnected');
       });
     };
@@ -473,6 +647,9 @@ export default function Room() {
     socket.on('playback', onPlayback);
     socket.on('users', onUsers);
     socket.on('chat', onChat);
+    socket.on('playback-speed', onPlaybackSpeed);
+    socket.on('reaction', onReaction);
+    socket.on('peer-file-meta', onPeerFileMeta);
     socket.on('peer-time', onPeerTime);
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
@@ -717,6 +894,11 @@ export default function Room() {
         <span className={'sync-status' + (syncOk ? '' : ' behind')}>
           <span className="dot"></span><span>{syncOk ? 'in sync' : 'catching up…'}</span>
         </span>
+        {fileMatch && (
+          <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')} title={fileMatch.match ? 'Exact file match across participants' : `Duration differs by ${fileMatch.delta}s`}>
+            {fileMatch.match ? '✓ Same File' : `⚠️ ${fileMatch.delta}s diff`}
+          </span>
+        )}
         <span className="spacer"></span>
         <button className="btn ghost" onClick={leave}>Leave</button>
       </header>
@@ -730,6 +912,11 @@ export default function Room() {
         <button className={'mobile-action-btn' + (subsOn ? ' active' : '')} onClick={() => setSubPanelOpen(!subPanelOpen)}>
           CC {subsOn ? 'On' : 'Off'}
         </button>
+        {fileMatch && (
+          <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')}>
+            {fileMatch.match ? '✓ Matched' : `⚠️ ${fileMatch.delta}s`}
+          </span>
+        )}
         <span className="side-count">{users.length} watching</span>
       </div>
 
@@ -756,6 +943,26 @@ export default function Room() {
 
           <div className="screen" ref={screenRef}>
             <video ref={videoRef} playsInline></video>
+
+            {danmakuEnabled && danmakuList.length > 0 && (
+              <div className="danmaku-layer" aria-hidden="true">
+                {danmakuList.map((d) => (
+                  <span key={d.id} className="danmaku-item" style={{ top: `${d.top}%`, animationDuration: '6.5s' }}>
+                    {d.text}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {reactions.length > 0 && (
+              <div className="reaction-stream" aria-hidden="true">
+                {reactions.map((r) => (
+                  <span key={r.id} className="reaction-item">
+                    {r.emoji}
+                  </span>
+                ))}
+              </div>
+            )}
 
             {floatingBubbles.length > 0 && (
               <div className="floating-bubbles-layer" aria-live="polite">
@@ -833,79 +1040,95 @@ export default function Room() {
                     </select>
                   </div>
 
-                <div className="sub-row">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                    <span className="sub-label">Subtitle Track (V key · only you)</span>
-                    {subTracks.filter((t) => t.type === 'embedded').length > 0 && (
-                      <span className="sub-badge">
-                        {subTracks.filter((t) => t.type === 'embedded').length} Embedded
-                      </span>
-                    )}
+                  <div className="sub-row">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                      <span className="sub-label">Subtitle Track (V key · only you)</span>
+                      {subTracks.filter((t) => t.type === 'embedded').length > 0 && (
+                        <span className="sub-badge">
+                          {subTracks.filter((t) => t.type === 'embedded').length} Embedded
+                        </span>
+                      )}
+                    </div>
+                    <select
+                      className="sub-select"
+                      value={activeTrackId}
+                      onChange={(e) => selectTrack(e.target.value, true)}
+                    >
+                      {subTracks.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  <select
-                    className="sub-select"
-                    value={activeTrackId}
-                    onChange={(e) => selectTrack(e.target.value, true)}
-                  >
-                    {subTracks.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
 
-                <div className="sub-row">
-                  <span className="sub-label">External file (SRT / VTT / ASS · only you)</span>
-                  <label className="btn ghost sm" htmlFor="subInput" style={{ cursor: 'pointer' }}>
-                    {subTracks.some((t) => t.type === 'external') ? 'Change external file' : '+ Add subtitle file'}
-                  </label>
-                  <input id="subInput" type="file" accept=".srt,.vtt,.ass,.ssa" hidden onChange={onPickSubs} />
-                </div>
+                  <div className="sub-row">
+                    <span className="sub-label">External file (SRT / VTT / ASS · only you)</span>
+                    <label className="btn ghost sm" htmlFor="subInput" style={{ cursor: 'pointer' }}>
+                      {subTracks.some((t) => t.type === 'external') ? 'Change external file' : '+ Add subtitle file'}
+                    </label>
+                    <input id="subInput" type="file" accept=".srt,.vtt,.ass,.ssa" hidden onChange={onPickSubs} />
+                  </div>
 
-                <div className="sub-row">
-                  <span className="sub-label">Delay — Room-Wide (G / H keys · synced)</span>
-                  <button className="step-btn" onClick={() => nudgeSubtitles(-50)} title="Subtitles earlier by 50 ms (G)">−</button>
-                  <span className="sub-offset">{fmtOffset(subOffset)}</span>
-                  <button className="step-btn" onClick={() => nudgeSubtitles(50)} title="Subtitles later by 50 ms (H)">+</button>
-                  <span className="sub-hint">V / B keys cycle · shift = 500 ms</span>
-                </div>
+                  <div className="sub-row">
+                    <span className="sub-label">Delay — Room-Wide (G / H keys · synced)</span>
+                    <button className="step-btn" onClick={() => nudgeSubtitles(-50)} title="Subtitles earlier by 50 ms (G)">−</button>
+                    <span className="sub-offset">{fmtOffset(subOffset)}</span>
+                    <button className="step-btn" onClick={() => nudgeSubtitles(50)} title="Subtitles later by 50 ms (H)">+</button>
+                    <span className="sub-hint">V / B keys cycle · shift = 500 ms</span>
+                  </div>
 
-                <div className="sub-row">
-                  <span className="sub-label">Appearance (only you)</span>
-                  <input
-                    type="range"
-                    className="sub-size"
-                    min="14" max="34"
-                    value={subStyle.size}
-                    onChange={(e) => setSubStyle({ ...subStyle, size: Number(e.target.value) })}
-                    title="Size"
-                  />
-                </div>
-
-                <div className="sub-row">
-                  {SUB_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      className={'swatch' + (subStyle.color === c ? ' sel' : '')}
-                      style={{ background: c }}
-                      onClick={() => setSubStyle({ ...subStyle, color: c })}
-                      title={c}
+                  <div className="sub-row">
+                    <span className="sub-label">Appearance (only you)</span>
+                    <input
+                      type="range"
+                      className="sub-size"
+                      min="14" max="34"
+                      value={subStyle.size}
+                      onChange={(e) => setSubStyle({ ...subStyle, size: Number(e.target.value) })}
+                      title="Size"
                     />
-                  ))}
-                  <button
-                    className={'btn ghost sm' + (subStyle.bg ? ' sel' : '')}
-                    onClick={() => setSubStyle({ ...subStyle, bg: !subStyle.bg })}
-                  >
-                    Backdrop
-                  </button>
-                  <div className="seg">
-                    {SUB_POSITIONS.map(([v, l]) => (
-                      <button key={v} className={subStyle.pos === v ? 'sel' : ''} onClick={() => setSubStyle({ ...subStyle, pos: v })}>{l}</button>
+                  </div>
+
+                  <div className="sub-row">
+                    {SUB_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        className={'swatch' + (subStyle.color === c ? ' sel' : '')}
+                        style={{ background: c }}
+                        onClick={() => setSubStyle({ ...subStyle, color: c })}
+                        title={c}
+                      />
                     ))}
+                    <button
+                      className={'btn ghost sm' + (subStyle.bg ? ' sel' : '')}
+                      onClick={() => setSubStyle({ ...subStyle, bg: !subStyle.bg })}
+                    >
+                      Backdrop
+                    </button>
+                    <div className="seg">
+                      {SUB_POSITIONS.map(([v, l]) => (
+                        <button key={v} className={subStyle.pos === v ? 'sel' : ''} onClick={() => setSubStyle({ ...subStyle, pos: v })}>{l}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="sub-row">
+                    <span className="sub-label">Flying Danmaku Comments</span>
+                    <button
+                      type="button"
+                      className={'btn ghost sm' + (danmakuEnabled ? ' sel' : '')}
+                      onClick={() => {
+                        const next = !danmakuEnabled;
+                        setDanmakuEnabled(next);
+                        danmakuEnabledRef.current = next;
+                        toast(`Flying comments: ${next ? 'On' : 'Off'}`);
+                      }}
+                    >
+                      {danmakuEnabled ? 'Enabled' : 'Disabled'}
+                    </button>
                   </div>
                 </div>
-              </div>
               </>
             )}
 
@@ -945,13 +1168,32 @@ export default function Room() {
 
               <span className="timecode"><span ref={curRef}>0:00</span><span className="sep">/</span><span ref={durRef}>0:00</span></span>
 
-              <input
-                type="range"
-                className="volume"
-                min="0" max="1" step="0.05" defaultValue="1"
-                title="Volume"
-                onInput={(e) => { if (videoRef.current) videoRef.current.volume = Number(e.target.value); }}
-              />
+              <select
+                className="speed-select"
+                value={speed}
+                onChange={(e) => changeSpeed(e.target.value)}
+                title="Playback speed (synced)"
+              >
+                <option value="0.5">0.5x</option>
+                <option value="0.75">0.75x</option>
+                <option value="1">1.0x</option>
+                <option value="1.25">1.25x</option>
+                <option value="1.5">1.5x</option>
+                <option value="2">2.0x</option>
+              </select>
+
+              <div className="volume-wrap">
+                <input
+                  type="range"
+                  className="volume"
+                  min="0" max="2" step="0.05" value={volume}
+                  title={`Volume: ${Math.round(volume * 100)}%`}
+                  onChange={(e) => setVol(Number(e.target.value))}
+                />
+                <span className={'vol-pct' + (volume > 1 ? ' boosted' : '')}>
+                  {Math.round(volume * 100)}%
+                </span>
+              </div>
 
               <button
                 className={'t-btn dim-btn' + (dimmed ? ' active' : '')}
@@ -1014,11 +1256,25 @@ export default function Room() {
                   <span className="m-avatar" style={{ background: m.color }}>{m.name[0].toUpperCase()}</span>
                   <span className="m-body">
                     <span className="who" style={{ color: m.color }}>{m.name}<span className="when">{clockFmt(m.at)}</span></span>
-                    <span className="m-text">{m.text}</span>
+                    <span className="m-text">{renderChatText(m.text)}</span>
                   </span>
                 </div>
               )
             )}
+          </div>
+
+          <div className="reaction-bar">
+            {['🍿', '😂', '🔥', '😱', '💀', '❤️'].map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                className="react-btn"
+                onClick={() => sendReaction(emoji)}
+                title={`React ${emoji}`}
+              >
+                {emoji}
+              </button>
+            ))}
           </div>
 
           <form className="chat-form" onSubmit={sendChat}>

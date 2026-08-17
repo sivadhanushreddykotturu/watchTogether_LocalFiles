@@ -211,6 +211,46 @@ function attach(io) {
       db.saveRoom(room.code, room.state); // background write
     });
 
+    // --- synced playback speed ---
+    socket.on('playback-speed', (speed) => {
+      const room = rooms.get(socket.data.room);
+      if (!room) return;
+      const rate = Math.min(2, Math.max(0.5, Number(speed) || 1));
+      room.state.speed = rate;
+      const user = room.users.get(socket.id);
+      socket.to(room.code).emit('playback-speed', {
+        speed: rate,
+        name: user ? user.name : 'Someone',
+      });
+      db.saveRoom(room.code, room.state);
+    });
+
+    // --- live emoji reactions ---
+    socket.on('reaction', (emoji) => {
+      const room = rooms.get(socket.data.room);
+      if (!room) return;
+      const user = room.users.get(socket.id);
+      io.to(room.code).emit('reaction', {
+        emoji: String(emoji || '🍿').slice(0, 8),
+        sender: socket.id,
+        name: user ? user.name : 'Someone',
+        color: user ? user.color : '#8A93A6',
+        id: Date.now() + Math.random(),
+      });
+    });
+
+    // --- file metadata for smart match ---
+    socket.on('file-meta', ({ duration, size, name } = {}) => {
+      const room = rooms.get(socket.data.room);
+      if (!room) return;
+      socket.to(room.code).emit('peer-file-meta', {
+        id: socket.id,
+        duration: Number(duration) || 0,
+        size: Number(size) || 0,
+        name: String(name || ''),
+      });
+    });
+
     socket.on('leave-room', () => leaveCurrentRoom(io, socket));
     socket.on('disconnect', () => leaveCurrentRoom(io, socket));
   });
