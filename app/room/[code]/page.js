@@ -1,0 +1,597 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { getSocket } from '../../../lib/socket';
+
+// ---------- helpers ----------
+function fmt(t) {
+  t = Math.max(0, Math.floor(t || 0));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
+  return (h > 0 ? h + ':' : '') + mm + ':' + String(s).padStart(2, '0');
+}
+
+const clockFmt = (at) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+export default function Room() {
+  const params = useParams();
+  const router = useRouter();
+  const code = String(params.code || '').toUpperCase();
+
+  // ---------- render state ----------
+  const [meId, setMeId] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [toasts, setToasts] = useState([]);
+  const [tab, setTabState] = useState('chat');
+  const [pickerOpen, setPickerOpen] = useState(true);
+  const [pickerHint, setPickerHint] = useState('');
+  const [resumeOpen, setResumeOpen] = useState(false);
+  const [syncOk, setSyncOk] = useState(true);
+  const [playing, setPlaying] = useState(false);
+  const [playDisabled, setPlayDisabled] = useState(true);
+  const [nowInfo, setNowInfo] = useState({ playing: false, time: 0, at: Date.now() });
+  const [unread, setUnread] = useState(0);
+  const [joinError, setJoinError] = useState('');
+
+  // ---------- element refs ----------
+  const videoRef = useRef(null);
+  const screenRef = useRef(null);
+  const timelineRef = useRef(null);
+  const fillRef = useRef(null);
+  const headRef = useRef(null);
+  const ticksRef = useRef(null);
+  const curRef = useRef(null);
+  const durRef = useRef(null);
+  const chatScrollRef = useRef(null);
+  const chatInputRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  // ---------- logic refs (mutable, survive renders; no stale closures) ----------
+  const sessionRef = useRef(null);   // { code, name }
+  const joinedRef = useRef(false);
+  const meRef = useRef(null);
+  const fileLoadedRef = useRef(false);
+  const latestStateRef = useRef({ playing: false, time: 0, at: Date.now() });
+  const peersRef = useRef(new Map());
+  const guardRef = useRef({ play: 0, pause: 0, seek: 0 });
+  const lastLocalPauseRef = useRef(0);
+  const wakeLockRef = useRef(null);
+  const heartbeatRef = useRef(null);
+  const nowTickRef = useRef(null);
+  const scrubbingRef = useRef(false);
+  const tabRef = useRef('chat');
+  const toastSeq = useRef(0);
+
+  // ---------- small utilities ----------
+  const toast = (text) => {
+    const id = ++toastSeq.current;
+    setToasts((prev) => [...prev.slice(-3), { id, text }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 2600);
+  };
+
+  const setTab = (t) => {
+    tabRef.current = t;
+    setTabState(t);
+    if (t === 'chat') {
+      const el = chatScrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+      maybeClearUnread();
+    }
+  };
+
+  const chatVisible = () =>
+    document.visibilityState === 'visible' &&
+    (window.innerWidth >= 640 || tabRef.current === 'chat');
+
+  const bumpUnread = () => setUnread((u) => u + 1);
+  function maybeClearUnread() { if (chatVisible()) setUnread(0); }
+
+  const setSyncStatus = (ok) => setSyncOk(ok);
+
+  const setStateLatest = (playing, time) => {
+    latestStateRef.current = { playing, time, at: Date.now() };
+  };
+
+  // ---------- player core ----------
+  function updateTimeline() {
+    const video = videoRef.current;
+    const d = video && video.duration;
+    if (!fileLoadedRef.current || !d || !isFinite(d)) {
+      if (fillRef.current) fillRef.current.style.width = '0%';
+      if (headRef.current) headRef.current.style.left = '0%';
+      if (curRef.current) curRef.current.textContent = '0:00';
+      if (durRef.current) durRef.current.textContent = '0:00';
+      renderTicks();
+      return;
+    }
+    const pct = (video.currentTime / d) * 100;
+    fillRef.current.style.width = pct + '%';
+    headRef.current.style.left = pct + '%';
+    curRef.current.textContent = fmt(video.currentTime);
+    durRef.current.textContent = fmt(d);
+    renderTicks();
+  }
+
+  function renderTicks() {
+    const box = ticksRef.current;
+    if (!box) return;
+    box.innerHTML = '';
+    const video = videoRef.current;
+    const d = video && video.duration;
+    if (!fileLoadedRef.current || !d || !isFinite(d)) return;
+    for (const [id, p] of peersRef.current) {
+      if (id === (meRef.current && meRef.current.id) || typeof p.time !== 'number') continue;
+      const el = document.createElement('div');
+      el.className = 'tick';
+      el.style.left = Math.min(100, (p.time / d) * 100) + '%';
+      el.style.background = p.color;
+      el.dataset.name = p.name;
+      box.appendChild(el);
+    }
+  }
+
+  function applyState(state) {
+    setStateLatest(state.playing, state.time);
+    const video = videoRef.current;
+    if (!fileLoadedRef.current || !video) { updateTimeline(); return; }
+    const guard = guardRef.current;
+
+    if (Math.abs(video.currentTime - state.time) > 0.5) {
+      guard.seek++;
+      video.currentTime = state.time;
+    }
+    if (state.playing) {
+      if (video.paused) {
+        guard.play++;
+        video.play().catch(() => {
+          guard.play--; // autoplay blocked — ask for a tap
+          setResumeOpen(true);
+        });
+      }
+      setResumeOpen(false);
+    } else if (!video.paused) {
+      guard.pause++;
+      video.pause();
+    }
+    updateTimeline();
+  }
+
+  async function ensureWakeLock() {
+    const video = videoRef.current;
+    if (!('wakeLock' in navigator) || wakeLockRef.current || !fileLoadedRef.current || !video || video.paused) return;
+    try {
+      wakeLockRef.current = await navigator.wakeLock.request('screen');
+      wakeLockRef.current.addEventListener('release', () => { wakeLockRef.current = null; });
+    } catch { /* battery saver etc. — fine */ }
+  }
+
+  function releaseWakeLock() {
+    if (wakeLockRef.current) {
+      wakeLockRef.current.release().catch(() => {});
+      wakeLockRef.current = null;
+    }
+  }
+
+  function emitPlayback(action) {
+    const socket = getSocket();
+    if (socket.connected && videoRef.current) {
+      socket.emit('playback', { action, time: videoRef.current.currentTime });
+    }
+  }
+
+  function beat() {
+    const socket = getSocket();
+    const video = videoRef.current;
+    if (!fileLoadedRef.current || !video || !socket.connected) return;
+    socket.emit('time-update', video.currentTime, ({ expected, playing } = {}) => {
+      if (typeof expected !== 'number') return;
+      setStateLatest(playing, expected);
+      const drift = expected - video.currentTime;
+      if (playing && !video.paused && Math.abs(drift) > 1.5) {
+        guardRef.current.seek++;
+        video.currentTime = expected;
+        setSyncStatus(false);
+        setTimeout(() => setSyncStatus(true), 1200);
+      } else if (playing && video.paused && Date.now() - lastLocalPauseRef.current > 5000) {
+        setResumeOpen(true); // room is rolling but we're stopped (not a deliberate pause)
+      }
+    });
+  }
+
+  // ---------- main effect: join, wire everything, clean up on leave ----------
+  useEffect(() => {
+    const name = sessionStorage.getItem('reelsync:name');
+    if (!name) {
+      router.replace(`/?room=${code}`);
+      return;
+    }
+    const socket = getSocket();
+    sessionRef.current = { code, name };
+    setTab(window.innerWidth < 640 ? 'chat' : 'watch');
+
+    // --- join ---
+    socket.emit('join-room', { code, name }, (res) => {
+      if (!res || res.error) {
+        setJoinError((res && res.error) || 'Could not join that room.');
+        return;
+      }
+      joinedRef.current = true;
+      meRef.current = res.self;
+      setMeId(res.self.id);
+      setStateLatest(res.state.playing, res.state.time);
+      setUsers(res.users);
+      setMessages(Array.isArray(res.history) ? res.history : []);
+      if (res.state.playing) {
+        setPickerHint(`The room is already watching — at ${fmt(res.state.time)} and rolling.`);
+      }
+    });
+
+    // --- video element events ---
+    const video = videoRef.current;
+    const onPlay = () => {
+      setPlaying(true);
+      setSyncStatus(true);
+      ensureWakeLock();
+      if (guardRef.current.play > 0) { guardRef.current.play--; return; }
+      emitPlayback('play');
+    };
+    const onPause = () => {
+      setPlaying(false);
+      releaseWakeLock();
+      if (guardRef.current.pause > 0) { guardRef.current.pause--; return; }
+      lastLocalPauseRef.current = Date.now();
+      emitPlayback('pause');
+    };
+    const onSeeked = () => {
+      updateTimeline();
+      if (guardRef.current.seek > 0) { guardRef.current.seek--; return; }
+      emitPlayback('seek');
+    };
+    const onEnded = () => { setPlaying(false); releaseWakeLock(); };
+    const onTime = () => updateTimeline();
+    video.addEventListener('play', onPlay);
+    video.addEventListener('pause', onPause);
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('ended', onEnded);
+    video.addEventListener('timeupdate', onTime);
+    video.addEventListener('loadedmetadata', onTime);
+
+    // --- socket events ---
+    const onPlayback = ({ action, time, playing: p, name: actor }) => {
+      applyState({ playing: p, time });
+      if (!fileLoadedRef.current) {
+        setPickerHint(`${actor} pressed ${action} at ${fmt(time)} — load your file to join in.`);
+        return;
+      }
+      const verb = action === 'seek' ? `jumped to ${fmt(time)}` : action === 'play' ? 'pressed play' : 'paused';
+      toast(`${actor} ${verb}`);
+    };
+    const onUsers = (list) => {
+      setUsers(list);
+      const next = new Map();
+      for (const u of list) {
+        const prev = peersRef.current.get(u.id);
+        next.set(u.id, { name: u.name, color: u.color, time: prev ? prev.time : undefined });
+      }
+      peersRef.current = next;
+      renderTicks();
+    };
+    const onChat = (msg) => {
+      setMessages((prev) => [...prev.slice(-499), msg]);
+      if (!chatVisible()) bumpUnread();
+    };
+    const onPeerTime = ({ id, time }) => {
+      const p = peersRef.current.get(id);
+      if (p) { p.time = time; renderTicks(); }
+    };
+    const onConnect = () => {
+      if (!joinedRef.current) return; // initial join handles first connect
+      socket.emit('join-room', { ...sessionRef.current, rejoin: true }, (res) => {
+        if (!res || res.error) { router.replace('/'); return; }
+        meRef.current = res.self;
+        setMeId(res.self.id);
+        setStateLatest(res.state.playing, res.state.time);
+        setUsers(res.users);
+        applyState(latestStateRef.current);
+        setSyncStatus(true);
+        toast('Reconnected');
+      });
+    };
+    const onDisconnect = () => {
+      setSyncStatus(false);
+      toast('Connection lost — reconnecting…');
+    };
+    socket.on('playback', onPlayback);
+    socket.on('users', onUsers);
+    socket.on('chat', onChat);
+    socket.on('peer-time', onPeerTime);
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+
+    // --- heartbeat + now-strip ---
+    heartbeatRef.current = setInterval(beat, 2000);
+    nowTickRef.current = setInterval(() => {
+      setNowInfo({ ...latestStateRef.current });
+    }, 1000);
+
+    // --- page-level listeners ---
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      beat();
+      ensureWakeLock();
+      maybeClearUnread();
+    };
+    const onResize = () => maybeClearUnread();
+    const onKey = (e) => {
+      if (!fileLoadedRef.current || !videoRef.current) return;
+      if (e.target.matches('input, textarea')) return;
+      const v = videoRef.current;
+      if (e.code === 'Space') { e.preventDefault(); if (v.paused) v.play(); else v.pause(); }
+      if (e.code === 'ArrowRight') v.currentTime = Math.min(v.duration || 0, v.currentTime + 5);
+      if (e.code === 'ArrowLeft') v.currentTime = Math.max(0, v.currentTime - 5);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('resize', onResize);
+    document.addEventListener('keydown', onKey);
+
+    // --- cleanup: leave the room, drop everything ---
+    return () => {
+      socket.emit('leave-room');
+      socket.off('playback', onPlayback);
+      socket.off('users', onUsers);
+      socket.off('chat', onChat);
+      socket.off('peer-time', onPeerTime);
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      video.removeEventListener('play', onPlay);
+      video.removeEventListener('pause', onPause);
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('ended', onEnded);
+      video.removeEventListener('timeupdate', onTime);
+      video.removeEventListener('loadedmetadata', onTime);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('resize', onResize);
+      document.removeEventListener('keydown', onKey);
+      clearInterval(heartbeatRef.current);
+      clearInterval(nowTickRef.current);
+      releaseWakeLock();
+      if (video.src) { URL.revokeObjectURL(video.src); }
+      document.title = 'ReelSync — watch local files together';
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code]);
+
+  // autoscroll chat on new messages when visible
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (el && chatVisible()) el.scrollTop = el.scrollHeight;
+  }, [messages]);
+
+  // unread count in the tab title
+  useEffect(() => {
+    document.title = unread > 0 ? `(${unread}) ReelSync` : 'ReelSync — watch local files together';
+  }, [unread]);
+
+  // ---------- UI handlers ----------
+  const onPickFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    videoRef.current.src = URL.createObjectURL(file);
+    fileLoadedRef.current = true;
+    setPlayDisabled(false);
+    setPickerOpen(false);
+    toast(`Loaded “${file.name}”`);
+    applyState(latestStateRef.current); // line up with the room
+  };
+
+  const togglePlay = () => {
+    const v = videoRef.current;
+    if (!fileLoadedRef.current || !v) return;
+    if (v.paused) v.play(); else v.pause();
+  };
+
+  const onScrub = (e, commit) => {
+    const v = videoRef.current;
+    if (!fileLoadedRef.current || !v || !v.duration) return;
+    const rect = timelineRef.current.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    const t = ratio * v.duration;
+    fillRef.current.style.width = ratio * 100 + '%';
+    headRef.current.style.left = ratio * 100 + '%';
+    curRef.current.textContent = fmt(t);
+    if (commit) v.currentTime = t; // fires 'seeked' once -> broadcast
+  };
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      toast('Room code copied');
+    } catch {
+      toast('Room code: ' + code);
+    }
+  };
+
+  const leave = () => {
+    getSocket().emit('leave-room');
+    router.push('/');
+  };
+
+  const resume = () => {
+    setResumeOpen(false);
+    applyState(latestStateRef.current);
+  };
+
+  const sendChat = (e) => {
+    e.preventDefault();
+    const text = chatInputRef.current.value.trim();
+    if (!text) return;
+    getSocket().emit('chat', text);
+    chatInputRef.current.value = '';
+    chatInputRef.current.focus();
+  };
+
+  const fullscreen = () => {
+    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
+    if (screenRef.current.requestFullscreen) screenRef.current.requestFullscreen().catch(() => {});
+    else if (videoRef.current.webkitEnterFullscreen) videoRef.current.webkitEnterFullscreen(); // iPhone Safari
+  };
+
+  const nowPosition = nowInfo.playing
+    ? nowInfo.time + (Date.now() - nowInfo.at) / 1000
+    : nowInfo.time;
+
+  // ---------- render ----------
+  if (joinError) {
+    return (
+      <main className="landing">
+        <div className="landing-card">
+          <h1 className="wordmark"><span className="stroke">REEL</span><span className="fill-word">SYNC</span></h1>
+          <p className="error" role="alert">{joinError}</p>
+          <button className="btn primary big" onClick={() => router.push('/')}>Back to start</button>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="room" data-tab={tab}>
+      <header className="room-bar">
+        <span className="brand">REEL<span className="brand-accent">SYNC</span></span>
+        <button className="code-slate" onClick={copyCode} title="Copy room code">
+          <span className="slate-label">ROOM</span>
+          <span className="slate-code">{code}</span>
+        </button>
+        <span className={'sync-status' + (syncOk ? '' : ' behind')}>
+          <span className="dot"></span><span>{syncOk ? 'in sync' : 'catching up…'}</span>
+        </span>
+        <span className="spacer"></span>
+        <button className="btn ghost" onClick={leave}>Leave</button>
+      </header>
+
+      {/* phone-only: one glance tells the call what's happening */}
+      <div className="nowstrip">
+        <span>{nowInfo.playing ? '▶' : '⏸'}</span>
+        <span className="nowtime">{fmt(nowPosition)}</span>
+        <span className="nowstate">{nowInfo.playing ? 'playing' : 'paused'}</span>
+      </div>
+
+      <div className="stage">
+        <section className="screen-col">
+          <div className="beam" aria-hidden="true"></div>
+          <div className="screen" ref={screenRef}>
+            <video ref={videoRef} playsInline></video>
+
+            <div className={'picker' + (pickerOpen ? '' : ' hidden')}>
+              <label className="pick-orb" htmlFor="fileInput" title="Choose video file">
+                <svg viewBox="0 0 24 24" width="34" height="34"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
+              </label>
+              <h2 className="picker-title">Reel it in</h2>
+              <p className="picker-text">Pick your copy of the file this room is watching. It never leaves your machine — only play, pause and seek are shared.</p>
+              <p className="picker-format">MP4 (H.264) plays everywhere. MKV won't play in a browser.</p>
+              <input type="file" id="fileInput" ref={fileInputRef} accept="video/*" hidden onChange={onPickFile} />
+              <p className="picker-hint">{pickerHint}</p>
+            </div>
+
+            <div className={'resume' + (resumeOpen ? '' : ' hidden')}>
+              <button className="btn primary big" onClick={resume}>Catch up with the room</button>
+            </div>
+          </div>
+
+          <div className="transport">
+            <button className="t-btn" onClick={togglePlay} disabled={playDisabled} title="Play / pause (space)">
+              <svg viewBox="0 0 24 24" width="20" height="20" className={playing ? 'hidden' : ''}><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
+              <svg viewBox="0 0 24 24" width="20" height="20" className={playing ? '' : 'hidden'}><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>
+            </button>
+
+            <div
+              className="timeline"
+              ref={timelineRef}
+              title="Seek"
+              onPointerDown={(e) => {
+                if (!fileLoadedRef.current || !videoRef.current || !videoRef.current.duration) return;
+                scrubbingRef.current = true;
+                timelineRef.current.setPointerCapture(e.pointerId);
+                onScrub(e, false);
+              }}
+              onPointerMove={(e) => { if (scrubbingRef.current) onScrub(e, false); }}
+              onPointerUp={(e) => { if (!scrubbingRef.current) return; scrubbingRef.current = false; onScrub(e, true); }}
+            >
+              <div className="track">
+                <div className="fill" ref={fillRef}></div>
+                <div className="ticks" ref={ticksRef}></div>
+                <div className="head" ref={headRef}></div>
+              </div>
+            </div>
+
+            <span className="timecode"><span ref={curRef}>0:00</span><span className="sep">/</span><span ref={durRef}>0:00</span></span>
+
+            <input
+              type="range"
+              className="volume"
+              min="0" max="1" step="0.05" defaultValue="1"
+              title="Volume"
+              onInput={(e) => { if (videoRef.current) videoRef.current.volume = Number(e.target.value); }}
+            />
+
+            <button className="t-btn" onClick={fullscreen} title="Fullscreen">
+              <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+          </div>
+        </section>
+
+        <aside className="side">
+          <div className="viewers">
+            {users.map((u) => (
+              <span key={u.id} className={'viewer' + (u.id === meId ? ' me' : '')}>
+                <span className="avatar" style={{ background: u.color }}>{u.name[0].toUpperCase()}</span>
+                {u.name}
+              </span>
+            ))}
+          </div>
+
+          <div className="chat" ref={chatScrollRef}>
+            {messages.map((m, i) =>
+              m.system ? (
+                <div key={i} className="msg system">{m.text}</div>
+              ) : (
+                <div key={i} className={'msg' + (m.sender === meId ? ' own' : '')}>
+                  <span className="m-avatar" style={{ background: m.color }}>{m.name[0].toUpperCase()}</span>
+                  <span className="m-body">
+                    <span className="who" style={{ color: m.color }}>{m.name}<span className="when">{clockFmt(m.at)}</span></span>
+                    <span className="m-text">{m.text}</span>
+                  </span>
+                </div>
+              )
+            )}
+          </div>
+
+          <form className="chat-form" onSubmit={sendChat}>
+            <input ref={chatInputRef} type="text" placeholder="Say something…" maxLength={500} autoComplete="off" />
+            <button className="btn primary send-btn" type="submit" title="Send">
+              <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+          </form>
+        </aside>
+      </div>
+
+      {/* phone-only tab bar: chat is the default seat, watch is optional */}
+      <nav className="tabbar">
+        <button className={'tab' + (tab === 'chat' ? ' active' : '')} type="button" onClick={() => setTab('chat')}>
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 4h16v12H8l-4 4z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
+          Chat
+          <span className={'badge' + (unread ? '' : ' hidden')}>{unread > 9 ? '9+' : unread}</span>
+        </button>
+        <button className={'tab' + (tab === 'watch' ? ' active' : '')} type="button" onClick={() => setTab('watch')}>
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
+          Watch
+        </button>
+      </nav>
+
+      <div className="toast-stack">
+        {toasts.map((t) => <div key={t.id} className="toast">{t.text}</div>)}
+      </div>
+    </main>
+  );
+}

@@ -1,0 +1,17 @@
+# Render blueprint — "New + Blueprint" in the Render dashboard picks this up.
+services:
+  - type: web
+    name: reelsync
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: MONGODB_URI
+        sync: false # set in the dashboard — your Atlas connection string
+      # Only needed if the frontend lives on Vercel (split deploy):
+      # - key: ALLOWED_ORIGINS
+      #   value: "https://your-app.vercel.app"

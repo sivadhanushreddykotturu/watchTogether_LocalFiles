@@ -1,0 +1,45 @@
+// Custom server: Next.js handles pages, Socket.IO handles realtime, one process.
+// Render runs this as a long-lived service — that's what keeps WebSockets possible.
+
+const http = require('http');
+const next = require('next');
+const { Server } = require('socket.io');
+const db = require('./db');
+const realtime = require('./realtime');
+
+const dev = process.env.NODE_ENV !== 'production';
+const app = next({ dev });
+const handle = app.getRequestHandler();
+
+const PORT = process.env.PORT || 3000;
+
+app.prepare().then(() => {
+  const server = http.createServer((req, res) => {
+    // Render health check + UptimeRobot ping target (keeps the free instance awake).
+    if (req.url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        ok: true,
+        mongo: db.isConnected(),
+        rooms: realtime.roomCount(),
+        uptime: Math.round(process.uptime()),
+      }));
+      return;
+    }
+    handle(req, res);
+  });
+
+  // Cross-origin sockets only when the frontend is hosted elsewhere (e.g. Vercel).
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const io = new Server(server, allowedOrigins.length ? { cors: { origin: allowedOrigins } } : {});
+  realtime.attach(io);
+
+  db.connect().then(() => {
+    server.listen(PORT, () => {
+      console.log(`ReelSync running at http://localhost:${PORT} (${dev ? 'dev' : 'prod'})`);
+    });
+  });
+});
