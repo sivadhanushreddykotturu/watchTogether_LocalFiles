@@ -65,6 +65,7 @@ export default function Room() {
   const [extAudioName, setExtAudioName] = useState('');
   const [transcodingAudio, setTranscodingAudio] = useState(false);
   const [transcodeProgress, setTranscodeProgress] = useState(0);
+  const [transcodeStatus, setTranscodeStatus] = useState('Converting audio...');
 
   // ---------- element refs ----------
   const videoRef = useRef(null);
@@ -823,10 +824,15 @@ export default function Room() {
     if (!targetFile || transcodingAudio) return;
     setTranscodingAudio(true);
     setTranscodeProgress(0);
+    setTranscodeStatus('Initializing audio engine...');
     toast('⚡ Converting EAC-3 audio for browser...');
     try {
-      const mp3Blob = await transcodeAudioToMp3(targetFile, (p) => setTranscodeProgress(p));
-      const audioUrl = URL.createObjectURL(mp3Blob);
+      const aacBlob = await transcodeAudioToMp3(
+        targetFile,
+        (p) => setTranscodeProgress(p),
+        (msg) => setTranscodeStatus(msg)
+      );
+      const audioUrl = URL.createObjectURL(aacBlob);
       if (extAudioRef.current) {
         extAudioRef.current.src = audioUrl;
         if (videoRef.current) {
@@ -836,9 +842,9 @@ export default function Room() {
         extAudioRef.current.volume = volume;
         if (playing) extAudioRef.current.play().catch(() => {});
       }
-      setExtAudioName('Auto-transcoded (Stereo MP3)');
+      setExtAudioName('Auto-transcoded (AAC)');
       setTranscodingAudio(false);
-      toast('✓ EAC-3 audio converted & active!');
+      toast('✓ Audio converted & synchronized with video!');
     } catch (err) {
       console.warn('Audio transcoding error:', err);
       setTranscodingAudio(false);
@@ -1093,7 +1099,7 @@ export default function Room() {
             {transcodingAudio && (
               <div className="transcode-indicator" aria-live="polite">
                 <span className="transcode-spinner"></span>
-                <span>Converting EAC-3 audio in background... {transcodeProgress > 0 ? `${transcodeProgress}%` : ''}</span>
+                <span>{transcodeStatus}</span>
               </div>
             )}
 
