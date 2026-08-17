@@ -314,6 +314,108 @@ input[type="text"]::placeholder { color: #525b70; }
 }
 .resume .btn { width: auto; }
 
+/* ---------------- subtitles ---------------- */
+
+.sub-overlay {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 88%;
+  padding: 3px 12px;
+  border-radius: 6px;
+  text-align: center;
+  white-space: pre-line;
+  font-weight: 600;
+  line-height: 1.4;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.transport-wrap { position: relative; }
+
+.sub-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 330px;
+  max-width: calc(100vw - 40px);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 10;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.sub-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sub-label {
+  width: 100%;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.sub-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--dim);
+}
+.sub-offset {
+  min-width: 66px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.sub-hint { font-size: 11px; color: #525b70; }
+
+.btn.sm { padding: 7px 12px; font-size: 13px; }
+.btn.ghost.sel { color: var(--accent); border-color: var(--accent); }
+
+.step-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1;
+}
+.step-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+}
+.swatch.sel { border-color: var(--ink); }
+
+input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
+
+.seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button {
+  background: var(--panel-2);
+  border: none;
+  color: var(--dim);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.seg button.sel { color: var(--accent); background: var(--accent-soft); }
+
+.t-btn.cc { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; }
+.t-btn.cc.active { color: var(--accent); border-color: var(--accent); }
+
 /* ---------------- transport ---------------- */
 
 .transport {

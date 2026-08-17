@@ -45,7 +45,7 @@ function freshRoom(code, state) {
     code,
     users: new Map(),
     recentlyLeft: new Map(),
-    state: state || { playing: false, time: 0, updatedAt: Date.now() },
+    state: state || { playing: false, time: 0, updatedAt: Date.now(), subOffset: 0 },
   };
 }
 
@@ -106,13 +106,13 @@ function joinRoom(io, socket, code, name, { rejoin = false, history } = {}, cb) 
   }
 
   if (typeof cb === 'function') {
-    cb({
-      code,
-      self: { id: socket.id, ...user },
-      users: roomUsers(room),
-      state: { playing: room.state.playing, time: currentPosition(room.state) },
-      history,
-    });
+      cb({
+        code,
+        self: { id: socket.id, ...user },
+        users: roomUsers(room),
+        state: { playing: room.state.playing, time: currentPosition(room.state), subOffset: room.state.subOffset || 0 },
+        history,
+      });
   }
   socket.to(code).emit('users', roomUsers(room));
   if (!rejoin && !pendingLeft && !sameRoomReentry) {
@@ -141,7 +141,7 @@ function attach(io) {
           if (typeof cb === 'function') cb({ error: 'No room with that code. Check it and try again.' });
           return;
         }
-        room = freshRoom(code, saved.state);
+        room = freshRoom(code, saved.state ? { subOffset: 0, ...saved.state } : undefined);
         rooms.set(code, room);
       }
 
@@ -195,6 +195,20 @@ function attach(io) {
       };
       io.to(room.code).emit('chat', msg);
       db.addMessage(room.code, msg); // background write
+    });
+
+    // --- subtitle delay: room-wide (it affects sync), persisted with the room ---
+    socket.on('subtitle', ({ offset } = {}) => {
+      const room = rooms.get(socket.data.room);
+      if (!room) return;
+      const o = Math.max(-60000, Math.min(60000, Math.round(Number(offset) || 0)));
+      room.state.subOffset = o;
+      const user = room.users.get(socket.id);
+      socket.to(room.code).emit('subtitle', {
+        offset: o,
+        name: user ? user.name : 'Someone',
+      });
+      db.saveRoom(room.code, room.state); // background write
     });
 
     socket.on('leave-room', () => leaveCurrentRoom(io, socket));

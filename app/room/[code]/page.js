@@ -14,6 +14,39 @@ function fmt(t) {
 
 const clockFmt = (at) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+// ---------- subtitles ----------
+const SUB_COLORS = ['#ffffff', '#facc15', '#86efac', '#67e8f9'];
+const SUB_STYLE_DEFAULT = { size: 20, color: '#ffffff', bg: true, pos: 10 };
+const SUB_POSITIONS = [[4, 'Low'], [10, 'Mid'], [18, 'High']];
+
+// "hh:mm:ss,mmm" / "hh:mm:ss.mmm" / "mm:ss.mmm" -> milliseconds
+function tsToMs(s) {
+  const m = String(s).trim().match(/(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{3})/);
+  if (!m) return null;
+  return (Number(m[1] || 0) * 3600 + Number(m[2]) * 60 + Number(m[3])) * 1000 + Number(m[4]);
+}
+
+// Accepts .srt and .vtt (headers, NOTE/STYLE blocks and cue settings are skipped).
+function parseSubtitles(text) {
+  const cues = [];
+  for (const block of String(text).replace(/\r/g, '').split(/\n\s*\n/)) {
+    const lines = block.trim().split('\n');
+    const ti = lines.findIndex((l) => l.includes('-->'));
+    if (ti === -1) continue;
+    const parts = lines[ti].split('-->');
+    const start = tsToMs(parts[0]);
+    const end = tsToMs(parts[1]);
+    if (start === null || end === null) continue;
+    const cueText = lines.slice(ti + 1).join('\n').replace(/<[^>]+>/g, '').trim();
+    if (cueText) cues.push({ start, end, text: cueText });
+  }
+  cues.sort((a, b) => a.start - b.start);
+  return cues;
+}
+
+// VLC semantics: positive = subtitles appear later.
+const fmtOffset = (o) => (o > 0 ? `+${o} ms` : o < 0 ? `−${Math.abs(o)} ms` : '0 ms');
+
 export default function Room() {
   const params = useParams();
   const router = useRouter();
@@ -34,6 +67,12 @@ export default function Room() {
   const [nowInfo, setNowInfo] = useState({ playing: false, time: 0, at: Date.now() });
   const [unread, setUnread] = useState(0);
   const [joinError, setJoinError] = useState('');
+  const [subName, setSubName] = useState('');
+  const [subsOn, setSubsOn] = useState(false);
+  const [subText, setSubText] = useState('');
+  const [subOffset, setSubOffset] = useState(0);
+  const [subPanelOpen, setSubPanelOpen] = useState(false);
+  const [subStyle, setSubStyle] = useState(SUB_STYLE_DEFAULT);
 
   // ---------- element refs ----------
   const videoRef = useRef(null);
@@ -63,6 +102,10 @@ export default function Room() {
   const scrubbingRef = useRef(false);
   const tabRef = useRef('chat');
   const toastSeq = useRef(0);
+  const cuesRef = useRef([]);
+  const offsetRef = useRef(0);
+  const subsOnRef = useRef(false);
+  const subTimerRef = useRef(null);
 
   // ---------- small utilities ----------
   const toast = (text) => {
@@ -181,6 +224,21 @@ export default function Room() {
     }
   }
 
+  // VLC-style delay: positive pushes subtitles later. Room-wide — everyone
+  // watching the same moment needs subs shifted by the same amount.
+  function nudgeSubtitles(step) {
+    const next = Math.max(-60000, Math.min(60000, offsetRef.current + step));
+    offsetRef.current = next;
+    setSubOffset(next);
+    const socket = getSocket();
+    if (socket.connected) socket.emit('subtitle', { offset: next });
+  }
+
+  function toggleSubs() {
+    subsOnRef.current = !subsOnRef.current;
+    setSubsOn(subsOnRef.current);
+  }
+
   function beat() {
     const socket = getSocket();
     const video = videoRef.current;
@@ -221,6 +279,8 @@ export default function Room() {
       meRef.current = res.self;
       setMeId(res.self.id);
       setStateLatest(res.state.playing, res.state.time);
+      offsetRef.current = res.state.subOffset || 0;
+      setSubOffset(offsetRef.current);
       setUsers(res.users);
       setMessages(Array.isArray(res.history) ? res.history : []);
       if (res.state.playing) {
@@ -303,18 +363,45 @@ export default function Room() {
       setSyncStatus(false);
       toast('Connection lost — reconnecting…');
     };
+    const onSubtitle = ({ offset, name: actor }) => {
+      const o = Number(offset) || 0;
+      offsetRef.current = o;
+      setSubOffset(o);
+      toast(`${actor} set subtitles to ${fmtOffset(o)}`);
+    };
     socket.on('playback', onPlayback);
     socket.on('users', onUsers);
     socket.on('chat', onChat);
     socket.on('peer-time', onPeerTime);
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
+    socket.on('subtitle', onSubtitle);
 
-    // --- heartbeat + now-strip ---
+    // --- heartbeat + now-strip + subtitle ticker ---
     heartbeatRef.current = setInterval(beat, 2000);
     nowTickRef.current = setInterval(() => {
       setNowInfo({ ...latestStateRef.current });
     }, 1000);
+    subTimerRef.current = setInterval(() => {
+      const v = videoRef.current;
+      const cues = cuesRef.current;
+      if (!v || !cues.length || !subsOnRef.current) {
+        setSubText((prev) => (prev ? '' : prev));
+        return;
+      }
+      const t = v.currentTime * 1000 - offsetRef.current;
+      let out = '';
+      for (const c of cues) {
+        if (t >= c.start && t <= c.end) { out = c.text; break; }
+      }
+      setSubText((prev) => (prev === out ? prev : out));
+    }, 200);
+
+    // --- saved subtitle appearance (per person, this device only) ---
+    try {
+      const saved = JSON.parse(localStorage.getItem('reelsync:substyle') || 'null');
+      if (saved) setSubStyle({ ...SUB_STYLE_DEFAULT, ...saved });
+    } catch { /* ignore corrupt prefs */ }
 
     // --- page-level listeners ---
     const onVisibility = () => {
@@ -331,6 +418,9 @@ export default function Room() {
       if (e.code === 'Space') { e.preventDefault(); if (v.paused) v.play(); else v.pause(); }
       if (e.code === 'ArrowRight') v.currentTime = Math.min(v.duration || 0, v.currentTime + 5);
       if (e.code === 'ArrowLeft') v.currentTime = Math.max(0, v.currentTime - 5);
+      const subStep = e.shiftKey ? 500 : 50; // VLC: G/H nudge subtitle delay
+      if (e.code === 'KeyG') nudgeSubtitles(-subStep);
+      if (e.code === 'KeyH') nudgeSubtitles(subStep);
     };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('resize', onResize);
@@ -345,6 +435,7 @@ export default function Room() {
       socket.off('peer-time', onPeerTime);
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
+      socket.off('subtitle', onSubtitle);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('seeked', onSeeked);
@@ -356,6 +447,7 @@ export default function Room() {
       document.removeEventListener('keydown', onKey);
       clearInterval(heartbeatRef.current);
       clearInterval(nowTickRef.current);
+      clearInterval(subTimerRef.current);
       releaseWakeLock();
       if (video.src) { URL.revokeObjectURL(video.src); }
       document.title = 'ReelSync — watch local files together';
@@ -373,6 +465,28 @@ export default function Room() {
   useEffect(() => {
     document.title = unread > 0 ? `(${unread}) ReelSync` : 'ReelSync — watch local files together';
   }, [unread]);
+
+  // remember subtitle appearance on this device
+  useEffect(() => {
+    try { localStorage.setItem('reelsync:substyle', JSON.stringify(subStyle)); } catch { /* private mode */ }
+  }, [subStyle]);
+
+  const onPickSubs = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // allow picking the same file again after edits
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const cues = parseSubtitles(String(reader.result || ''));
+      if (!cues.length) { toast('No cues found — is that an .srt or .vtt?'); return; }
+      cuesRef.current = cues;
+      setSubName(file.name);
+      subsOnRef.current = true;
+      setSubsOn(true);
+      toast(`Subtitles loaded (${cues.length} cues)`);
+    };
+    reader.readAsText(file);
+  };
 
   // ---------- UI handlers ----------
   const onPickFile = (e) => {
@@ -483,6 +597,20 @@ export default function Room() {
           <div className="screen" ref={screenRef}>
             <video ref={videoRef} playsInline></video>
 
+            {subsOn && subText && (
+              <div
+                className="sub-overlay"
+                style={{
+                  fontSize: subStyle.size + 'px',
+                  color: subStyle.color,
+                  bottom: subStyle.pos + '%',
+                  background: subStyle.bg ? 'rgba(0, 0, 0, 0.65)' : 'transparent',
+                }}
+              >
+                {subText}
+              </div>
+            )}
+
             <div className={'picker' + (pickerOpen ? '' : ' hidden')}>
               <label className="pick-orb" htmlFor="fileInput" title="Choose video file">
                 <svg viewBox="0 0 24 24" width="34" height="34"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
@@ -498,6 +626,65 @@ export default function Room() {
               <button className="btn primary big" onClick={resume}>Catch up with the room</button>
             </div>
           </div>
+
+          <div className="transport-wrap">
+            {subPanelOpen && (
+              <div className="sub-panel">
+                <div className="sub-row">
+                  <span className="sub-label">Subtitle file (stays on your device)</span>
+                  <label className="btn ghost sm" htmlFor="subInput">{subName ? 'Change file' : 'Load .srt / .vtt'}</label>
+                  <input id="subInput" type="file" accept=".srt,.vtt" hidden onChange={onPickSubs} />
+                  {subName && (
+                    <>
+                      <span className="sub-name" title={subName}>{subName}</span>
+                      <button className={'btn ghost sm' + (subsOn ? ' sel' : '')} onClick={toggleSubs}>
+                        {subsOn ? 'On' : 'Off'}
+                      </button>
+                    </>
+                  )}
+                </div>
+                <div className="sub-row">
+                  <span className="sub-label">Delay — room-wide</span>
+                  <button className="step-btn" onClick={() => nudgeSubtitles(-50)} title="Subtitles earlier by 50 ms (G)">−</button>
+                  <span className="sub-offset">{fmtOffset(subOffset)}</span>
+                  <button className="step-btn" onClick={() => nudgeSubtitles(50)} title="Subtitles later by 50 ms (H)">+</button>
+                  <span className="sub-hint">G / H · shift = 500 ms</span>
+                </div>
+                <div className="sub-row">
+                  <span className="sub-label">Appearance (only you)</span>
+                  <input
+                    type="range"
+                    className="sub-size"
+                    min="14" max="34"
+                    value={subStyle.size}
+                    onChange={(e) => setSubStyle({ ...subStyle, size: Number(e.target.value) })}
+                    title="Size"
+                  />
+                </div>
+                <div className="sub-row">
+                  {SUB_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      className={'swatch' + (subStyle.color === c ? ' sel' : '')}
+                      style={{ background: c }}
+                      onClick={() => setSubStyle({ ...subStyle, color: c })}
+                      title={c}
+                    />
+                  ))}
+                  <button
+                    className={'btn ghost sm' + (subStyle.bg ? ' sel' : '')}
+                    onClick={() => setSubStyle({ ...subStyle, bg: !subStyle.bg })}
+                  >
+                    Backdrop
+                  </button>
+                  <div className="seg">
+                    {SUB_POSITIONS.map(([v, l]) => (
+                      <button key={v} className={subStyle.pos === v ? 'sel' : ''} onClick={() => setSubStyle({ ...subStyle, pos: v })}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
 
           <div className="transport">
             <button className="t-btn" onClick={togglePlay} disabled={playDisabled} title="Play / pause (space)">
@@ -535,9 +722,18 @@ export default function Room() {
               onInput={(e) => { if (videoRef.current) videoRef.current.volume = Number(e.target.value); }}
             />
 
+            <button
+              className={'t-btn cc' + (subPanelOpen ? ' active' : '')}
+              onClick={() => setSubPanelOpen(!subPanelOpen)}
+              title="Subtitles"
+            >
+              CC
+            </button>
+
             <button className="t-btn" onClick={fullscreen} title="Fullscreen">
               <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
+          </div>
           </div>
         </section>
 

@@ -39,16 +39,18 @@ async function main() {
   check('create-room returns 5-char code', /^[A-Z2-9]{5}$/.test(created.code));
   check('creator is in user list', created.users.length === 1 && created.users[0].name === 'Alice');
   check('initial state paused at 0', created.state.playing === false && created.state.time === 0);
+  check('initial subtitle offset is 0', created.state.subOffset === 0);
   check('join response carries history array', Array.isArray(created.history));
 
   // --- B joins with wrong code first, then the right one ---
   const bad = await new Promise((res) => b.emit('join-room', { code: 'ZZZZZ', name: 'Bob' }, res));
   check('wrong code rejected', !!bad.error);
 
-  const bEvents = { playback: [], chat: [], users: [] };
+  const bEvents = { playback: [], chat: [], users: [], subtitle: [] };
   b.on('playback', (m) => bEvents.playback.push(m));
   b.on('chat', (m) => bEvents.chat.push(m));
   b.on('users', (m) => bEvents.users.push(m));
+  b.on('subtitle', (m) => bEvents.subtitle.push(m));
 
   const joined = await new Promise((res) => b.emit('join-room', { code: created.code, name: 'Bob' }, res));
   check('join-room succeeds', joined.code === created.code);
@@ -88,6 +90,15 @@ async function main() {
   const p2 = await new Promise((res) => a.emit('time-update', 10, res));
   check('paused position does not drift', p1.expected === 10 && p2.expected === 10);
 
+  // --- subtitle delay: broadcast to the room, clamped, persisted in state ---
+  a.emit('subtitle', { offset: 350 });
+  await wait(200);
+  const subMsg = bEvents.subtitle.find((m) => m.offset === 350);
+  check('B receives subtitle offset with actor', subMsg && subMsg.name === 'Alice');
+  a.emit('subtitle', { offset: 999999 });
+  await wait(200);
+  check('subtitle offset clamped to ±60s', bEvents.subtitle.some((m) => m.offset === 60000));
+
   // --- chat both ways ---
   a.emit('chat', 'hello from alice');
   b.emit('chat', 'hi from bob');
@@ -101,6 +112,7 @@ async function main() {
   const cJoined = await new Promise((res) => c.emit('join-room', { code: created.code, name: 'Cleo' }, res));
   check('late joiner sees paused at 10', cJoined.state.playing === false && cJoined.state.time === 10);
   check('late joiner sees 3 users', cJoined.users.length === 3);
+  check('late joiner inherits room subtitle offset', cJoined.state.subOffset === 60000);
 
   // --- reconnect grace: leave + rejoin within window = no chat spam ---
   const e = io(URL);
