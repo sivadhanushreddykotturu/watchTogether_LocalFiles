@@ -354,13 +354,39 @@ export default function Room() {
     };
     const onSeeked = () => {
       updateTimeline();
+      updateSubtitles();
       if (guardRef.current.seek > 0) { guardRef.current.seek--; return; }
       emitPlayback('seek');
     };
     const onEnded = () => { setPlaying(false); releaseWakeLock(); };
-    const onTime = () => updateTimeline();
+
+    const updateSubtitles = () => {
+      const v = videoRef.current;
+      const cues = cuesRef.current;
+      if (!v || !cues.length || !subsOnRef.current) {
+        setSubText((prev) => (prev ? '' : prev));
+        return;
+      }
+      const t = v.currentTime * 1000 - offsetRef.current;
+      const matching = [];
+      for (let i = 0; i < cues.length; i++) {
+        const c = cues[i];
+        if (t >= c.start && t <= c.end) {
+          matching.push(c.text);
+        }
+      }
+      const out = matching.join('\n');
+      setSubText((prev) => (prev === out ? prev : out));
+    };
+
+    const onTime = () => {
+      updateTimeline();
+      updateSubtitles();
+    };
+
     const onLoadedMetadata = () => {
       updateTimeline();
+      updateSubtitles();
       const v = videoRef.current;
       if (v && v.audioTracks && v.audioTracks.length > 1) {
         const list = [];
@@ -445,20 +471,7 @@ export default function Room() {
     nowTickRef.current = setInterval(() => {
       setNowInfo({ ...latestStateRef.current });
     }, 1000);
-    subTimerRef.current = setInterval(() => {
-      const v = videoRef.current;
-      const cues = cuesRef.current;
-      if (!v || !cues.length || !subsOnRef.current) {
-        setSubText((prev) => (prev ? '' : prev));
-        return;
-      }
-      const t = v.currentTime * 1000 - offsetRef.current;
-      let out = '';
-      for (const c of cues) {
-        if (t >= c.start && t <= c.end) { out = c.text; break; }
-      }
-      setSubText((prev) => (prev === out ? prev : out));
-    }, 200);
+    subTimerRef.current = setInterval(updateSubtitles, 80);
 
     // --- saved subtitle appearance (per person, this device only) ---
     try {
