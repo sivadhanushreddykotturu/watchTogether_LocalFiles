@@ -337,6 +337,8 @@ export default function Room() {
     setStateLatest(state.playing, state.time);
     const video = videoRef.current;
     if (!fileLoadedRef.current || !video) { updateTimeline(); return; }
+    video.muted = false;
+    video.volume = volume;
     const guard = guardRef.current;
 
     if (Math.abs(video.currentTime - state.time) > 0.5) {
@@ -746,7 +748,13 @@ export default function Room() {
   const onPickFile = async (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    videoRef.current.src = URL.createObjectURL(file);
+    const v = videoRef.current;
+    if (v) {
+      v.src = URL.createObjectURL(file);
+      v.volume = volume;
+      v.muted = false;
+      v.defaultMuted = false;
+    }
     fileLoadedRef.current = true;
     setPlayDisabled(false);
     setPickerOpen(false);
@@ -792,6 +800,8 @@ export default function Room() {
   const togglePlay = () => {
     const v = videoRef.current;
     if (!fileLoadedRef.current || !v) return;
+    v.muted = false;
+    v.volume = volume;
     if (v.paused) v.play(); else v.pause();
   };
 
