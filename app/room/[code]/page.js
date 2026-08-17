@@ -150,15 +150,54 @@ export default function Room() {
     selectTrack(nextTrack.id, true);
   };
 
-  const selectAudioTrack = (trackId, announce = true) => {
+  const audioCacheRef = useRef({});
+
+  const selectAudioTrack = async (trackId, announce = true) => {
     activeAudioTrackIdRef.current = trackId;
     setActiveAudioTrackId(trackId);
 
     const video = videoRef.current;
     const list = audioTracksRef.current;
     const found = list.find((a) => a.id === trackId);
+    if (!found) return;
 
-    // If browser supports HTML5 video.audioTracks API
+    // 1. If we already have this converted track in cache, switch instantly!
+    if (audioCacheRef.current[trackId]) {
+      const audioUrl = audioCacheRef.current[trackId];
+      if (extAudioRef.current) {
+        extAudioRef.current.src = audioUrl;
+        extAudioRef.current.load();
+        extAudioRef.current.muted = false;
+        extAudioRef.current.volume = volume;
+        if (video) {
+          extAudioRef.current.currentTime = video.currentTime;
+          extAudioRef.current.playbackRate = video.playbackRate;
+          if (!video.paused) {
+            extAudioRef.current.play().catch((e) => console.warn('Cached audio play:', e));
+          }
+        }
+      }
+      setExtAudioName(`${found.label} (Cached)`);
+      if (announce) toast(`✓ Switched audio to: ${found.label}`);
+      return;
+    }
+
+    // 2. Check if track needs conversion (EAC3, AC3, DTS)
+    const isUnsupported = found.codec && (
+      found.codec.includes('AC3') ||
+      found.codec.includes('EAC3') ||
+      found.codec.includes('DTS')
+    );
+
+    if (isUnsupported && loadedFileRef.current) {
+      if (announce) {
+        toast(`⚡ Converting ${found.label}... current audio continues playing`);
+      }
+      runAudioTranscode(loadedFileRef.current, found.trackNumber || null, trackId, found.label);
+      return;
+    }
+
+    // 3. For native browser tracks (AAC/MP3 in video container)
     if (video && video.audioTracks && video.audioTracks.length > 0) {
       for (let i = 0; i < video.audioTracks.length; i++) {
         const at = video.audioTracks[i];
@@ -166,13 +205,8 @@ export default function Room() {
       }
     }
 
-    if (announce && found) {
+    if (announce) {
       toast(`Audio: ${found.label}`);
-      if (found.codec && (found.codec.includes('AC3') || found.codec.includes('EAC3') || found.codec.includes('DTS'))) {
-        setTimeout(() => {
-          toast('⚠️ This audio is AC3/DTS (silent in web browsers). For audio in browser, use AAC/MP3 or our desktop app.');
-        }, 800);
-      }
     }
   };
 
@@ -819,13 +853,12 @@ export default function Room() {
     toast(`Loaded external audio: “${file.name}”`);
   };
 
-  const runAudioTranscode = async (file, trackNum = null) => {
+  const runAudioTranscode = async (file, trackNum = null, trackId = null, trackLabel = null) => {
     const targetFile = file || loadedFileRef.current;
     if (!targetFile || transcodingAudio) return;
     setTranscodingAudio(true);
     setTranscodeProgress(0);
-    setTranscodeStatus('Extracting audio stream...');
-    toast('⚡ Converting EAC-3 audio for browser...');
+    setTranscodeStatus(`Extracting ${trackLabel ? trackLabel.split(' ')[0] : 'audio'}...`);
     try {
       const aacBlob = await transcodeAudioToMp3(
         targetFile,
@@ -834,8 +867,21 @@ export default function Room() {
         (msg) => setTranscodeStatus(msg)
       );
       const audioUrl = URL.createObjectURL(aacBlob);
-      if (extAudioRef.current) {
+
+      // Cache the converted audio
+      if (trackId) {
+        audioCacheRef.current[trackId] = audioUrl;
+      }
+      if (trackNum) {
+        audioCacheRef.current[`audio-${trackNum}`] = audioUrl;
+      }
+
+      // Only swap immediately if user is still on this track or if no specific track was set
+      const isCurrentTrack = !trackId || activeAudioTrackIdRef.current === trackId;
+
+      if (isCurrentTrack && extAudioRef.current) {
         extAudioRef.current.src = audioUrl;
+        extAudioRef.current.load();
         extAudioRef.current.muted = false;
         extAudioRef.current.volume = volume;
         if (videoRef.current) {
@@ -845,10 +891,12 @@ export default function Room() {
             extAudioRef.current.play().catch((e) => console.warn('Audio auto-play:', e));
           }
         }
+        setExtAudioName(`${trackLabel || 'Auto-transcoded'} (Stereo AAC)`);
+        toast(`✓ ${trackLabel || 'Audio'} converted & active in sync!`);
+      } else {
+        toast(`✓ Converted ${trackLabel || 'track'} in background!`);
       }
-      setExtAudioName('Auto-transcoded (AAC Stereo)');
       setTranscodingAudio(false);
-      toast('✓ EAC-3 audio converted & active in sync!');
     } catch (err) {
       console.error('[ReelSync Transcoder Error]:', err);
       const errMsg = err?.message || String(err) || 'Unknown error';
@@ -863,6 +911,7 @@ export default function Room() {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     loadedFileRef.current = file;
+    audioCacheRef.current = {}; // clear cache for new file
     const v = videoRef.current;
     if (v) {
       v.src = URL.createObjectURL(file);
@@ -900,18 +949,8 @@ export default function Room() {
       if (media.audio && media.audio.length > 0) {
         audioTracksRef.current = media.audio;
         setAudioTracks(media.audio);
-        selectAudioTrack(media.audio[0].id, false);
-
-        // Auto-check if the audio track is EAC-3, AC-3, or DTS (which browsers cannot decode)
         const firstAudio = media.audio[0];
-        const isUnsupported = firstAudio && (
-          firstAudio.codec.includes('AC3') ||
-          firstAudio.codec.includes('EAC3') ||
-          firstAudio.codec.includes('DTS')
-        );
-        if (isUnsupported) {
-          runAudioTranscode(file, firstAudio.trackNumber || null);
-        }
+        selectAudioTrack(firstAudio.id, false);
       } else {
         const defAudio = [{ id: 'default', index: 0, label: 'Default Audio Track' }];
         audioTracksRef.current = defAudio;
