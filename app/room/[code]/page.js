@@ -902,8 +902,8 @@ export default function Room() {
             extAudioRef.current.play().catch((e) => console.warn('Audio auto-play:', e));
           }
         }
-        setExtAudioName(`${trackLabel || 'Auto-transcoded'} (Stereo AAC)`);
-        toast(`✓ ${trackLabel || 'Audio'} converted & active in sync!`);
+        setExtAudioName(`${trackLabel || 'Auto-transcoded'} (Lossless Audio)`);
+        toast(`✓ ${trackLabel || 'Audio'} active in sync!`);
       } else {
         toast(`✓ Converted ${trackLabel || 'track'} in background!`);
       }
