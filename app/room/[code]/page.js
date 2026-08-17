@@ -67,8 +67,6 @@ export default function Room() {
   const screenRef = useRef(null);
   const chatOpenRef = useRef(true);
   const danmakuEnabledRef = useRef(true);
-  const audioCtxRef = useRef(null);
-  const gainNodeRef = useRef(null);
   const peerFilesRef = useRef(new Map());
   const timelineRef = useRef(null);
   const fillRef = useRef(null);
@@ -199,36 +197,13 @@ export default function Room() {
     latestStateRef.current = { playing, time, at: Date.now() };
   };
 
-  // ---------- audio booster (up to 200%) ----------
-  const initAudioBoost = () => {
-    if (audioCtxRef.current || !videoRef.current) return;
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      const source = ctx.createMediaElementSource(videoRef.current);
-      const gain = ctx.createGain();
-      gain.gain.value = volume;
-      source.connect(gain);
-      gain.connect(ctx.destination);
-      audioCtxRef.current = ctx;
-      gainNodeRef.current = gain;
-    } catch (err) {
-      console.warn('AudioContext boost not available:', err);
-    }
-  };
-
+  // ---------- volume control ----------
   const setVol = (v) => {
-    const val = Math.max(0, Math.min(2, Number(v) || 0));
+    const val = Math.max(0, Math.min(1, Number(v) || 0));
     setVolume(val);
-    initAudioBoost();
-    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
-      audioCtxRef.current.resume();
-    }
-    if (gainNodeRef.current) {
-      gainNodeRef.current.gain.value = val;
-    } else if (videoRef.current) {
-      videoRef.current.volume = Math.min(1, val);
+    if (videoRef.current) {
+      videoRef.current.volume = val;
+      videoRef.current.muted = false;
     }
   };
 
@@ -1186,11 +1161,11 @@ export default function Room() {
                 <input
                   type="range"
                   className="volume"
-                  min="0" max="2" step="0.05" value={volume}
+                  min="0" max="1" step="0.05" value={volume}
                   title={`Volume: ${Math.round(volume * 100)}%`}
                   onChange={(e) => setVol(Number(e.target.value))}
                 />
-                <span className={'vol-pct' + (volume > 1 ? ' boosted' : '')}>
+                <span className="vol-pct">
                   {Math.round(volume * 100)}%
                 </span>
               </div>
