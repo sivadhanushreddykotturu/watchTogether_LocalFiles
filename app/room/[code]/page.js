@@ -575,6 +575,17 @@ export default function Room() {
     const onTime = () => {
       updateTimeline();
       updateSubtitles();
+      const ext = extAudioRef.current;
+      const v = videoRef.current;
+      if (ext && ext.src && v && !v.paused) {
+        if (ext.paused) {
+          ext.play().catch(() => {});
+        }
+        const drift = Math.abs(ext.currentTime - v.currentTime);
+        if (drift > 0.08) {
+          ext.currentTime = v.currentTime;
+        }
+      }
     };
 
     const onLoadedMetadata = () => {
