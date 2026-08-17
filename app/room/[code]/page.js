@@ -819,16 +819,17 @@ export default function Room() {
     toast(`Loaded external audio: “${file.name}”`);
   };
 
-  const runAudioTranscode = async (file) => {
+  const runAudioTranscode = async (file, trackNum = null) => {
     const targetFile = file || loadedFileRef.current;
     if (!targetFile || transcodingAudio) return;
     setTranscodingAudio(true);
     setTranscodeProgress(0);
-    setTranscodeStatus('Initializing audio engine...');
+    setTranscodeStatus('Extracting audio stream...');
     toast('⚡ Converting EAC-3 audio for browser...');
     try {
       const aacBlob = await transcodeAudioToMp3(
         targetFile,
+        trackNum,
         (p) => setTranscodeProgress(p),
         (msg) => setTranscodeStatus(msg)
       );
@@ -842,7 +843,7 @@ export default function Room() {
         extAudioRef.current.volume = volume;
         if (playing) extAudioRef.current.play().catch(() => {});
       }
-      setExtAudioName('Auto-transcoded (AAC)');
+      setExtAudioName('Auto-transcoded (AAC Stereo)');
       setTranscodingAudio(false);
       toast('✓ Audio converted & synchronized with video!');
     } catch (err) {
@@ -904,7 +905,7 @@ export default function Room() {
           firstAudio.codec.includes('DTS')
         );
         if (isUnsupported) {
-          runAudioTranscode(file);
+          runAudioTranscode(file, firstAudio.trackNumber || null);
         }
       } else {
         const defAudio = [{ id: 'default', index: 0, label: 'Default Audio Track' }];
