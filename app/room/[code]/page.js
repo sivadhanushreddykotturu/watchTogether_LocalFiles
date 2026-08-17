@@ -741,25 +741,26 @@ export default function Room() {
           <div className="transport-wrap">
             {subPanelOpen && (
               <div className="sub-panel">
-                {audioTracks.length > 1 && (
-                  <div className="sub-row">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                      <span className="sub-label">Audio Track (B key · only you)</span>
+                <div className="sub-row">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                    <span className="sub-label">Audio Track (B key · only you)</span>
+                    {audioTracks.length > 1 && (
                       <span className="sub-badge">{audioTracks.length} Tracks</span>
-                    </div>
-                    <select
-                      className="sub-select"
-                      value={activeAudioTrackId}
-                      onChange={(e) => selectAudioTrack(e.target.value, true)}
-                    >
-                      {audioTracks.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.label}
-                        </option>
-                      ))}
-                    </select>
+                    )}
                   </div>
-                )}
+                  <select
+                    className="sub-select"
+                    value={activeAudioTrackId}
+                    onChange={(e) => selectAudioTrack(e.target.value, true)}
+                    disabled={audioTracks.length <= 1}
+                  >
+                    {audioTracks.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
                 <div className="sub-row">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
