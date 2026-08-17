@@ -12,6 +12,3 @@ services:
         value: "22"
       - key: MONGODB_URI
         sync: false # set in the dashboard — your Atlas connection string
-      # Only needed if the frontend lives on Vercel (split deploy):
-      # - key: ALLOWED_ORIGINS
-      #   value: "https://your-app.vercel.app"

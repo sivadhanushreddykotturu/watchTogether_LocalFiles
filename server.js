@@ -29,12 +29,8 @@ app.prepare().then(() => {
     handle(req, res);
   });
 
-  // Cross-origin sockets only when the frontend is hosted elsewhere (e.g. Vercel).
-  const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const io = new Server(server, allowedOrigins.length ? { cors: { origin: allowedOrigins } } : {});
+  // Same-origin only: the pages and the sockets come from this one service.
+  const io = new Server(server);
   realtime.attach(io);
 
   db.connect().then(() => {

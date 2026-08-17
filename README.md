@@ -29,22 +29,15 @@ npm run build && npm start   # in one terminal
 npm test                     # in another — 26 end-to-end realtime checks
 ```
 
-## Deploy: Render (recommended — everything in one service)
+## Deploy: Render
 
-Vercel serverless can't hold WebSocket connections, so the whole app deploys to Render:
+The app is one long-running Node service — pages and WebSockets same-origin — so it deploys to Render as a single unit. (Vercel's serverless model can't hold WebSocket connections, which is why this isn't a Vercel app.)
 
 1. New **Web Service** → this repo (or use **Blueprint** — `render.yaml` is included)
 2. Build: `npm install && npm run build` · Start: `npm start`
-3. Pick the region closest to your viewers
+3. Pick the region closest to your viewers — it's the biggest latency lever
 4. Env var: `MONGODB_URI` = your Atlas connection string (Network Access: allow `0.0.0.0/0`)
 5. **UptimeRobot**: HTTP monitor on `https://<app>.onrender.com/health`, 5-min interval — keeps the free tier awake 24/7
-
-## Deploy: Vercel frontend + Render realtime (optional split)
-
-If you want the UI on Vercel's CDN, realtime stays on Render:
-
-1. Render service as above, plus env `ALLOWED_ORIGINS=https://<your-app>.vercel.app`
-2. Vercel: import this repo (Next.js auto-detected), env `NEXT_PUBLIC_SOCKET_URL=https://<your-app>.onrender.com`
 
 ## Environment variables
 
@@ -53,5 +46,3 @@ If you want the UI on Vercel's CDN, realtime stays on Render:
 | `MONGODB_URI` | Render / `.env` | Atlas connection string (optional — app runs without it, no persistence) |
 | `PORT` | Render auto | Server port (default 3000) |
 | `LEAVE_GRACE_MS` | optional | Delay before "X left" is announced (default 45000) |
-| `NEXT_PUBLIC_SOCKET_URL` | Vercel only | Point UI at the Render realtime service |
-| `ALLOWED_ORIGINS` | Render only | Comma-separated origins allowed to open sockets |
