@@ -42,6 +42,9 @@ export default function Room() {
   const [playDisabled, setPlayDisabled] = useState(true);
   const [nowInfo, setNowInfo] = useState({ playing: false, time: 0, at: Date.now() });
   const [unread, setUnread] = useState(0);
+  const [chatOpen, setChatOpen] = useState(true);
+  const [dimmed, setDimmed] = useState(false);
+  const [floatingBubbles, setFloatingBubbles] = useState([]);
   const [joinError, setJoinError] = useState('');
   const [subTracks, setSubTracks] = useState([{ id: 'off', label: 'Off / Disabled', cues: [] }]);
   const [activeTrackId, setActiveTrackId] = useState('off');
@@ -56,6 +59,7 @@ export default function Room() {
   // ---------- element refs ----------
   const videoRef = useRef(null);
   const screenRef = useRef(null);
+  const chatOpenRef = useRef(true);
   const timelineRef = useRef(null);
   const fillRef = useRef(null);
   const headRef = useRef(null);
@@ -429,8 +433,16 @@ export default function Room() {
     };
     const onChat = (msg) => {
       setMessages((prev) => [...prev.slice(-499), msg]);
+      if (!msg.system && (!chatOpenRef.current || document.fullscreenElement || window.innerWidth <= 768)) {
+        const bId = Date.now() + Math.random();
+        setFloatingBubbles((prev) => [...prev.slice(-3), { id: bId, text: msg.text, name: msg.name, color: msg.color }]);
+        setTimeout(() => {
+          setFloatingBubbles((prev) => prev.filter((b) => b.id !== bId));
+        }, 4500);
+      }
       if (!chatVisible()) bumpUnread();
     };
+
     const onPeerTime = ({ id, time }) => {
       const p = peersRef.current.get(id);
       if (p) { p.time = time; renderTicks(); }
@@ -499,6 +511,7 @@ export default function Room() {
       if (e.code === 'KeyH') nudgeSubtitles(subStep);
       if (e.code === 'KeyV') cycleSubtitles(); // VLC: V cycles subtitle tracks
       if (e.code === 'KeyB') cycleAudioTrack(); // VLC: B cycles audio tracks
+      if (e.code === 'KeyL' || e.code === 'KeyD') setDimmed((prev) => !prev);
     };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('resize', onResize);
@@ -694,7 +707,7 @@ export default function Room() {
   }
 
   return (
-    <main className="room" data-tab={tab}>
+    <main className={'room' + (dimmed ? ' theater-dim' : '')} data-tab={tab}>
       <header className="room-bar">
         <span className="brand">REEL<span className="brand-accent">SYNC</span></span>
         <button className="code-slate" onClick={copyCode} title="Copy room code">
@@ -705,21 +718,65 @@ export default function Room() {
           <span className="dot"></span><span>{syncOk ? 'in sync' : 'catching up…'}</span>
         </span>
         <span className="spacer"></span>
+        <button
+          className={'btn ghost' + (dimmed ? ' active' : '')}
+          onClick={() => setDimmed(!dimmed)}
+          title="Theater mode (L)"
+        >
+          {dimmed ? '💡 Lights on' : '💡 Dim'}
+        </button>
         <button className="btn ghost" onClick={leave}>Leave</button>
       </header>
 
-      {/* phone-only: one glance tells the call what's happening */}
-      <div className="nowstrip">
-        <span>{nowInfo.playing ? '▶' : '⏸'}</span>
-        <span className="nowtime">{fmt(nowPosition)}</span>
-        <span className="nowstate">{nowInfo.playing ? 'playing' : 'paused'}</span>
+      {/* phone-only quick action bar */}
+      <div className="mobile-actions-bar">
+        <button className="code-slate" onClick={copyCode} title="Copy room code">
+          <span className="slate-label">ROOM</span>
+          <span className="slate-code">{code}</span>
+        </button>
+        <button className={'mobile-action-btn' + (dimmed ? ' active' : '')} onClick={() => setDimmed(!dimmed)}>
+          💡 {dimmed ? 'Lights' : 'Dim'}
+        </button>
+        <button className={'mobile-action-btn' + (subsOn ? ' active' : '')} onClick={() => setSubPanelOpen(!subPanelOpen)}>
+          CC {subsOn ? 'On' : 'Off'}
+        </button>
+        <span className="side-count">{users.length} watching</span>
       </div>
 
-      <div className="stage">
+      <div className={'stage' + (chatOpen ? '' : ' chat-collapsed')}>
         <section className="screen-col">
           <div className="beam" aria-hidden="true"></div>
+
+          {!chatOpen && (
+            <button
+              className="floating-chat-toggle"
+              onClick={() => {
+                chatOpenRef.current = true;
+                setChatOpen(true);
+                setUnread(0);
+              }}
+              title="Open chat"
+              type="button"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="none" stroke="currentColor" strokeWidth="2"/></svg>
+              <span>Chat</span>
+              {unread > 0 && <span className="unread-dot">{unread}</span>}
+            </button>
+          )}
+
           <div className="screen" ref={screenRef}>
             <video ref={videoRef} playsInline></video>
+
+            {floatingBubbles.length > 0 && (
+              <div className="floating-bubbles-layer" aria-live="polite">
+                {floatingBubbles.map((b) => (
+                  <div key={b.id} className="floating-bubble">
+                    <span className="fb-author" style={{ color: b.color }}>{b.name}:</span>
+                    <span className="fb-text">{b.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {subsOn && subText && (
               <div
@@ -850,59 +907,85 @@ export default function Room() {
               </div>
             )}
 
-          <div className="transport">
-            <button className="t-btn" onClick={togglePlay} disabled={playDisabled} title="Play / pause (space)">
-              <svg viewBox="0 0 24 24" width="20" height="20" className={playing ? 'hidden' : ''}><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
-              <svg viewBox="0 0 24 24" width="20" height="20" className={playing ? '' : 'hidden'}><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>
-            </button>
+            <div className="transport">
+              <button className="t-btn" onClick={togglePlay} disabled={playDisabled} title="Play / pause (space)">
+                <svg viewBox="0 0 24 24" width="20" height="20" className={playing ? 'hidden' : ''}><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
+                <svg viewBox="0 0 24 24" width="20" height="20" className={playing ? '' : 'hidden'}><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>
+              </button>
 
-            <div
-              className="timeline"
-              ref={timelineRef}
-              title="Seek"
-              onPointerDown={(e) => {
-                if (!fileLoadedRef.current || !videoRef.current || !videoRef.current.duration) return;
-                scrubbingRef.current = true;
-                timelineRef.current.setPointerCapture(e.pointerId);
-                onScrub(e, false);
-              }}
-              onPointerMove={(e) => { if (scrubbingRef.current) onScrub(e, false); }}
-              onPointerUp={(e) => { if (!scrubbingRef.current) return; scrubbingRef.current = false; onScrub(e, true); }}
-            >
-              <div className="track">
-                <div className="fill" ref={fillRef}></div>
-                <div className="ticks" ref={ticksRef}></div>
-                <div className="head" ref={headRef}></div>
+              <div
+                className="timeline"
+                ref={timelineRef}
+                title="Seek"
+                onPointerDown={(e) => {
+                  if (!fileLoadedRef.current || !videoRef.current || !videoRef.current.duration) return;
+                  scrubbingRef.current = true;
+                  timelineRef.current.setPointerCapture(e.pointerId);
+                  onScrub(e, false);
+                }}
+                onPointerMove={(e) => { if (scrubbingRef.current) onScrub(e, false); }}
+                onPointerUp={(e) => { if (!scrubbingRef.current) return; scrubbingRef.current = false; onScrub(e, true); }}
+              >
+                <div className="track">
+                  <div className="fill" ref={fillRef}></div>
+                  <div className="ticks" ref={ticksRef}></div>
+                  <div className="head" ref={headRef}></div>
+                </div>
               </div>
+
+              <span className="timecode"><span ref={curRef}>0:00</span><span className="sep">/</span><span ref={durRef}>0:00</span></span>
+
+              <input
+                type="range"
+                className="volume"
+                min="0" max="1" step="0.05" defaultValue="1"
+                title="Volume"
+                onInput={(e) => { if (videoRef.current) videoRef.current.volume = Number(e.target.value); }}
+              />
+
+              <button
+                className={'t-btn dim-btn' + (dimmed ? ' active' : '')}
+                onClick={() => setDimmed(!dimmed)}
+                title="Theater mode (L)"
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41M12 6a6 6 0 1 0 0 12 6 6 0 0 0 0-12z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+              </button>
+
+              <button
+                className={'t-btn cc' + (subPanelOpen ? ' active' : '') + (subsOn ? ' on' : '')}
+                onClick={() => setSubPanelOpen(!subPanelOpen)}
+                title="Subtitles (V to cycle)"
+              >
+                CC
+                {subsOn && <span className="cc-dot" />}
+              </button>
+
+              <button className="t-btn" onClick={fullscreen} title="Fullscreen">
+                <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </button>
             </div>
-
-            <span className="timecode"><span ref={curRef}>0:00</span><span className="sep">/</span><span ref={durRef}>0:00</span></span>
-
-            <input
-              type="range"
-              className="volume"
-              min="0" max="1" step="0.05" defaultValue="1"
-              title="Volume"
-              onInput={(e) => { if (videoRef.current) videoRef.current.volume = Number(e.target.value); }}
-            />
-
-            <button
-              className={'t-btn cc' + (subPanelOpen ? ' active' : '') + (subsOn ? ' on' : '')}
-              onClick={() => setSubPanelOpen(!subPanelOpen)}
-              title="Subtitles (V to cycle)"
-            >
-              CC
-              {subsOn && <span className="cc-dot" />}
-            </button>
-
-            <button className="t-btn" onClick={fullscreen} title="Fullscreen">
-              <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </button>
-          </div>
           </div>
         </section>
 
         <aside className="side">
+          <div className="side-top-bar">
+            <div className="side-top-info">
+              <span className="side-title">Live Chat</span>
+              <span className="side-count">({users.length})</span>
+            </div>
+            <button
+              className="side-collapse-btn"
+              onClick={() => {
+                chatOpenRef.current = false;
+                setChatOpen(false);
+              }}
+              title="Collapse chat"
+              type="button"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16"><path d="M5 12h14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg>
+            </button>
+          </div>
+
           <div className="viewers">
             {users.map((u) => (
               <span key={u.id} className={'viewer' + (u.id === meId ? ' me' : '')}>
@@ -937,22 +1020,10 @@ export default function Room() {
         </aside>
       </div>
 
-      {/* phone-only tab bar: chat is the default seat, watch is optional */}
-      <nav className="tabbar">
-        <button className={'tab' + (tab === 'chat' ? ' active' : '')} type="button" onClick={() => setTab('chat')}>
-          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 4h16v12H8l-4 4z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
-          Chat
-          <span className={'badge' + (unread ? '' : ' hidden')}>{unread > 9 ? '9+' : unread}</span>
-        </button>
-        <button className={'tab' + (tab === 'watch' ? ' active' : '')} type="button" onClick={() => setTab('watch')}>
-          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
-          Watch
-        </button>
-      </nav>
-
       <div className="toast-stack">
         {toasts.map((t) => <div key={t.id} className="toast">{t.text}</div>)}
       </div>
     </main>
   );
 }
+
