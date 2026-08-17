@@ -78,7 +78,16 @@ function leaveCurrentRoom(io, socket) {
 }
 
 function joinRoom(io, socket, code, name, { rejoin = false, history } = {}, cb) {
-  leaveCurrentRoom(io, socket);
+  // Same socket re-entering the SAME room (e.g. the React room page mounts
+  // right after create-room): leaving first would evict the empty room out
+  // from under us. Refresh membership quietly instead.
+  const sameRoomReentry = socket.data.room === code && rooms.has(code);
+  if (sameRoomReentry) {
+    rooms.get(code).users.delete(socket.id);
+  } else {
+    leaveCurrentRoom(io, socket);
+  }
+
   const room = rooms.get(code);
   if (!room) {
     if (typeof cb === 'function') cb({ error: 'No room with that code. Check it and try again.' });
@@ -106,7 +115,7 @@ function joinRoom(io, socket, code, name, { rejoin = false, history } = {}, cb) 
     });
   }
   socket.to(code).emit('users', roomUsers(room));
-  if (!rejoin && !pendingLeft) {
+  if (!rejoin && !pendingLeft && !sameRoomReentry) {
     socket.to(code).emit('chat', { system: true, text: `${user.name} joined`, at: Date.now() });
   }
 }

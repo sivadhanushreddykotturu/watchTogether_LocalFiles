@@ -136,6 +136,16 @@ async function main() {
   const rejoin = await new Promise((res) => a.emit('join-room', { code: created.code, name: 'Alice' }, res));
   check('room gone after everyone left (no Mongo in tests)', !!rejoin.error);
 
+  // --- regression: SAME socket creates then re-joins (React room-page flow) ---
+  const s = io(URL);
+  await wait(200);
+  const cr = await new Promise((res) => s.emit('create-room', 'Solo', res));
+  const sj = await new Promise((res) => s.emit('join-room', { code: cr.code, name: 'Solo' }, res));
+  check('same-socket create then join succeeds', !sj.error && sj.code === cr.code);
+  check('same-socket rejoin keeps single membership', sj.users && sj.users.length === 1);
+  s.emit('leave-room');
+  s.close();
+
   a.close(); b.close(); c.close(); e.close(); e2.close();
   console.log(failures === 0 ? '\nAll tests passed.' : `\n${failures} test(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
