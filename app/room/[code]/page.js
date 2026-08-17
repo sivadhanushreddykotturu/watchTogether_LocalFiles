@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
-import { transcodeAudioToMp3 } from '../../../lib/audioTranscoder';
+import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 
 // ---------- helpers ----------
 function fmt(t) {
@@ -495,6 +495,9 @@ export default function Room() {
     sessionRef.current = { code, name };
     setTab(window.innerWidth < 640 ? 'chat' : 'watch');
 
+    // Pre-warm WebAssembly audio engine so it's ready in 0.0s
+    getFFmpeg().catch((e) => console.log('FFmpeg pre-warming:', e));
+
     // --- join ---
     socket.emit('join-room', { code, name }, (res) => {
       if (!res || res.error) {
@@ -542,11 +545,23 @@ export default function Room() {
         emitPlayback('pause');
       }
     };
+    const onSeeking = () => {
+      const v = videoRef.current;
+      const ext = extAudioRef.current;
+      if (ext && ext.src && v) {
+        ext.currentTime = v.currentTime;
+      }
+    };
     const onSeeked = () => {
       updateTimeline();
       updateSubtitles();
-      if (extAudioRef.current && extAudioRef.current.src && videoRef.current) {
-        extAudioRef.current.currentTime = videoRef.current.currentTime;
+      const v = videoRef.current;
+      const ext = extAudioRef.current;
+      if (ext && ext.src && v) {
+        ext.currentTime = v.currentTime;
+        if (!v.paused) {
+          ext.play().catch(() => {});
+        }
       }
       if (guardRef.current.seek > 0) { guardRef.current.seek--; return; }
       emitPlayback('seek');
@@ -600,7 +615,7 @@ export default function Room() {
         });
         checkFileMatch(v.duration, peerFilesRef.current);
       }
-      if (v && v.audioTracks && v.audioTracks.length > 1) {
+      if (v && v.audioTracks && v.audioTracks.length > 1 && (!audioTracksRef.current || audioTracksRef.current.length <= 1)) {
         const list = [];
         for (let i = 0; i < v.audioTracks.length; i++) {
           const at = v.audioTracks[i];
@@ -614,6 +629,7 @@ export default function Room() {
     };
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
+    video.addEventListener('seeking', onSeeking);
     video.addEventListener('seeked', onSeeked);
     video.addEventListener('ended', onEnded);
     video.addEventListener('timeupdate', onTime);
@@ -961,7 +977,21 @@ export default function Room() {
         audioTracksRef.current = media.audio;
         setAudioTracks(media.audio);
         const firstAudio = media.audio[0];
-        selectAudioTrack(firstAudio.id, false);
+        activeAudioTrackIdRef.current = firstAudio.id;
+        setActiveAudioTrackId(firstAudio.id);
+
+        const isUnsupported = firstAudio.codec && (
+          firstAudio.codec.includes('AC3') ||
+          firstAudio.codec.includes('EAC3') ||
+          firstAudio.codec.includes('DTS')
+        );
+
+        if (isUnsupported) {
+          toast(`⚡ Auto-converting ${firstAudio.label.split(' ')[0]} audio...`);
+          runAudioTranscode(file, firstAudio.trackNumber || null, firstAudio.id, firstAudio.label);
+        } else {
+          selectAudioTrack(firstAudio.id, false);
+        }
       } else {
         const defAudio = [{ id: 'default', index: 0, label: 'Default Audio Track' }];
         audioTracksRef.current = defAudio;
