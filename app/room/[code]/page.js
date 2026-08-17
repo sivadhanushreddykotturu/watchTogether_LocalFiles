@@ -81,6 +81,7 @@ export default function Room() {
   // ---------- logic refs (mutable, survive renders; no stale closures) ----------
   const sessionRef = useRef(null);   // { code, name }
   const joinedRef = useRef(false);
+  const userIntentRef = useRef(false);
   const meRef = useRef(null);
   const fileLoadedRef = useRef(false);
   const latestStateRef = useRef({ playing: false, time: 0, at: Date.now() });
@@ -106,7 +107,7 @@ export default function Room() {
   const toast = (text) => {
     const id = ++toastSeq.current;
     setToasts((prev) => [...prev.slice(-3), { id, text }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 2600);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
   };
 
   const selectTrack = (trackId, announce = true) => {
@@ -159,6 +160,11 @@ export default function Room() {
 
     if (announce && found) {
       toast(`Audio: ${found.label}`);
+      if (found.codec && (found.codec.includes('AC3') || found.codec.includes('EAC3') || found.codec.includes('DTS'))) {
+        setTimeout(() => {
+          toast('⚠️ This audio is AC3/DTS (silent in web browsers). For audio in browser, use AAC/MP3 or our desktop app.');
+        }, 800);
+      }
     }
   };
 
@@ -455,14 +461,20 @@ export default function Room() {
       setSyncStatus(true);
       ensureWakeLock();
       if (guardRef.current.play > 0) { guardRef.current.play--; return; }
-      emitPlayback('play');
+      if (userIntentRef.current) {
+        userIntentRef.current = false;
+        emitPlayback('play');
+      }
     };
     const onPause = () => {
       setPlaying(false);
       releaseWakeLock();
       if (guardRef.current.pause > 0) { guardRef.current.pause--; return; }
-      lastLocalPauseRef.current = Date.now();
-      emitPlayback('pause');
+      if (userIntentRef.current) {
+        userIntentRef.current = false;
+        lastLocalPauseRef.current = Date.now();
+        emitPlayback('pause');
+      }
     };
     const onSeeked = () => {
       updateTimeline();
@@ -657,9 +669,19 @@ export default function Room() {
       if (!fileLoadedRef.current || !videoRef.current) return;
       if (e.target.matches('input, textarea')) return;
       const v = videoRef.current;
-      if (e.code === 'Space') { e.preventDefault(); if (v.paused) v.play(); else v.pause(); }
-      if (e.code === 'ArrowRight') v.currentTime = Math.min(v.duration || 0, v.currentTime + 5);
-      if (e.code === 'ArrowLeft') v.currentTime = Math.max(0, v.currentTime - 5);
+      if (e.code === 'Space') {
+        e.preventDefault();
+        userIntentRef.current = true;
+        if (v.paused) v.play(); else v.pause();
+      }
+      if (e.code === 'ArrowRight') {
+        userIntentRef.current = true;
+        v.currentTime = Math.min(v.duration || 0, v.currentTime + 5);
+      }
+      if (e.code === 'ArrowLeft') {
+        userIntentRef.current = true;
+        v.currentTime = Math.max(0, v.currentTime - 5);
+      }
       const subStep = e.shiftKey ? 500 : 50; // VLC: G/H nudge subtitle delay
       if (e.code === 'KeyG') nudgeSubtitles(-subStep);
       if (e.code === 'KeyH') nudgeSubtitles(subStep);
@@ -800,6 +822,7 @@ export default function Room() {
   const togglePlay = () => {
     const v = videoRef.current;
     if (!fileLoadedRef.current || !v) return;
+    userIntentRef.current = true;
     v.muted = false;
     v.volume = volume;
     if (v.paused) v.play(); else v.pause();
@@ -990,9 +1013,7 @@ export default function Room() {
             <div className={'resume' + (resumeOpen ? '' : ' hidden')}>
               <button className="btn primary big" onClick={resume}>Catch up with the room</button>
             </div>
-          </div>
 
-          <div className="transport-wrap">
             {subPanelOpen && (
               <>
                 <div className="sub-backdrop" onClick={() => setSubPanelOpen(false)} />
@@ -1116,7 +1137,9 @@ export default function Room() {
                 </div>
               </>
             )}
+          </div>
 
+          <div className="transport-wrap">
             <div className="transport">
               <button className="t-btn" onClick={togglePlay} disabled={playDisabled} title="Play / pause (space)">
                 {playing ? (
