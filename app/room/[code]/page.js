@@ -546,11 +546,7 @@ export default function Room() {
       }
     };
     const onSeeking = () => {
-      const v = videoRef.current;
-      const ext = extAudioRef.current;
-      if (ext && ext.src && v) {
-        ext.currentTime = v.currentTime;
-      }
+      // Allow hardware decoders to seek without interruption
     };
     const onSeeked = () => {
       updateTimeline();
@@ -592,12 +588,13 @@ export default function Room() {
       updateSubtitles();
       const ext = extAudioRef.current;
       const v = videoRef.current;
-      if (ext && ext.src && v && !v.paused) {
+      // Only correct drift if neither video nor audio is seeking
+      if (ext && ext.src && v && !v.paused && !v.seeking && !ext.seeking) {
         if (ext.paused) {
           ext.play().catch(() => {});
         }
         const drift = Math.abs(ext.currentTime - v.currentTime);
-        if (drift > 0.08) {
+        if (drift > 0.25) {
           ext.currentTime = v.currentTime;
         }
       }
@@ -772,11 +769,21 @@ export default function Room() {
       }
       if (e.code === 'ArrowRight') {
         userIntentRef.current = true;
-        v.currentTime = Math.min(v.duration || 0, v.currentTime + 5);
+        const target = Math.min(v.duration || 0, v.currentTime + 5);
+        v.currentTime = target;
+        if (extAudioRef.current && extAudioRef.current.src) {
+          extAudioRef.current.currentTime = target;
+          if (!v.paused) extAudioRef.current.play().catch(() => {});
+        }
       }
       if (e.code === 'ArrowLeft') {
         userIntentRef.current = true;
-        v.currentTime = Math.max(0, v.currentTime - 5);
+        const target = Math.max(0, v.currentTime - 5);
+        v.currentTime = target;
+        if (extAudioRef.current && extAudioRef.current.src) {
+          extAudioRef.current.currentTime = target;
+          if (!v.paused) extAudioRef.current.play().catch(() => {});
+        }
       }
       const subStep = e.shiftKey ? 500 : 50; // VLC: G/H nudge subtitle delay
       if (e.code === 'KeyG') nudgeSubtitles(-subStep);
@@ -1021,7 +1028,13 @@ export default function Room() {
     fillRef.current.style.width = ratio * 100 + '%';
     headRef.current.style.left = ratio * 100 + '%';
     curRef.current.textContent = fmt(t);
-    if (commit) v.currentTime = t; // fires 'seeked' once -> broadcast
+    if (commit) {
+      v.currentTime = t; // fires 'seeked' once -> broadcast
+      if (extAudioRef.current && extAudioRef.current.src) {
+        extAudioRef.current.currentTime = t;
+        if (!v.paused) extAudioRef.current.play().catch(() => {});
+      }
+    }
   };
 
   const copyCode = async () => {
