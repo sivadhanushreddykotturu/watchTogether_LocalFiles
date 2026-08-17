@@ -845,11 +845,12 @@ export default function Room() {
       }
       setExtAudioName('Auto-transcoded (AAC Stereo)');
       setTranscodingAudio(false);
-      toast('✓ Audio converted & synchronized with video!');
     } catch (err) {
-      console.warn('Audio transcoding error:', err);
+      console.error('[ReelSync Transcoder Error]:', err);
+      const errMsg = err?.message || String(err) || 'Unknown error';
       setTranscodingAudio(false);
-      toast('⚠️ In-browser audio conversion error. You can add an MP3 audio file in CC menu.');
+      setTranscodeStatus(`Error: ${errMsg}`);
+      toast(`⚠️ Audio conversion error: ${errMsg}`);
     }
   };
 
