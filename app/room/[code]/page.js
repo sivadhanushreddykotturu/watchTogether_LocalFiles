@@ -727,9 +727,6 @@ export default function Room() {
           <span className="slate-label">ROOM</span>
           <span className="slate-code">{code}</span>
         </button>
-        <button className={'mobile-action-btn' + (dimmed ? ' active' : '')} onClick={() => setDimmed(!dimmed)}>
-          💡 {dimmed ? 'Lights' : 'Dim'}
-        </button>
         <button className={'mobile-action-btn' + (subsOn ? ' active' : '')} onClick={() => setSubPanelOpen(!subPanelOpen)}>
           CC {subsOn ? 'On' : 'Off'}
         </button>
@@ -805,27 +802,36 @@ export default function Room() {
 
           <div className="transport-wrap">
             {subPanelOpen && (
-              <div className="sub-panel">
-                <div className="sub-row">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                    <span className="sub-label">Audio Track (B key · only you)</span>
-                    {audioTracks.length > 1 && (
-                      <span className="sub-badge">{audioTracks.length} Tracks</span>
-                    )}
+              <>
+                <div className="sub-backdrop" onClick={() => setSubPanelOpen(false)} />
+                <div className="sub-panel">
+                  <div className="sub-panel-head">
+                    <span className="sub-panel-title">Subtitles & Audio</span>
+                    <button className="sub-close-btn" onClick={() => setSubPanelOpen(false)} title="Close">
+                      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
+                    </button>
                   </div>
-                  <select
-                    className="sub-select"
-                    value={activeAudioTrackId}
-                    onChange={(e) => selectAudioTrack(e.target.value, true)}
-                    disabled={audioTracks.length <= 1}
-                  >
-                    {audioTracks.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+
+                  <div className="sub-row">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                      <span className="sub-label">Audio Track (B key · only you)</span>
+                      {audioTracks.length > 1 && (
+                        <span className="sub-badge">{audioTracks.length} Tracks</span>
+                      )}
+                    </div>
+                    <select
+                      className="sub-select"
+                      value={activeAudioTrackId}
+                      onChange={(e) => selectAudioTrack(e.target.value, true)}
+                      disabled={audioTracks.length <= 1}
+                    >
+                      {audioTracks.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
                 <div className="sub-row">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
@@ -900,6 +906,7 @@ export default function Room() {
                   </div>
                 </div>
               </div>
+              </>
             )}
 
             <div className="transport">
