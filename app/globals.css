@@ -413,8 +413,44 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 }
 .seg button.sel { color: var(--accent); background: var(--accent-soft); }
 
-.t-btn.cc { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; }
+.sub-select {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+  appearance: auto;
+}
+.sub-select:focus { border-color: var(--accent); }
+.sub-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.t-btn.cc { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; position: relative; }
 .t-btn.cc.active { color: var(--accent); border-color: var(--accent); }
+.t-btn.cc .cc-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+}
 
 /* ---------------- transport ---------------- */
 

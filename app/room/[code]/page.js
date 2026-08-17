@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getSocket } from '../../../lib/socket';
+import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 
 // ---------- helpers ----------
 function fmt(t) {
@@ -14,35 +15,10 @@ function fmt(t) {
 
 const clockFmt = (at) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-// ---------- subtitles ----------
+// ---------- subtitles & media ----------
 const SUB_COLORS = ['#ffffff', '#facc15', '#86efac', '#67e8f9'];
 const SUB_STYLE_DEFAULT = { size: 20, color: '#ffffff', bg: true, pos: 10 };
 const SUB_POSITIONS = [[4, 'Low'], [10, 'Mid'], [18, 'High']];
-
-// "hh:mm:ss,mmm" / "hh:mm:ss.mmm" / "mm:ss.mmm" -> milliseconds
-function tsToMs(s) {
-  const m = String(s).trim().match(/(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{3})/);
-  if (!m) return null;
-  return (Number(m[1] || 0) * 3600 + Number(m[2]) * 60 + Number(m[3])) * 1000 + Number(m[4]);
-}
-
-// Accepts .srt and .vtt (headers, NOTE/STYLE blocks and cue settings are skipped).
-function parseSubtitles(text) {
-  const cues = [];
-  for (const block of String(text).replace(/\r/g, '').split(/\n\s*\n/)) {
-    const lines = block.trim().split('\n');
-    const ti = lines.findIndex((l) => l.includes('-->'));
-    if (ti === -1) continue;
-    const parts = lines[ti].split('-->');
-    const start = tsToMs(parts[0]);
-    const end = tsToMs(parts[1]);
-    if (start === null || end === null) continue;
-    const cueText = lines.slice(ti + 1).join('\n').replace(/<[^>]+>/g, '').trim();
-    if (cueText) cues.push({ start, end, text: cueText });
-  }
-  cues.sort((a, b) => a.start - b.start);
-  return cues;
-}
 
 // VLC semantics: positive = subtitles appear later.
 const fmtOffset = (o) => (o > 0 ? `+${o} ms` : o < 0 ? `−${Math.abs(o)} ms` : '0 ms');
@@ -67,7 +43,10 @@ export default function Room() {
   const [nowInfo, setNowInfo] = useState({ playing: false, time: 0, at: Date.now() });
   const [unread, setUnread] = useState(0);
   const [joinError, setJoinError] = useState('');
-  const [subName, setSubName] = useState('');
+  const [subTracks, setSubTracks] = useState([{ id: 'off', label: 'Off / Disabled', cues: [] }]);
+  const [activeTrackId, setActiveTrackId] = useState('off');
+  const [audioTracks, setAudioTracks] = useState([{ id: 'default', index: 0, label: 'Default Audio' }]);
+  const [activeAudioTrackId, setActiveAudioTrackId] = useState('default');
   const [subsOn, setSubsOn] = useState(false);
   const [subText, setSubText] = useState('');
   const [subOffset, setSubOffset] = useState(0);
@@ -102,6 +81,10 @@ export default function Room() {
   const scrubbingRef = useRef(false);
   const tabRef = useRef('chat');
   const toastSeq = useRef(0);
+  const subTracksRef = useRef([{ id: 'off', label: 'Off / Disabled', cues: [] }]);
+  const activeTrackIdRef = useRef('off');
+  const audioTracksRef = useRef([{ id: 'default', index: 0, label: 'Default Audio' }]);
+  const activeAudioTrackIdRef = useRef('default');
   const cuesRef = useRef([]);
   const offsetRef = useRef(0);
   const subsOnRef = useRef(false);
@@ -112,6 +95,71 @@ export default function Room() {
     const id = ++toastSeq.current;
     setToasts((prev) => [...prev.slice(-3), { id, text }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 2600);
+  };
+
+  const selectTrack = (trackId, announce = true) => {
+    activeTrackIdRef.current = trackId;
+    setActiveTrackId(trackId);
+    if (trackId === 'off') {
+      subsOnRef.current = false;
+      setSubsOn(false);
+      cuesRef.current = [];
+      setSubText('');
+      if (announce) toast('Subtitles: Off');
+    } else {
+      const track = subTracksRef.current.find((t) => t.id === trackId);
+      if (track) {
+        cuesRef.current = track.cues || [];
+        subsOnRef.current = true;
+        setSubsOn(true);
+        if (announce) toast(`Subtitles: ${track.label}`);
+      }
+    }
+  };
+
+  const cycleSubtitles = () => {
+    const list = subTracksRef.current;
+    if (!list || list.length <= 1) {
+      toast('No alternate subtitle tracks available');
+      return;
+    }
+    const curIdx = list.findIndex((t) => t.id === activeTrackIdRef.current);
+    const nextIdx = (curIdx + 1) % list.length;
+    const nextTrack = list[nextIdx];
+    selectTrack(nextTrack.id, true);
+  };
+
+  const selectAudioTrack = (trackId, announce = true) => {
+    activeAudioTrackIdRef.current = trackId;
+    setActiveAudioTrackId(trackId);
+
+    const video = videoRef.current;
+    const list = audioTracksRef.current;
+    const found = list.find((a) => a.id === trackId);
+
+    // If browser supports HTML5 video.audioTracks API
+    if (video && video.audioTracks && video.audioTracks.length > 0) {
+      for (let i = 0; i < video.audioTracks.length; i++) {
+        const at = video.audioTracks[i];
+        at.enabled = (at.id === trackId || (found && found.index === i));
+      }
+    }
+
+    if (announce && found) {
+      toast(`Audio: ${found.label}`);
+    }
+  };
+
+  const cycleAudioTrack = () => {
+    const list = audioTracksRef.current;
+    if (!list || list.length <= 1) {
+      toast('Only one audio track available');
+      return;
+    }
+    const curIdx = list.findIndex((a) => a.id === activeAudioTrackIdRef.current);
+    const nextIdx = (curIdx + 1) % list.length;
+    const nextTrack = list[nextIdx];
+    selectAudioTrack(nextTrack.id, true);
   };
 
   const setTab = (t) => {
@@ -311,12 +359,27 @@ export default function Room() {
     };
     const onEnded = () => { setPlaying(false); releaseWakeLock(); };
     const onTime = () => updateTimeline();
+    const onLoadedMetadata = () => {
+      updateTimeline();
+      const v = videoRef.current;
+      if (v && v.audioTracks && v.audioTracks.length > 1) {
+        const list = [];
+        for (let i = 0; i < v.audioTracks.length; i++) {
+          const at = v.audioTracks[i];
+          const lang = at.language ? `[${at.language.toUpperCase()}]` : '';
+          const label = (at.label || `Audio Track ${i + 1}`) + (lang ? ` ${lang}` : '');
+          list.push({ id: at.id || `audio-native-${i}`, index: i, label, language: at.language || 'und' });
+        }
+        audioTracksRef.current = list;
+        setAudioTracks(list);
+      }
+    };
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
     video.addEventListener('seeked', onSeeked);
     video.addEventListener('ended', onEnded);
     video.addEventListener('timeupdate', onTime);
-    video.addEventListener('loadedmetadata', onTime);
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
 
     // --- socket events ---
     const onPlayback = ({ action, time, playing: p, name: actor }) => {
@@ -367,7 +430,7 @@ export default function Room() {
       const o = Number(offset) || 0;
       offsetRef.current = o;
       setSubOffset(o);
-      toast(`${actor} set subtitles to ${fmtOffset(o)}`);
+      toast(`${actor} set subtitle delay to ${fmtOffset(o)}`);
     };
     socket.on('playback', onPlayback);
     socket.on('users', onUsers);
@@ -421,6 +484,8 @@ export default function Room() {
       const subStep = e.shiftKey ? 500 : 50; // VLC: G/H nudge subtitle delay
       if (e.code === 'KeyG') nudgeSubtitles(-subStep);
       if (e.code === 'KeyH') nudgeSubtitles(subStep);
+      if (e.code === 'KeyV') cycleSubtitles(); // VLC: V cycles subtitle tracks
+      if (e.code === 'KeyB') cycleAudioTrack(); // VLC: B cycles audio tracks
     };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('resize', onResize);
@@ -441,7 +506,7 @@ export default function Room() {
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('ended', onEnded);
       video.removeEventListener('timeupdate', onTime);
-      video.removeEventListener('loadedmetadata', onTime);
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('resize', onResize);
       document.removeEventListener('keydown', onKey);
@@ -477,19 +542,30 @@ export default function Room() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      const cues = parseSubtitles(String(reader.result || ''));
-      if (!cues.length) { toast('No cues found — is that an .srt or .vtt?'); return; }
-      cuesRef.current = cues;
-      setSubName(file.name);
-      subsOnRef.current = true;
-      setSubsOn(true);
-      toast(`Subtitles loaded (${cues.length} cues)`);
+      const text = String(reader.result || '');
+      const cues = parseExternalSubtitle(text, file.name);
+      if (!cues.length) {
+        toast('No cues found — is that an .srt, .vtt, or .ass file?');
+        return;
+      }
+      const extTrack = {
+        id: `external-${Date.now()}`,
+        type: 'external',
+        label: `${file.name} (external)`,
+        language: 'ext',
+        cues,
+      };
+      const nonExt = subTracksRef.current.filter((t) => !t.id.startsWith('external-'));
+      const nextTracks = [...nonExt, extTrack];
+      subTracksRef.current = nextTracks;
+      setSubTracks(nextTracks);
+      selectTrack(extTrack.id, true);
     };
     reader.readAsText(file);
   };
 
   // ---------- UI handlers ----------
-  const onPickFile = (e) => {
+  const onPickFile = async (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     videoRef.current.src = URL.createObjectURL(file);
@@ -498,6 +574,41 @@ export default function Room() {
     setPickerOpen(false);
     toast(`Loaded “${file.name}”`);
     applyState(latestStateRef.current); // line up with the room
+
+    // Auto-detect embedded subtitles & audio tracks from video file
+    try {
+      const media = await detectMediaTracks(file);
+      if (media.subtitles && media.subtitles.length > 0) {
+        const nextTracks = [{ id: 'off', label: 'Off / Disabled', cues: [] }, ...media.subtitles];
+        subTracksRef.current = nextTracks;
+        setSubTracks(nextTracks);
+        // Default to the first embedded subtitle track
+        selectTrack(media.subtitles[0].id, false);
+        const trackLangs = media.subtitles
+          .map((t) => (t.language && t.language !== 'und' ? t.language.toUpperCase() : t.label))
+          .join(', ');
+        toast(`Found ${media.subtitles.length} subtitle track${media.subtitles.length > 1 ? 's' : ''} (${trackLangs}) — ${media.subtitles[0].label} active`);
+      } else {
+        const nonEmbedded = subTracksRef.current.filter((t) => t.type === 'external');
+        const nextTracks = [{ id: 'off', label: 'Off / Disabled', cues: [] }, ...nonEmbedded];
+        subTracksRef.current = nextTracks;
+        setSubTracks(nextTracks);
+        if (!nonEmbedded.length) selectTrack('off', false);
+      }
+
+      if (media.audio && media.audio.length > 0) {
+        audioTracksRef.current = media.audio;
+        setAudioTracks(media.audio);
+        selectAudioTrack(media.audio[0].id, false);
+      } else {
+        const defAudio = [{ id: 'default', index: 0, label: 'Default Audio Track' }];
+        audioTracksRef.current = defAudio;
+        setAudioTracks(defAudio);
+        selectAudioTrack('default', false);
+      }
+    } catch (err) {
+      console.warn('Could not extract media tracks:', err);
+    }
   };
 
   const togglePlay = () => {
@@ -617,8 +728,8 @@ export default function Room() {
               </label>
               <h2 className="picker-title">Reel it in</h2>
               <p className="picker-text">Pick your copy of the file this room is watching. It never leaves your machine — only play, pause and seek are shared.</p>
-              <p className="picker-format">MP4 (H.264) plays everywhere. MKV won't play in a browser.</p>
-              <input type="file" id="fileInput" ref={fileInputRef} accept="video/*" hidden onChange={onPickFile} />
+              <p className="picker-format">MP4 (H.264), WebM, and MKV with embedded or external subtitles & audio tracks.</p>
+              <input type="file" id="fileInput" ref={fileInputRef} accept="video/*,.mkv,.mp4,.webm" hidden onChange={onPickFile} />
               <p className="picker-hint">{pickerHint}</p>
             </div>
 
@@ -630,26 +741,64 @@ export default function Room() {
           <div className="transport-wrap">
             {subPanelOpen && (
               <div className="sub-panel">
+                {audioTracks.length > 1 && (
+                  <div className="sub-row">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                      <span className="sub-label">Audio Track (B key · only you)</span>
+                      <span className="sub-badge">{audioTracks.length} Tracks</span>
+                    </div>
+                    <select
+                      className="sub-select"
+                      value={activeAudioTrackId}
+                      onChange={(e) => selectAudioTrack(e.target.value, true)}
+                    >
+                      {audioTracks.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div className="sub-row">
-                  <span className="sub-label">Subtitle file (stays on your device)</span>
-                  <label className="btn ghost sm" htmlFor="subInput">{subName ? 'Change file' : 'Load .srt / .vtt'}</label>
-                  <input id="subInput" type="file" accept=".srt,.vtt" hidden onChange={onPickSubs} />
-                  {subName && (
-                    <>
-                      <span className="sub-name" title={subName}>{subName}</span>
-                      <button className={'btn ghost sm' + (subsOn ? ' sel' : '')} onClick={toggleSubs}>
-                        {subsOn ? 'On' : 'Off'}
-                      </button>
-                    </>
-                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                    <span className="sub-label">Subtitle Track (V key · only you)</span>
+                    {subTracks.filter((t) => t.type === 'embedded').length > 0 && (
+                      <span className="sub-badge">
+                        {subTracks.filter((t) => t.type === 'embedded').length} Embedded
+                      </span>
+                    )}
+                  </div>
+                  <select
+                    className="sub-select"
+                    value={activeTrackId}
+                    onChange={(e) => selectTrack(e.target.value, true)}
+                  >
+                    {subTracks.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
+
                 <div className="sub-row">
-                  <span className="sub-label">Delay — room-wide</span>
+                  <span className="sub-label">External file (SRT / VTT / ASS · only you)</span>
+                  <label className="btn ghost sm" htmlFor="subInput" style={{ cursor: 'pointer' }}>
+                    {subTracks.some((t) => t.type === 'external') ? 'Change external file' : '+ Add subtitle file'}
+                  </label>
+                  <input id="subInput" type="file" accept=".srt,.vtt,.ass,.ssa" hidden onChange={onPickSubs} />
+                </div>
+
+                <div className="sub-row">
+                  <span className="sub-label">Delay — Room-Wide (G / H keys · synced)</span>
                   <button className="step-btn" onClick={() => nudgeSubtitles(-50)} title="Subtitles earlier by 50 ms (G)">−</button>
                   <span className="sub-offset">{fmtOffset(subOffset)}</span>
                   <button className="step-btn" onClick={() => nudgeSubtitles(50)} title="Subtitles later by 50 ms (H)">+</button>
-                  <span className="sub-hint">G / H · shift = 500 ms</span>
+                  <span className="sub-hint">V / B keys cycle · shift = 500 ms</span>
                 </div>
+
                 <div className="sub-row">
                   <span className="sub-label">Appearance (only you)</span>
                   <input
@@ -661,6 +810,7 @@ export default function Room() {
                     title="Size"
                   />
                 </div>
+
                 <div className="sub-row">
                   {SUB_COLORS.map((c) => (
                     <button
@@ -723,11 +873,12 @@ export default function Room() {
             />
 
             <button
-              className={'t-btn cc' + (subPanelOpen ? ' active' : '')}
+              className={'t-btn cc' + (subPanelOpen ? ' active' : '') + (subsOn ? ' on' : '')}
               onClick={() => setSubPanelOpen(!subPanelOpen)}
-              title="Subtitles"
+              title="Subtitles (V to cycle)"
             >
               CC
+              {subsOn && <span className="cc-dot" />}
             </button>
 
             <button className="t-btn" onClick={fullscreen} title="Fullscreen">
