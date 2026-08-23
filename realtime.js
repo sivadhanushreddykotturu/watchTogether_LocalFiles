@@ -29,7 +29,8 @@ async function makeCode() {
 // Where the room's playback head is right now, derived from the last control action.
 function currentPosition(state) {
   if (!state.playing) return state.time;
-  return state.time + (Date.now() - state.updatedAt) / 1000;
+  const rate = Number(state.speed) || 1;
+  return state.time + ((Date.now() - state.updatedAt) / 1000) * rate;
 }
 
 function roomUsers(room) {
@@ -45,7 +46,7 @@ function freshRoom(code, state) {
     code,
     users: new Map(),
     recentlyLeft: new Map(),
-    state: state || { playing: false, time: 0, updatedAt: Date.now(), subOffset: 0, source: null, queue: [] },
+    state: state || { playing: false, time: 0, updatedAt: Date.now(), subOffset: 0, source: null, queue: [], speed: 1 },
   };
 }
 
@@ -116,6 +117,7 @@ function joinRoom(io, socket, code, name, { rejoin = false, history } = {}, cb) 
           subOffset: room.state.subOffset || 0,
           source: room.state.source || null,
           queue: room.state.queue || [],
+          speed: room.state.speed || 1,
         },
         history,
       });
@@ -222,6 +224,8 @@ function attach(io) {
       const room = rooms.get(socket.data.room);
       if (!room) return;
       const rate = Math.min(2, Math.max(0.5, Number(speed) || 1));
+      room.state.time = currentPosition(room.state);
+      room.state.updatedAt = Date.now();
       room.state.speed = rate;
       const user = room.users.get(socket.id);
       socket.to(room.code).emit('playback-speed', {

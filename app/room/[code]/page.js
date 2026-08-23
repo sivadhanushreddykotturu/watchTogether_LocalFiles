@@ -141,6 +141,7 @@ export default function Room() {
   const offsetRef = useRef(0);
   const subsOnRef = useRef(false);
   const subTimerRef = useRef(null);
+  const speedRef = useRef(1);
   const sourceRef = useRef(null);          // mirror of `source` for event handlers
   const ytRef = useRef(null);              // YT.Player instance
   const ytHostRef = useRef(null);          // div the iframe replaces
@@ -327,23 +328,38 @@ export default function Room() {
   const changeSpeed = (s, announce = true) => {
     const spd = Number(s) || 1;
     setSpeed(spd);
+    speedRef.current = spd;
     if (videoRef.current) videoRef.current.playbackRate = spd;
     if (extAudioRef.current) extAudioRef.current.playbackRate = spd;
-    if (ytRef.current?.setPlaybackRate) ytRef.current.setPlaybackRate(spd);
+    if (ytRef.current?.setPlaybackRate) {
+      try { ytRef.current.setPlaybackRate(spd); } catch {}
+    }
     const socket = getSocket();
     if (socket.connected) socket.emit('playback-speed', spd);
     if (announce) toast(`Playback speed: ${spd}x`);
   };
 
-  // ---------- subtle live reactions ----------
+  // ---------- live emoji reactions ----------
+  const addReactionBubble = (emoji, id = null) => {
+    const item = {
+      id: id || Date.now() + Math.random(),
+      emoji: String(emoji || '🍿'),
+      left: 25 + Math.random() * 65,      // % — scattered across 25% to 90%
+      drift: -50 + Math.random() * 100,   // px of sideways wander
+      size: 26 + Math.random() * 16,      // px
+      dur: 2.2 + Math.random() * 1.2,     // seconds
+      rot: -25 + Math.random() * 50,      // deg
+    };
+    setReactions((prev) => [...prev.slice(-15), item]);
+    setTimeout(() => {
+      setReactions((prev) => prev.filter((r) => r.id !== item.id));
+    }, item.dur * 1000 + 300);
+  };
+
   const sendReaction = (emoji) => {
     const socket = getSocket();
     if (socket.connected) socket.emit('reaction', emoji);
-    const id = Date.now() + Math.random();
-    setReactions((prev) => [...prev.slice(-8), { id, emoji }]);
-    setTimeout(() => {
-      setReactions((prev) => prev.filter((r) => r.id !== id));
-    }, 2200);
+    addReactionBubble(emoji);
   };
 
   // ---------- timestamp jump in chat ----------
@@ -641,6 +657,16 @@ export default function Room() {
         setQueue(res.state.queue);
         queueRef.current = res.state.queue;
       }
+      if (res.state.speed) {
+        const s = Number(res.state.speed) || 1;
+        setSpeed(s);
+        speedRef.current = s;
+        if (videoRef.current) videoRef.current.playbackRate = s;
+        if (extAudioRef.current) extAudioRef.current.playbackRate = s;
+        if (ytRef.current?.setPlaybackRate) {
+          try { ytRef.current.setPlaybackRate(s); } catch {}
+        }
+      }
       setUsers(res.users);
       setMessages(Array.isArray(res.history) ? res.history : []);
       if (res.state.playing) {
@@ -806,27 +832,20 @@ export default function Room() {
     };
 
     const onPlaybackSpeed = ({ speed: spd, name: actor }) => {
-      setSpeed(spd);
-      if (videoRef.current) videoRef.current.playbackRate = spd;
-      if (ytRef.current?.setPlaybackRate) ytRef.current.setPlaybackRate(spd);
-      toast(`${actor} set speed to ${spd}x`);
+      const s = Number(spd) || 1;
+      setSpeed(s);
+      speedRef.current = s;
+      if (videoRef.current) videoRef.current.playbackRate = s;
+      if (extAudioRef.current) extAudioRef.current.playbackRate = s;
+      if (ytRef.current?.setPlaybackRate) {
+        try { ytRef.current.setPlaybackRate(s); } catch {}
+      }
+      toast(`${actor} set speed to ${s}x`);
     };
 
-    const onReaction = ({ emoji, id }) => {
-      // each reaction gets its own scatter: spot, sideways wander, size, spin, pace
-      const item = {
-        id: id || Date.now() + Math.random(),
-        emoji,
-        left: 35 + Math.random() * 60,      // % — scattered across the right 60%
-        drift: -40 + Math.random() * 80,    // px of sideways wander
-        size: 22 + Math.random() * 18,      // px
-        dur: 2.4 + Math.random() * 1.4,     // seconds
-        rot: -24 + Math.random() * 48,      // deg
-      };
-      setReactions((prev) => [...prev.slice(-11), item]);
-      setTimeout(() => {
-        setReactions((prev) => prev.filter((r) => r.id !== item.id));
-      }, item.dur * 1000 + 250);
+    const onReaction = ({ emoji, id, sender }) => {
+      if (sender && meRef.current && sender === meRef.current.id) return;
+      addReactionBubble(emoji, id);
     };
 
     const onPeerFileMeta = ({ id, duration, size, name: fileName }) => {
@@ -1120,6 +1139,9 @@ export default function Room() {
         events: {
           onReady: (e) => {
             ytLastRef.current = { t: 0, at: Date.now(), playing: false };
+            if (speedRef.current && typeof e.target.setPlaybackRate === 'function') {
+              try { e.target.setPlaybackRate(speedRef.current); } catch {}
+            }
             applyState(latestStateRef.current); // join mid-playback if the room is rolling
             if (latestStateRef.current.playing) {
               guardRef.current.play++;
@@ -1973,16 +1995,16 @@ export default function Room() {
 
               <select
                 className="speed-select"
-                value={speed}
+                value={String(speed)}
                 onChange={(e) => changeSpeed(e.target.value)}
                 title="Playback speed (synced)"
               >
                 <option value="0.5">0.5x</option>
                 <option value="0.75">0.75x</option>
-                <option value="1.0">1.0x</option>
+                <option value="1">1.0x</option>
                 <option value="1.25">1.25x</option>
                 <option value="1.5">1.5x</option>
-                <option value="2.0">2.0x</option>
+                <option value="2">2.0x</option>
               </select>
 
               <div className="volume-wrap">
@@ -2329,6 +2351,20 @@ export default function Room() {
                     ))}
                   </div>
                 )}
+              </div>
+
+              <div className="reaction-bar" style={{ marginTop: 'auto', borderTop: '1px solid var(--line)' }}>
+                {['🍿', '😂', '🔥', '😱', '💀', '❤️'].map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    className="react-btn"
+                    onClick={() => sendReaction(emoji)}
+                    title={`React ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                ))}
               </div>
             </div>
           )}
