@@ -1191,6 +1191,7 @@ export default function Room() {
       ytVideoIdRef.current = currentVideoId;
       ytRef.current = new window.YT.Player(ytHostRef.current, {
         videoId: currentVideoId,
+        host: 'https://www.youtube.com',
         playerVars: {
           autoplay: latestStateRef.current.playing ? 1 : 0,
           controls: 0,
@@ -1202,6 +1203,7 @@ export default function Room() {
           iv_load_policy: 3,
           modestbranding: 1,
           origin: typeof window !== 'undefined' ? window.location.origin : undefined,
+          widget_referrer: typeof window !== 'undefined' ? window.location.href : undefined,
         },
         events: {
           onReady: (e) => {
@@ -1251,8 +1253,8 @@ export default function Room() {
               2: 'That video ID looks invalid — re-copy the link.',
               5: "This video can't play in an embedded player.",
               100: 'Video not found — it may be private or deleted.',
-              101: "The owner doesn't allow embedding this video.",
-              150: "The owner doesn't allow embedding this video.",
+              101: "This video has age/embed restrictions set by YouTube or the creator.",
+              150: "This video is age-restricted (18+) or blocked from external embedding by YouTube.",
             };
             setYtError(map[e.data] || "This video can't be embedded.");
           },
@@ -1950,7 +1952,35 @@ export default function Room() {
             {ytError && (
               <div className="yt-error">
                 <p className="yt-error-main">{ytError}</p>
-                <p className="yt-error-sub">Quick check: open <strong>youtube.com</strong> directly on this device. If that also fails, the block is on your network/DNS, not ReelSync.</p>
+                <p className="yt-error-sub">
+                  If this video is age-restricted (18+), signing in on <a href="https://youtube.com" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-glow)', textDecoration: 'underline' }}>YouTube</a> in your browser or opening it directly will verify your account.
+                </p>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                  {source?.videoId && (
+                    <a
+                      href={`https://www.youtube.com/watch?v=${source.videoId}&t=${Math.floor(nowInfo.time || 0)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn primary"
+                      style={{ padding: '6px 14px', fontSize: '12px', borderRadius: '8px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <span>▶ Open on YouTube at {fmt(nowInfo.time || 0)}</span>
+                    </a>
+                  )}
+                  {queue.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      style={{ padding: '6px 14px', fontSize: '12px', borderRadius: '8px' }}
+                      onClick={() => {
+                        const socket = getSocket();
+                        if (socket.connected) socket.emit('queue-next');
+                      }}
+                    >
+                      ⏭ Skip to Next in Queue
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
