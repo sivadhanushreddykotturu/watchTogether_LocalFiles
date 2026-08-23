@@ -1708,16 +1708,19 @@ export default function Room() {
             if (voiceAudioRef.current) voiceAudioRef.current.appendChild(el);
           },
         });
-        setMicOn(true);
-        socket.emit('voice-state', { on: true });
-        toast('Mic is live — everyone can hear you');
+        setMicOn(false);
+        toast("You're in voice — you can hear everyone. Tap the mic to talk.");
+      } catch {
+        toast('Could not join voice — try again.');
+      }
+    } else {
+      try {
+        const on = await voice.enableMic(!voice.micOn);
+        setMicOn(on);
+        socket.emit('voice-state', { on });
       } catch {
         toast('Mic failed — check the browser permission and try again.');
       }
-    } else {
-      const on = await voice.toggleMic();
-      setMicOn(on);
-      socket.emit('voice-state', { on });
     }
   };
 
