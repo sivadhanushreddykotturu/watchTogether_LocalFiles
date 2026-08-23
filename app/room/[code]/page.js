@@ -1569,7 +1569,7 @@ export default function Room() {
   const handleQueueAdd = async (playNow = false) => {
     const parsed = parseMediaUrl(queueInput);
     if (!parsed) {
-      toast("Paste a valid link (YouTube, Pornhub, Xvideos, SpankBang, Streamtape, or MP4)");
+      toast("Paste a valid YouTube or PH link");
       return;
     }
     const socket = getSocket();
@@ -2758,7 +2758,7 @@ export default function Room() {
                   <input
                     type="text"
                     className="queue-input"
-                    placeholder="Paste link (YouTube, Pornhub, Xvideos, SpankBang, MP4)..."
+                    placeholder="Paste YouTube or PH link…"
                     value={queueInput}
                     onChange={(e) => setQueueInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleQueueAdd(false); }}
