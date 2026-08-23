@@ -297,8 +297,6 @@ export default function Room() {
     tabRef.current = t;
     setTabState(t);
     if (t === 'chat') {
-      const el = chatScrollRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
       maybeClearUnread();
     }
   };
@@ -1228,11 +1226,27 @@ export default function Room() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source?.videoId, source?.type]);
 
-  // autoscroll chat on new messages when visible
+  // autoscroll chat on new messages or when switching to chat tab or expanding sidebar
   useEffect(() => {
-    const el = chatScrollRef.current;
-    if (el && chatVisible()) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+    if (tab === 'chat' && chatOpen) {
+      maybeClearUnread();
+      const scrollDown = () => {
+        const el = chatScrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      };
+      scrollDown();
+      const raf1 = requestAnimationFrame(scrollDown);
+      const raf2 = requestAnimationFrame(() => requestAnimationFrame(scrollDown));
+      const t1 = setTimeout(scrollDown, 50);
+      const t2 = setTimeout(scrollDown, 150);
+      return () => {
+        cancelAnimationFrame(raf1);
+        cancelAnimationFrame(raf2);
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [tab, chatOpen, messages]);
 
   // unread count in the tab title
   useEffect(() => {
