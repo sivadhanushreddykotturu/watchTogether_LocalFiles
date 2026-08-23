@@ -7,6 +7,15 @@ import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
+import { VoiceSession } from '../../../lib/voice';
+
+// mic icons for the viewer chips
+const micIcon = (on) =>
+  on ? (
+    <svg viewBox="0 0 24 24" width="13" height="13"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3z" fill="currentColor"/><path d="M19 11a7 7 0 0 1-14 0" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round"/><path d="M12 18v3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+  ) : (
+    <svg viewBox="0 0 24 24" width="13" height="13"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3z" fill="currentColor"/><path d="M19 11a7 7 0 0 1-14 0" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round"/><path d="M12 18v3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M4 4l16 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+  );
 
 // ---------- helpers ----------
 function fmt(t) {
@@ -69,6 +78,9 @@ export default function Room() {
   const searchDebounceRef = useRef(null);
   const [adBreak, setAdBreak] = useState(false);
   const [ytError, setYtError] = useState('');
+  const [micOn, setMicOn] = useState(false);
+  const [peerVoice, setPeerVoice] = useState({}); // socketId -> true while their mic is live
+  const [speakers, setSpeakers] = useState({});  // socketId -> true while speaking
   const [ytTopBarVisible, setYtTopBarVisible] = useState(false);
   const [ytSettingsOpen, setYtSettingsOpen] = useState(false);
   const [ytQuality, setYtQuality] = useState('auto');
@@ -173,6 +185,8 @@ export default function Room() {
   const ytLastRef = useRef({ t: 0, at: 0, playing: false }); // seek detection
   const ytTickRef = useRef(null);
   const ytStallRef = useRef(false); // "playing" but clock frozen = ad (or stall)
+  const voiceRef = useRef(null); // VoiceSession, created lazily
+  const voiceAudioRef = useRef(null); // hidden container for remote audio elements
 
   const ytMode = () => sourceRef.current?.type === 'youtube';
   const setSourceState = (s) => {
@@ -689,6 +703,7 @@ export default function Room() {
         }
       }
       setUsers(res.users);
+      setPeerVoice(res.voice || {});
       setMessages(Array.isArray(res.history) ? res.history : []);
       if (res.state.playing) {
         setPickerHint(`The room is already watching — at ${fmt(res.state.time)} and rolling.`);
@@ -836,6 +851,10 @@ export default function Room() {
         next.set(u.id, { name: u.name, color: u.color, time: prev ? prev.time : undefined });
       }
       peersRef.current = next;
+      setPeerVoice((prev) => {
+        const ids = new Set(list.map((u) => u.id));
+        return Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(id)));
+      });
       renderTicks();
     };
     const onChat = (msg) => {
@@ -922,6 +941,9 @@ export default function Room() {
       setSubOffset(o);
       toast(`${actor} set subtitle delay to ${fmtOffset(o)}`);
     };
+    const onPeerVoice = ({ id, on }) => {
+      setPeerVoice((prev) => ({ ...prev, [id]: !!on }));
+    };
     const onSource = ({ source: s, playing: p, time, name: actor }) => {
       setSourceState(s);
       setStateLatest(p, time);
@@ -977,6 +999,7 @@ export default function Room() {
     socket.on('disconnect', onDisconnect);
     socket.on('subtitle', onSubtitle);
     socket.on('source', onSource);
+    socket.on('peer-voice', onPeerVoice);
     socket.on('queue-update', onQueueUpdate);
 
     // --- heartbeat + now-strip + subtitle ticker ---
@@ -1101,6 +1124,7 @@ export default function Room() {
       socket.off('disconnect', onDisconnect);
       socket.off('subtitle', onSubtitle);
       socket.off('source', onSource);
+      socket.off('peer-voice', onPeerVoice);
       socket.off('queue-update', onQueueUpdate);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
@@ -1122,6 +1146,7 @@ export default function Room() {
       clearInterval(nowTickRef.current);
       clearInterval(subTimerRef.current);
       clearInterval(ytTickRef.current);
+      if (voiceRef.current) voiceRef.current.leave();
       releaseWakeLock();
       if (video.src) { URL.revokeObjectURL(video.src); }
       document.title = 'ReelSync — watch local files together';
@@ -1663,6 +1688,39 @@ export default function Room() {
     toast(`Quality: ${q === 'auto' ? 'Auto (HD)' : q}`);
   };
 
+  // ---------- voice ----------
+  const toggleMic = async () => {
+    const socket = getSocket();
+    if (!voiceRef.current) voiceRef.current = new VoiceSession();
+    const voice = voiceRef.current;
+
+    if (!voice.joined) {
+      try {
+        const res = await new Promise((resolve) => socket.emit('voice-token', resolve));
+        if (!res || res.error) { toast((res && res.error) || 'Voice unavailable.'); return; }
+        await voice.join({
+          url: res.url,
+          token: res.token,
+          onSpeakers: (ids) => setSpeakers(Object.fromEntries(ids.map((id) => [id, true]))),
+          onRemoteAudio: (track) => {
+            const el = track.attach();
+            el.autoplay = true;
+            if (voiceAudioRef.current) voiceAudioRef.current.appendChild(el);
+          },
+        });
+        setMicOn(true);
+        socket.emit('voice-state', { on: true });
+        toast('Mic is live — everyone can hear you');
+      } catch {
+        toast('Mic failed — check the browser permission and try again.');
+      }
+    } else {
+      const on = await voice.toggleMic();
+      setMicOn(on);
+      socket.emit('voice-state', { on });
+    }
+  };
+
   const copyCode = async () => {
     try {
       await navigator.clipboard.writeText(code);
@@ -1785,6 +1843,7 @@ export default function Room() {
           <div className="screen" ref={screenRef}>
             <video ref={videoRef} playsInline className={source?.type === 'youtube' ? 'hidden' : ''} style={{ transform: `scale(${zoom})` }}></video>
             <audio ref={extAudioRef} playsInline style={{ display: 'none' }}></audio>
+            <div ref={voiceAudioRef} style={{ display: 'none' }} aria-hidden="true"></div>
 
             {source?.type === 'youtube' && (
               <>
@@ -2349,12 +2408,31 @@ export default function Room() {
           {tab === 'chat' ? (
             <>
               <div className="viewers">
-                {users.map((u) => (
-                  <span key={u.id} className={'viewer' + (u.id === meId ? ' me' : '')}>
-                    <span className="avatar" style={{ background: u.color }}>{u.name[0].toUpperCase()}</span>
-                    {u.name}
-                  </span>
-                ))}
+                {users.map((u) => {
+                  const isMe = u.id === meId;
+                  const on = isMe ? micOn : !!peerVoice[u.id];
+                  const speaking = !!speakers[u.id];
+                  return (
+                    <span key={u.id} className={'viewer' + (isMe ? ' me' : '')}>
+                      <span className={'avatar' + (speaking ? ' speaking' : '')} style={{ background: u.color }}>{u.name[0].toUpperCase()}</span>
+                      {u.name}
+                      {isMe ? (
+                        <button
+                          type="button"
+                          className={'mic-btn' + (on ? ' on' : '')}
+                          onClick={toggleMic}
+                          title={on ? 'Mute your mic' : 'Unmute your mic'}
+                        >
+                          {micIcon(on)}
+                        </button>
+                      ) : (
+                        <span className={'mic-btn mic-state' + (on ? ' on' : '')} title={on ? `${u.name} is on mic` : `${u.name} is muted`}>
+                          {micIcon(on)}
+                        </span>
+                      )}
+                    </span>
+                  );
+                })}
               </div>
 
               <div className="chat" ref={chatScrollRef}>

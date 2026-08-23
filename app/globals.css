@@ -1541,6 +1541,38 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   color: var(--ink);
 }
 
+/* mic button inside viewer chips */
+.mic-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.mic-btn:hover { color: var(--ink); background: rgba(255, 255, 255, 0.08); }
+.mic-btn.on { color: #4ade80; }
+.mic-btn.on:hover { color: #4ade80; background: rgba(74, 222, 128, 0.12); }
+.mic-btn.mic-state { cursor: default; }
+.mic-btn.mic-state:hover { background: transparent; color: var(--dim); }
+.mic-btn.mic-state.on:hover { color: #4ade80; }
+
+/* speaking indicator: soft green pulse around the avatar */
+.viewer .avatar.speaking {
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.8), 0 0 10px rgba(74, 222, 128, 0.5);
+  animation: speak-pulse 1.2s ease-in-out infinite;
+}
+@keyframes speak-pulse {
+  50% { box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.45), 0 0 4px rgba(74, 222, 128, 0.3); }
+}
+
 /* ── chat message stream ── */
 
 /* min-height: 0 lets the chat shrink and scroll internally */

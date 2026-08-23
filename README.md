@@ -46,3 +46,6 @@ The app is one long-running Node service — pages and WebSockets same-origin �
 | `MONGODB_URI` | Render / `.env` | Atlas connection string (optional — app runs without it, no persistence) |
 | `PORT` | Render auto | Server port (default 3000) |
 | `LEAVE_GRACE_MS` | optional | Delay before "X left" is announced (default 45000) |
+| `LIVEKIT_URL` | Render / `.env` | LiveKit Cloud project URL — enables voice chat (optional; app runs fine without it) |
+| `LIVEKIT_API_KEY` | Render / `.env` | LiveKit Cloud API key |
+| `LIVEKIT_API_SECRET` | Render / `.env` | LiveKit Cloud API secret |

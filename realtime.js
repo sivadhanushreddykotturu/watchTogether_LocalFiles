@@ -2,6 +2,7 @@
 // the Next UI is one client of this; anything else could connect too.
 
 const db = require('./db');
+const { AccessToken } = require('livekit-server-sdk');
 
 // How long to wait before announcing "X left" — mobile lock/unlock blips
 // reconnect within this window and never spam the chat.
@@ -46,7 +47,8 @@ function freshRoom(code, state) {
     code,
     users: new Map(),
     recentlyLeft: new Map(),
-    state: state || { playing: false, time: 0, updatedAt: Date.now(), subOffset: 0, source: null, queue: [], speed: 1 },
+    voice: new Map(), // socketId -> true while their mic is live
+    state: state || { playing: false, time: 0, updatedAt: Date.now(), subOffset: 0, source: null },
   };
 }
 
@@ -60,6 +62,9 @@ function leaveCurrentRoom(io, socket) {
 
   const user = room.users.get(socket.id);
   room.users.delete(socket.id);
+  if (room.voice.delete(socket.id)) {
+    io.to(code).emit('peer-voice', { id: socket.id, on: false });
+  }
   io.to(code).emit('users', roomUsers(room));
 
   if (room.users.size === 0) {
@@ -111,13 +116,12 @@ function joinRoom(io, socket, code, name, { rejoin = false, history } = {}, cb) 
         code,
         self: { id: socket.id, ...user },
         users: roomUsers(room),
+        voice: Object.fromEntries(room.voice),
         state: {
           playing: room.state.playing,
           time: currentPosition(room.state),
           subOffset: room.state.subOffset || 0,
           source: room.state.source || null,
-          queue: room.state.queue || [],
-          speed: room.state.speed || 1,
         },
         history,
       });
@@ -404,6 +408,35 @@ function attach(io) {
         action: 'clear',
       });
       db.saveRoom(room.code, room.state);
+    });
+
+    // --- voice: mint a LiveKit join token. Room membership is the only auth;
+    // the LiveKit room name is just our room code. ---
+    socket.on('voice-token', async (cb) => {
+      const room = rooms.get(socket.data.room);
+      if (!room) return;
+      const { LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET } = process.env;
+      if (!LIVEKIT_URL || !LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
+        if (typeof cb === 'function') cb({ error: 'Voice is not configured on this server yet.' });
+        return;
+      }
+      const user = room.users.get(socket.id);
+      const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
+        identity: socket.id,
+        name: user ? user.name : 'Anonymous',
+        ttl: '6h', // outlasts any movie
+      });
+      at.addGrant({ roomJoin: true, room: room.code, canPublish: true, canSubscribe: true });
+      if (typeof cb === 'function') cb({ token: await at.toJwt(), url: LIVEKIT_URL });
+    });
+
+    // --- mic state relay: lets everyone (even non-voice viewers) see who's live ---
+    socket.on('voice-state', ({ on } = {}) => {
+      const room = rooms.get(socket.data.room);
+      if (!room) return;
+      if (on) room.voice.set(socket.id, true);
+      else room.voice.delete(socket.id);
+      socket.to(room.code).emit('peer-voice', { id: socket.id, on: !!on });
     });
 
     socket.on('leave-room', () => leaveCurrentRoom(io, socket));

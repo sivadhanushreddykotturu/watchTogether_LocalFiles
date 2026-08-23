@@ -36,6 +36,7 @@ async function main() {
 
   // --- A creates a room ---
   const created = await new Promise((res) => a.emit('create-room', 'Alice', res));
+  const aId = created.self.id;
   check('create-room returns 5-char code', /^[A-Z2-9]{5}$/.test(created.code));
   check('creator is in user list', created.users.length === 1 && created.users[0].name === 'Alice');
   check('initial state paused at 0', created.state.playing === false && created.state.time === 0);
@@ -143,7 +144,8 @@ async function main() {
   await wait(200);
   const srcMsg = bSrc.find((m) => m.source && m.source.type === 'youtube');
   check('B receives YouTube source with videoId+actor', srcMsg && srcMsg.source.videoId === 'dQw4w9WgXcQ' && srcMsg.name === 'Alice');
-  check('source switch resets playhead', srcMsg && srcMsg.time === 0 && srcMsg.playing === false);
+  check('source switch resets playhead', srcMsg && srcMsg.time === 0);
+  check('queued YouTube starts playing automatically', srcMsg && srcMsg.playing === true);
 
   a.emit('source', { type: 'youtube', videoId: 'not-a-real-id' });
   await wait(300);
@@ -158,6 +160,26 @@ async function main() {
   await wait(200);
   check('switch back to local clears source', bSrc.some((m) => m.source === null));
   f.close();
+
+  // --- voice: token requires env (absent in tests), mic state relays ---
+  const noToken = await new Promise((res) => a.emit('voice-token', res));
+  check('voice-token without env fails gracefully', !!(noToken && noToken.error));
+
+  const bVoice = [];
+  b.on('peer-voice', (m) => bVoice.push(m));
+  a.emit('voice-state', { on: true });
+  await wait(200);
+  check('B sees A go live on mic', bVoice.some((m) => m.id === aId && m.on === true));
+
+  const g = io(URL);
+  await wait(200);
+  const gJoin = await new Promise((res) => g.emit('join-room', { code: created.code, name: 'Gus' }, res));
+  check('late joiner sees existing mic state', gJoin.voice && gJoin.voice[aId] === true);
+
+  a.emit('voice-state', { on: false });
+  await wait(200);
+  check('B sees A mute', bVoice.some((m) => m.id === aId && m.on === false));
+  g.close();
 
   // --- B leaves for real: announcement arrives after the grace window ---
   b.emit('leave-room');

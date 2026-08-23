@@ -17,6 +17,8 @@
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "cross-env": "^10.1.0",
+    "livekit-client": "^2.22.0",
+    "livekit-server-sdk": "^2.18.0",
     "mongodb": "^7.5.0",
     "next": "^16.3.1",
     "react": "^19.2.8",
