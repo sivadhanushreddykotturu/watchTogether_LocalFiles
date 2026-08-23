@@ -15,9 +15,6 @@ const PORT = process.env.PORT || 3000;
 
 app.prepare().then(() => {
   const server = http.createServer((req, res) => {
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
-
     // Render health check + UptimeRobot ping target (keeps the free instance awake).
     if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });

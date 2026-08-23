@@ -1047,7 +1047,12 @@ export default function Room() {
       ytVideoIdRef.current = source.videoId;
       ytRef.current = new window.YT.Player(ytHostRef.current, {
         videoId: source.videoId,
-        playerVars: { rel: 0, playsinline: 1 },
+        playerVars: {
+          rel: 0,
+          playsinline: 1,
+          enablejsapi: 1,
+          origin: typeof window !== 'undefined' ? window.location.origin : undefined,
+        },
         events: {
           onReady: () => {
             ytLastRef.current = { t: 0, at: Date.now(), playing: false };
