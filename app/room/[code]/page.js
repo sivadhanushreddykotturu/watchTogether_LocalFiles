@@ -2,9 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import dynamic from 'next/dynamic';
-import emojiMartData from '@emoji-mart/data';
-const EmojiMartPicker = dynamic(() => import('@emoji-mart/react'), { ssr: false });
+import AppleEmojiPicker from '../../components/AppleEmojiPicker';
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
@@ -2447,47 +2445,11 @@ export default function Room() {
 
               {emojiPickerOpen && (
                 <div className="emoji-picker-popover" ref={emojiPickerRef}>
-                  <div className="emoji-picker-header">
-                    <span className="ep-title">
-                      <img src={getAppleEmojiUrl('✨')} alt="sparkles" style={{ width: 14, height: 14 }} />
-                      Apple HD Emojis
-                    </span>
-                    <div className="ep-actions">
-                      <button
-                        type="button"
-                        className={'ep-mode-btn' + (emojiTarget === 'react' ? ' active' : '')}
-                        onClick={() => setEmojiTarget('react')}
-                        title="Clicking an emoji spawns it live on the video screen"
-                      >
-                        🚀 React on Screen
-                      </button>
-                      <button
-                        type="button"
-                        className={'ep-mode-btn' + (emojiTarget === 'chat' ? ' active' : '')}
-                        onClick={() => setEmojiTarget('chat')}
-                        title="Clicking an emoji inserts it into the chat box"
-                      >
-                        💬 Insert to Chat
-                      </button>
-                      <button
-                        type="button"
-                        className="ep-close-btn"
-                        onClick={() => setEmojiPickerOpen(false)}
-                        title="Close"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </div>
-                  <EmojiMartPicker
-                    data={emojiMartData}
-                    set="apple"
-                    theme="dark"
-                    autoFocus={true}
-                    previewPosition="none"
-                    skinTonePosition="search"
-                    onEmojiSelect={(e) => {
-                      const char = e.native || e.id;
+                  <AppleEmojiPicker
+                    target={emojiTarget}
+                    onChangeTarget={setEmojiTarget}
+                    onClose={() => setEmojiPickerOpen(false)}
+                    onSelectEmoji={(char) => {
                       if (emojiTarget === 'chat') {
                         if (chatInputRef.current) {
                           chatInputRef.current.value += char;
