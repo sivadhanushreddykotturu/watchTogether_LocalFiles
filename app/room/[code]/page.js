@@ -7,6 +7,7 @@ import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
+import { parseMediaUrl } from '../../../lib/mediaEmbeds';
 import { VoiceSession } from '../../../lib/voice';
 
 // mic icons for the viewer chips
@@ -1529,28 +1530,67 @@ export default function Room() {
 
   const handlePlayYouTube = async (playNow = true, customUrl = null) => {
     const raw = customUrl !== null ? customUrl : ytUrl;
-    const id = parseYouTubeId(raw);
-    if (!id) { toast("That doesn't look like a valid YouTube link"); return; }
+    const parsed = parseMediaUrl(raw);
+    if (!parsed) { toast("Paste a valid video or embed link"); return; }
     const socket = getSocket();
     if (!socket.connected) return;
-    const info = await fetchYouTubeInfo(id);
+
+    let title = parsed.title;
+    if (parsed.type === 'youtube') {
+      const info = await fetchYouTubeInfo(parsed.videoId);
+      title = info.title;
+    }
+
     if (playNow) {
-      socket.emit('source', { type: 'youtube', videoId: id, title: info.title, playing: true });
+      socket.emit('source', {
+        type: parsed.type,
+        videoId: parsed.videoId,
+        embedUrl: parsed.embedUrl,
+        url: parsed.url,
+        title,
+        platform: parsed.platform,
+        playing: true,
+      });
     } else {
-      socket.emit('queue-add', { videoId: id, title: info.title, playNow: false });
+      socket.emit('queue-add', {
+        type: parsed.type,
+        videoId: parsed.videoId,
+        embedUrl: parsed.embedUrl,
+        url: parsed.url,
+        title,
+        platform: parsed.platform,
+        playNow: false,
+      });
     }
     setYtUrl('');
     setYtPanelOpen(false);
   };
 
   const handleQueueAdd = async (playNow = false) => {
-    const id = parseYouTubeId(queueInput);
-    if (!id) { toast("Paste a valid YouTube link or video ID"); return; }
+    const parsed = parseMediaUrl(queueInput);
+    if (!parsed) {
+      toast("Paste a valid link (YouTube, Pornhub, Xvideos, SpankBang, Streamtape, or MP4)");
+      return;
+    }
     const socket = getSocket();
     if (!socket.connected) return;
     setQueueLoading(true);
-    const info = await fetchYouTubeInfo(id);
-    socket.emit('queue-add', { videoId: id, title: info.title, playNow }, () => {
+
+    let title = parsed.title;
+    if (parsed.type === 'youtube') {
+      const info = await fetchYouTubeInfo(parsed.videoId);
+      title = info.title;
+    }
+
+    socket.emit('queue-add', {
+      type: parsed.type,
+      videoId: parsed.videoId,
+      embedUrl: parsed.embedUrl,
+      url: parsed.url,
+      title,
+      platform: parsed.platform,
+      playNow,
+    }, () => {
       setQueueLoading(false);
     });
     setQueueInput('');
@@ -1846,9 +1886,26 @@ export default function Room() {
           )}
 
           <div className="screen" ref={screenRef}>
-            <video ref={videoRef} playsInline className={source?.type === 'youtube' ? 'hidden' : ''} style={{ transform: `scale(${zoom})` }}></video>
+            <video
+              ref={videoRef}
+              playsInline
+              className={source?.type === 'youtube' || source?.type === 'embed' ? 'hidden' : ''}
+              style={{ transform: `scale(${zoom})` }}
+            ></video>
             <audio ref={extAudioRef} playsInline style={{ display: 'none' }}></audio>
             <div ref={voiceAudioRef} style={{ display: 'none' }} aria-hidden="true"></div>
+
+            {source?.type === 'embed' && (
+              <div className="web-embed-wrap" style={{ transform: `scale(${zoom})` }}>
+                <iframe
+                  src={source.embedUrl}
+                  className="web-embed-iframe"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                  allowFullScreen
+                  frameBorder="0"
+                />
+              </div>
+            )}
 
             {source?.type === 'youtube' && (
               <>
@@ -2701,7 +2758,7 @@ export default function Room() {
                   <input
                     type="text"
                     className="queue-input"
-                    placeholder="Paste YouTube link…"
+                    placeholder="Paste link (YouTube, Pornhub, Xvideos, SpankBang, MP4)..."
                     value={queueInput}
                     onChange={(e) => setQueueInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleQueueAdd(false); }}
@@ -2727,10 +2784,10 @@ export default function Room() {
                 </div>
               )}
 
-              {source?.type === 'youtube' && (
+              {source && (
                 <div className="queue-now-playing">
                   <div className="qnp-header">
-                    <span className="qnp-badge">NOW PLAYING</span>
+                    <span className="qnp-badge">NOW PLAYING: {source.platform || (source.type === 'youtube' ? 'YOUTUBE' : 'WEB EMBED')}</span>
                     {queue.length > 0 && (
                       <button type="button" className="qnp-skip-btn" onClick={nextQueueItem} title="Skip to next video in queue">
                         Next ⏭
@@ -2738,16 +2795,22 @@ export default function Room() {
                     )}
                   </div>
                   <div className="qnp-content">
-                    <img
-                      src={`https://img.youtube.com/vi/${source.videoId}/mqdefault.jpg`}
-                      alt="Thumbnail"
-                      className="qnp-thumb"
-                    />
-                    <div className="qnp-info">
-                      <div className="qnp-title" title={source.title || 'YouTube Video'}>
-                        {source.title || 'YouTube Video'}
+                    {source.videoId ? (
+                      <img
+                        src={`https://img.youtube.com/vi/${source.videoId}/mqdefault.jpg`}
+                        alt="Thumbnail"
+                        className="qnp-thumb"
+                      />
+                    ) : (
+                      <div className="qnp-thumb placeholder">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
                       </div>
-                      <div className="qnp-subtitle">Synchronized Room Playback</div>
+                    )}
+                    <div className="qnp-info">
+                      <div className="qnp-title" title={source.title || 'Playing Media'}>
+                        {source.title || 'Playing Media'}
+                      </div>
+                      <div className="qnp-subtitle">{source.platform || 'Online Video Stream'}</div>
                     </div>
                   </div>
                 </div>
@@ -2770,18 +2833,24 @@ export default function Room() {
                       <path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
                     <p>The queue is empty</p>
-                    <span>Search above or paste a YouTube link to queue up videos to watch next together!</span>
+                    <span>Search above or paste any video/embed link to queue up videos to watch next together!</span>
                   </div>
                 ) : (
                   <div className="queue-items">
                     {queue.map((item, idx) => (
                       <div key={item.id || idx} className="queue-item">
                         <span className="qi-index">#{idx + 1}</span>
-                        <img
-                          src={`https://img.youtube.com/vi/${item.videoId}/mqdefault.jpg`}
-                          alt="Thumbnail"
-                          className="qi-thumb"
-                        />
+                        {item.videoId ? (
+                          <img
+                            src={`https://img.youtube.com/vi/${item.videoId}/mqdefault.jpg`}
+                            alt="Thumbnail"
+                            className="qi-thumb"
+                          />
+                        ) : (
+                          <div className="qi-thumb placeholder">
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+                          </div>
+                        )}
                         <div className="qi-details">
                           <div className="qi-title" title={item.title}>
                             {item.title}
