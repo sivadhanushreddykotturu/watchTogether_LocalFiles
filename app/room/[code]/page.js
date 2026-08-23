@@ -56,6 +56,13 @@ export default function Room() {
   const searchDebounceRef = useRef(null);
   const [adBreak, setAdBreak] = useState(false);
   const [ytError, setYtError] = useState('');
+  const [ytTopBarVisible, setYtTopBarVisible] = useState(false);
+  const [ytSettingsOpen, setYtSettingsOpen] = useState(false);
+  const [ytQuality, setYtQuality] = useState('auto');
+  const [ytCcOn, setYtCcOn] = useState(false);
+  const [centerPulse, setCenterPulse] = useState(null); // 'play' | 'pause' | null
+  const ytTopBarTimerRef = useRef(null);
+  const centerPulseTimerRef = useRef(null);
   const [syncOk, setSyncOk] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [playDisabled, setPlayDisabled] = useState(true);
@@ -1144,6 +1151,9 @@ export default function Room() {
         videoId: currentVideoId,
         playerVars: {
           autoplay: latestStateRef.current.playing ? 1 : 0,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
           rel: 0,
           playsinline: 1,
           enablejsapi: 1,
@@ -1554,6 +1564,50 @@ export default function Room() {
     }
   };
 
+  const pokeTopBar = () => {
+    setYtTopBarVisible(true);
+    clearTimeout(ytTopBarTimerRef.current);
+    ytTopBarTimerRef.current = setTimeout(() => {
+      setYtTopBarVisible(false);
+    }, 2500);
+  };
+
+  const handleStageClick = () => {
+    togglePlay();
+    const nextAction = playing ? 'pause' : 'play';
+    setCenterPulse(nextAction);
+    clearTimeout(centerPulseTimerRef.current);
+    centerPulseTimerRef.current = setTimeout(() => setCenterPulse(null), 550);
+  };
+
+  const toggleYtCaptions = () => {
+    const yt = ytRef.current;
+    if (!yt) return;
+    const next = !ytCcOn;
+    setYtCcOn(next);
+    try {
+      if (next) {
+        if (typeof yt.loadModule === 'function') yt.loadModule('captions');
+        if (typeof yt.setOption === 'function') yt.setOption('captions', 'track', { languageCode: 'en' });
+      } else {
+        if (typeof yt.unloadModule === 'function') yt.unloadModule('captions');
+        if (typeof yt.setOption === 'function') yt.setOption('captions', 'track', {});
+      }
+    } catch (e) {
+      console.warn('Captions toggle error:', e);
+    }
+    toast(`Captions: ${next ? 'On' : 'Off'}`);
+  };
+
+  const changeYtQuality = (q) => {
+    setYtQuality(q);
+    const yt = ytRef.current;
+    if (yt?.setPlaybackQuality) {
+      try { yt.setPlaybackQuality(q); } catch {}
+    }
+    toast(`Quality: ${q === 'auto' ? 'Auto (HD)' : q}`);
+  };
+
   const copyCode = async () => {
     try {
       await navigator.clipboard.writeText(code);
@@ -1668,9 +1722,102 @@ export default function Room() {
             <audio ref={extAudioRef} playsInline style={{ display: 'none' }}></audio>
 
             {source?.type === 'youtube' && (
-              <div className="yt-host" style={{ transform: `scale(${zoom})` }}>
-                <div ref={ytHostRef} className="yt-frame" />
-              </div>
+              <>
+                <div className="yt-host" style={{ transform: `scale(${zoom})` }}>
+                  <div ref={ytHostRef} className="yt-frame" />
+                </div>
+
+                <div
+                  className="yt-stage-overlay"
+                  onClick={(e) => {
+                    if (e.target.closest('button, select, .yt-settings-popover')) return;
+                    handleStageClick();
+                  }}
+                  onDoubleClick={(e) => {
+                    if (e.target.closest('button, select, .yt-settings-popover')) return;
+                    fullscreen();
+                  }}
+                  onMouseMove={pokeTopBar}
+                  onMouseEnter={pokeTopBar}
+                >
+                  <div className={'yt-top-overlay' + (ytTopBarVisible || ytSettingsOpen ? ' visible' : '')}>
+                    <div className="yt-top-title-wrap" title={source.title || 'YouTube Video'}>
+                      <svg viewBox="0 0 24 24" width="20" height="20" className="yt-top-icon"><path d="M22 12s0-3.3-.42-4.8a2.5 2.5 0 0 0-1.76-1.77C18.25 5 12 5 12 5s-6.25 0-7.82.43A2.5 2.5 0 0 0 2.42 7.2C2 8.7 2 12 2 12s0 3.3.42 4.8c.23.86.9 1.53 1.76 1.77C5.75 19 12 19 12 19s6.25 0 7.82-.43a2.5 2.5 0 0 0 1.76-1.77C22 15.3 22 12 22 12zM10 15.5v-7l6 3.5-6 3.5z" fill="#ff0000"/></svg>
+                      <span className="yt-top-title">{source.title || 'YouTube Video'}</span>
+                    </div>
+
+                    <div className="yt-top-actions">
+                      <button
+                        type="button"
+                        className={'yt-top-btn cc' + (ytCcOn ? ' active' : '')}
+                        onClick={(e) => { e.stopPropagation(); toggleYtCaptions(); }}
+                        title="Toggle Subtitles / Captions"
+                      >
+                        CC
+                      </button>
+
+                      <div className="yt-settings-wrap">
+                        <button
+                          type="button"
+                          className={'yt-top-btn settings' + (ytSettingsOpen ? ' active' : '')}
+                          onClick={(e) => { e.stopPropagation(); setYtSettingsOpen(!ytSettingsOpen); }}
+                          title="Playback Settings (Quality & Speed)"
+                        >
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                        </button>
+
+                        {ytSettingsOpen && (
+                          <div className="yt-settings-popover" onClick={(e) => e.stopPropagation()}>
+                            <div className="yt-settings-header">Playback Settings</div>
+                            <div className="yt-settings-item">
+                              <span className="yt-settings-label">Quality</span>
+                              <select
+                                className="yt-settings-select"
+                                value={ytQuality}
+                                onChange={(e) => changeYtQuality(e.target.value)}
+                              >
+                                <option value="auto">Auto (HD)</option>
+                                <option value="hd1080">1080p HD</option>
+                                <option value="hd720">720p HD</option>
+                                <option value="large">480p</option>
+                                <option value="medium">360p</option>
+                                <option value="small">240p</option>
+                              </select>
+                            </div>
+                            <div className="yt-settings-item">
+                              <span className="yt-settings-label">Speed</span>
+                              <select
+                                className="yt-settings-select"
+                                value={String(speed)}
+                                onChange={(e) => changeSpeed(e.target.value)}
+                              >
+                                <option value="0.25">0.25x</option>
+                                <option value="0.5">0.5x</option>
+                                <option value="0.75">0.75x</option>
+                                <option value="1">1.0x (Normal)</option>
+                                <option value="1.25">1.25x</option>
+                                <option value="1.5">1.5x</option>
+                                <option value="1.75">1.75x</option>
+                                <option value="2">2.0x</option>
+                              </select>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {centerPulse && (
+                    <div className="center-pulse-anim" key={Date.now()}>
+                      {centerPulse === 'play' ? (
+                        <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor"><path d="M8 5.14v13.72c0 .86.94 1.38 1.66.92l10.78-6.86c.69-.44.69-1.4 0-1.84L9.66 4.22A1.08 1.08 0 0 0 8 5.14z"/></svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor"><rect x="6" y="4.5" width="3.5" height="15" rx="1.5"/><rect x="14.5" y="4.5" width="3.5" height="15" rx="1.5"/></svg>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
             )}
 
             {ytError && (
