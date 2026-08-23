@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
-import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo } from '../../../lib/youtube';
+import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
 
 // ---------- helpers ----------
 function fmt(t) {
@@ -46,6 +46,14 @@ export default function Room() {
   const queueRef = useRef([]);
   const [ytPanelOpen, setYtPanelOpen] = useState(false);
   const [ytUrl, setYtUrl] = useState('');
+  const [ytSearchModalOpen, setYtSearchModalOpen] = useState(false);
+  const [ytSearchQuery, setYtSearchQuery] = useState('');
+  const [ytSearchResults, setYtSearchResults] = useState([]);
+  const [ytSearching, setYtSearching] = useState(false);
+  const [ytSearchError, setYtSearchError] = useState('');
+  const [queueTabMode, setQueueTabMode] = useState('search'); // 'search' | 'url'
+  const searchAbortRef = useRef(null);
+  const searchDebounceRef = useRef(null);
   const [adBreak, setAdBreak] = useState(false);
   const [ytError, setYtError] = useState('');
   const [syncOk, setSyncOk] = useState(true);
@@ -1443,6 +1451,62 @@ export default function Room() {
     setYtPanelOpen(false);
   };
 
+  const executeSearch = async (queryText) => {
+    const q = String(queryText || '').trim();
+    if (!q) {
+      setYtSearchResults([]);
+      setYtSearching(false);
+      return;
+    }
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+    }
+    const ctrl = new AbortController();
+    searchAbortRef.current = ctrl;
+    setYtSearching(true);
+    setYtSearchError('');
+    try {
+      const results = await searchYouTube(q, ctrl.signal);
+      if (!ctrl.signal.aborted) {
+        setYtSearchResults(results);
+        setYtSearching(false);
+      }
+    } catch (err) {
+      if (!ctrl.signal.aborted) {
+        setYtSearchError('Failed to load search results. Please try again.');
+        setYtSearching(false);
+      }
+    }
+  };
+
+  const handleSearchInputChange = (text) => {
+    setYtSearchQuery(text);
+    clearTimeout(searchDebounceRef.current);
+    if (!text.trim()) {
+      setYtSearchResults([]);
+      setYtSearching(false);
+      return;
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      executeSearch(text);
+    }, 450);
+  };
+
+  const handleSelectSearchResult = (item, playNow = true) => {
+    if (!item || !item.id) return;
+    const socket = getSocket();
+    if (!socket.connected) return;
+    if (playNow) {
+      socket.emit('source', { type: 'youtube', videoId: item.id, title: item.title });
+      toast(`Playing "${item.title}"`);
+      setYtSearchModalOpen(false);
+      setYtPanelOpen(false);
+    } else {
+      socket.emit('queue-add', { videoId: item.id, title: item.title, playNow: false });
+      toast(`Added "${item.title}" to queue`);
+    }
+  };
+
   const copyCode = async () => {
     try {
       await navigator.clipboard.writeText(code);
@@ -1810,29 +1874,53 @@ export default function Room() {
 
           <div className="transport-wrap">
             {ytPanelOpen && (
-              <div className="sub-panel yt-panel">
-                <div className="sub-row">
-                  <span className="sub-label">YouTube Video</span>
-                  <input
-                    type="text"
-                    className="yt-url"
-                    placeholder="Paste YouTube link…"
-                    value={ytUrl}
-                    onChange={(e) => setYtUrl(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handlePlayYouTube(true); }}
-                  />
-                  <button className="btn primary sm" onClick={() => handlePlayYouTube(true)}>Play Now</button>
-                  <button className="btn ghost sm" onClick={() => handlePlayYouTube(false)}>+ Add to Queue</button>
-                </div>
-                {source?.type === 'youtube' && (
-                  <div className="sub-row">
-                    <button className="btn ghost sm" onClick={switchToLocal}>← Back to local files</button>
-                    {queue.length > 0 && (
-                      <button className="btn ghost sm" onClick={nextQueueItem}>Skip to next ({queue.length} in queue) →</button>
-                    )}
+              <>
+                <div className="sub-backdrop" onClick={() => setYtPanelOpen(false)} />
+                <div className="sub-panel yt-panel">
+                  <div className="sub-panel-head">
+                    <span className="sub-panel-title">YouTube</span>
+                    <button className="sub-close-btn" onClick={() => setYtPanelOpen(false)} title="Close">
+                      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
+                    </button>
                   </div>
-                )}
-              </div>
+                  <div className="sub-row">
+                    <button
+                      className="btn primary"
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '9px 12px' }}
+                      onClick={() => {
+                        setYtPanelOpen(false);
+                        setYtSearchModalOpen(true);
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                      Search YouTube Videos
+                    </button>
+                  </div>
+                  <div className="sub-row">
+                    <span className="sub-label">Or Paste Link</span>
+                    <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
+                      <input
+                        type="text"
+                        className="yt-url"
+                        placeholder="Paste YouTube link…"
+                        value={ytUrl}
+                        onChange={(e) => setYtUrl(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handlePlayYouTube(true); }}
+                      />
+                      <button className="btn primary sm" onClick={() => handlePlayYouTube(true)}>Play</button>
+                      <button className="btn ghost sm" onClick={() => handlePlayYouTube(false)}>+ Queue</button>
+                    </div>
+                  </div>
+                  {source?.type === 'youtube' && (
+                    <div className="sub-row">
+                      <button className="btn ghost sm" onClick={switchToLocal}>← Back to local files</button>
+                      {queue.length > 0 && (
+                        <button className="btn ghost sm" onClick={nextQueueItem}>Skip to next ({queue.length} in queue) →</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
             )}
             <div className="transport">
               <button className="t-btn" onClick={togglePlay} disabled={playDisabled && source?.type !== 'youtube'} title="Play / pause (space)">
@@ -2022,34 +2110,134 @@ export default function Room() {
             </>
           ) : (
             <div className="queue-container">
-              <div className="queue-add-box">
-                <input
-                  type="text"
-                  className="queue-input"
-                  placeholder="Paste YouTube link…"
-                  value={queueInput}
-                  onChange={(e) => setQueueInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleQueueAdd(false); }}
-                />
-                <div className="queue-add-actions">
-                  <button
-                    type="button"
-                    className="btn primary sm"
-                    onClick={() => handleQueueAdd(false)}
-                    disabled={queueLoading || !queueInput.trim()}
-                  >
-                    + Queue
-                  </button>
-                  <button
-                    type="button"
-                    className="btn ghost sm"
-                    onClick={() => handleQueueAdd(true)}
-                    disabled={queueLoading || !queueInput.trim()}
-                  >
-                    ▶ Play Now
-                  </button>
-                </div>
+              <div className="queue-mode-switch">
+                <button
+                  type="button"
+                  className={'q-mode-btn' + (queueTabMode === 'search' ? ' active' : '')}
+                  onClick={() => setQueueTabMode('search')}
+                >
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                  Search YouTube
+                </button>
+                <button
+                  type="button"
+                  className={'q-mode-btn' + (queueTabMode === 'url' ? ' active' : '')}
+                  onClick={() => setQueueTabMode('url')}
+                >
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                  Paste Link
+                </button>
               </div>
+
+              {queueTabMode === 'search' ? (
+                <div className="queue-search-section">
+                  <div className="queue-search-input-wrap">
+                    <input
+                      type="text"
+                      className="queue-input queue-search-input"
+                      placeholder="Search YouTube videos…"
+                      value={ytSearchQuery}
+                      onChange={(e) => handleSearchInputChange(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          clearTimeout(searchDebounceRef.current);
+                          executeSearch(ytSearchQuery);
+                        }
+                      }}
+                    />
+                    {ytSearching ? (
+                      <div className="queue-search-spinner" />
+                    ) : (
+                      <button
+                        type="button"
+                        className="queue-search-btn"
+                        onClick={() => executeSearch(ytSearchQuery)}
+                        title="Search"
+                      >
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="queue-modal-trigger-btn"
+                    onClick={() => setYtSearchModalOpen(true)}
+                  >
+                    <span>Browse in full search window</span>
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                  </button>
+
+                  {ytSearchResults.length > 0 && (
+                    <div className="queue-search-results">
+                      <div className="queue-search-results-header">
+                        <span>Results ({ytSearchResults.length})</span>
+                        <button type="button" className="qsr-clear" onClick={() => { setYtSearchResults([]); setYtSearchQuery(''); }}>Clear</button>
+                      </div>
+                      <div className="queue-search-items">
+                        {ytSearchResults.slice(0, 10).map((video) => (
+                          <div key={video.id} className="queue-search-item">
+                            <div className="qsi-thumb-wrap">
+                              <img src={video.thumbnail} alt={video.title} className="qsi-thumb" />
+                              {video.duration && <span className="qsi-duration">{video.duration}</span>}
+                            </div>
+                            <div className="qsi-info">
+                              <div className="qsi-title" title={video.title}>{video.title}</div>
+                              <div className="qsi-author">{video.author}</div>
+                            </div>
+                            <div className="qsi-actions">
+                              <button
+                                type="button"
+                                className="qi-btn play"
+                                onClick={() => handleSelectSearchResult(video, true)}
+                                title="Play now"
+                              >
+                                ▶
+                              </button>
+                              <button
+                                type="button"
+                                className="qi-btn add"
+                                onClick={() => handleSelectSearchResult(video, false)}
+                                title="Add to queue"
+                              >
+                                ＋
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="queue-add-box">
+                  <input
+                    type="text"
+                    className="queue-input"
+                    placeholder="Paste YouTube link…"
+                    value={queueInput}
+                    onChange={(e) => setQueueInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleQueueAdd(false); }}
+                  />
+                  <div className="queue-add-actions">
+                    <button
+                      type="button"
+                      className="btn primary sm"
+                      onClick={() => handleQueueAdd(false)}
+                      disabled={queueLoading || !queueInput.trim()}
+                    >
+                      + Queue
+                    </button>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      onClick={() => handleQueueAdd(true)}
+                      disabled={queueLoading || !queueInput.trim()}
+                    >
+                      ▶ Play Now
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {source?.type === 'youtube' && (
                 <div className="queue-now-playing">
@@ -2094,7 +2282,7 @@ export default function Room() {
                       <path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
                     <p>The queue is empty</p>
-                    <span>Paste a YouTube link above to queue up videos to watch next together!</span>
+                    <span>Search above or paste a YouTube link to queue up videos to watch next together!</span>
                   </div>
                 ) : (
                   <div className="queue-items">
@@ -2141,6 +2329,132 @@ export default function Room() {
           )}
         </aside>
       </div>
+
+      {ytSearchModalOpen && (
+        <div className="yt-search-modal-backdrop" onClick={() => setYtSearchModalOpen(false)}>
+          <div className="yt-search-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="yt-search-header">
+              <div className="yt-search-input-wrap">
+                <svg className="yt-search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="M21 21l-4.35-4.35" />
+                </svg>
+                <input
+                  type="text"
+                  className="yt-search-input"
+                  placeholder="Search YouTube videos (e.g. songs, trailers, podcasts)..."
+                  value={ytSearchQuery}
+                  autoFocus
+                  onChange={(e) => handleSearchInputChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      clearTimeout(searchDebounceRef.current);
+                      executeSearch(ytSearchQuery);
+                    }
+                    if (e.key === 'Escape') setYtSearchModalOpen(false);
+                  }}
+                />
+                {ytSearching ? (
+                  <div className="yt-search-spinner" />
+                ) : ytSearchQuery ? (
+                  <button className="yt-search-clear" onClick={() => handleSearchInputChange('')} title="Clear">
+                    ✕
+                  </button>
+                ) : null}
+              </div>
+              <button className="sub-close-btn" onClick={() => setYtSearchModalOpen(false)} title="Close (Esc)">
+                <svg viewBox="0 0 24 24" width="18" height="18"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
+              </button>
+            </div>
+
+            {!ytSearchQuery && (
+              <div className="yt-search-suggestions">
+                <span className="yt-sug-label">Popular topics:</span>
+                {['Lofi Hip Hop', 'Synthwave', 'Movie Trailers', 'Chill Beats', 'Podcasts', 'Gaming', 'Top Music Hits'].map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    className="yt-sug-chip"
+                    onClick={() => {
+                      setYtSearchQuery(tag);
+                      executeSearch(tag);
+                    }}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="yt-search-body">
+              {ytSearching && ytSearchResults.length === 0 ? (
+                <div className="yt-search-loading-state">
+                  <div className="yt-search-spinner-lg" />
+                  <p>Searching YouTube...</p>
+                </div>
+              ) : ytSearchError ? (
+                <div className="yt-search-error-state">
+                  <p>{ytSearchError}</p>
+                  <button className="btn ghost sm" onClick={() => executeSearch(ytSearchQuery)}>Retry</button>
+                </div>
+              ) : ytSearchResults.length > 0 ? (
+                <div className="yt-search-grid">
+                  {ytSearchResults.map((video) => (
+                    <div key={video.id} className="yt-card">
+                      <div className="yt-card-thumb-wrap">
+                        <img src={video.thumbnail} alt={video.title} className="yt-card-thumb" />
+                        {video.duration && <span className="yt-card-duration">{video.duration}</span>}
+                      </div>
+                      <div className="yt-card-info">
+                        <div className="yt-card-title" title={video.title}>{video.title}</div>
+                        <div className="yt-card-meta">
+                          <span className="yt-card-author">{video.author}</span>
+                          {video.views && <span className="yt-card-views"> · {video.views}</span>}
+                        </div>
+                        <div className="yt-card-actions">
+                          <button
+                            type="button"
+                            className="btn primary sm"
+                            onClick={() => handleSelectSearchResult(video, true)}
+                            title="Play now for the whole room"
+                          >
+                            ▶ Play Now
+                          </button>
+                          <button
+                            type="button"
+                            className="btn ghost sm"
+                            onClick={() => handleSelectSearchResult(video, false)}
+                            title="Add to shared queue"
+                          >
+                            + Queue
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : ytSearchQuery ? (
+                <div className="yt-search-empty-state">
+                  <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <circle cx="11" cy="11" r="8" />
+                    <path d="M21 21l-4.35-4.35" />
+                  </svg>
+                  <p>No results found for &ldquo;{ytSearchQuery}&rdquo;</p>
+                  <span>Try another search query or paste a direct YouTube link in the URL tab.</span>
+                </div>
+              ) : (
+                <div className="yt-search-placeholder-state">
+                  <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor">
+                    <path d="M22 12s0-3.3-.42-4.8a2.5 2.5 0 0 0-1.76-1.77C18.25 5 12 5 12 5s-6.25 0-7.82.43A2.5 2.5 0 0 0 2.42 7.2C2 8.7 2 12 2 12s0 3.3.42 4.8c.23.86.9 1.53 1.76 1.77C5.75 19 12 19 12 19s6.25 0 7.82-.43a2.5 2.5 0 0 0 1.76-1.77C22 15.3 22 12 22 12zM10 15.5v-7l6 3.5-6 3.5z" />
+                  </svg>
+                  <p>Search YouTube to watch videos together</p>
+                  <span>Type a search query above or pick one of the popular topics to get started.</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="toast-stack">
         {toasts.map((t) => <div key={t.id} className="toast">{t.text}</div>)}
