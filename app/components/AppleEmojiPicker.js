@@ -7,7 +7,6 @@ export function getAppleEmojiUrl(emoji) {
   try {
     const codePoints = Array.from(emoji)
       .map((char) => char.codePointAt(0).toString(16).toLowerCase())
-      .filter((hex) => hex !== 'fe0f')
       .join('-');
     return 'https://cdn.jsdelivr.net/npm/emoji-datasource-apple@15.0.1/img/apple/64/' + codePoints + '.png';
   } catch (e) {
@@ -97,27 +96,25 @@ export default function AppleEmojiPicker({ onSelectEmoji, target = 'react', onCh
   return (
     <div className="ep-container">
       <div className="emoji-picker-header">
-        <span className="ep-title">
-          <img src={getAppleEmojiUrl('✨')} alt="sparkles" style={{ width: 14, height: 14 }} />
-          Apple HD Emojis
-        </span>
-        <div className="ep-actions">
-          <button
-            type="button"
-            className={'ep-mode-btn' + (target === 'react' ? ' active' : '')}
-            onClick={() => onChangeTarget && onChangeTarget('react')}
-            title="Clicking an emoji spawns it live on the video screen"
-          >
-            🚀 React on Screen
-          </button>
-          <button
-            type="button"
-            className={'ep-mode-btn' + (target === 'chat' ? ' active' : '')}
-            onClick={() => onChangeTarget && onChangeTarget('chat')}
-            title="Clicking an emoji inserts it into the chat box"
-          >
-            💬 Insert to Chat
-          </button>
+        <div className="ep-actions" style={{ width: '100%', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              type="button"
+              className={'ep-mode-btn' + (target === 'react' ? ' active' : '')}
+              onClick={() => onChangeTarget && onChangeTarget('react')}
+              title="Clicking an emoji spawns it live on the video screen"
+            >
+              🚀 React on Screen
+            </button>
+            <button
+              type="button"
+              className={'ep-mode-btn' + (target === 'chat' ? ' active' : '')}
+              onClick={() => onChangeTarget && onChangeTarget('chat')}
+              title="Clicking an emoji inserts it into the chat box"
+            >
+              💬 Insert to Chat
+            </button>
+          </div>
           <button
             type="button"
             className="ep-close-btn"

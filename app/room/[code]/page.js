@@ -23,7 +23,6 @@ export function getAppleEmojiUrl(emoji) {
   try {
     const codePoints = Array.from(emoji)
       .map((char) => char.codePointAt(0).toString(16).toLowerCase())
-      .filter((hex) => hex !== 'fe0f')
       .join('-');
     return `https://cdn.jsdelivr.net/npm/emoji-datasource-apple@15.0.1/img/apple/64/${codePoints}.png`;
   } catch (e) {
