@@ -998,9 +998,10 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   background: transparent;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+  position: relative;
 }
 
-/* react buttons: tiny icon-only circles, not big emoji */
+/* react buttons: minimal circle buttons with Apple HD emoji icon */
 .react-btn {
   display: flex;
   align-items: center;
@@ -1024,6 +1025,142 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 }
 .react-btn:active {
   transform: scale(0.92);
+}
+.react-btn.picker-toggle-btn {
+  border-color: var(--border);
+  color: var(--dim);
+  margin-left: 2px;
+}
+.react-btn.picker-toggle-btn:hover,
+.react-btn.picker-toggle-btn.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.apple-btn-emoji {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.4));
+}
+
+.apple-emoji-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.6));
+}
+
+/* ── Apple Emoji Picker Popover ── */
+.emoji-picker-popover {
+  position: absolute;
+  bottom: 56px;
+  right: 12px;
+  z-index: 100;
+  background: rgba(15, 15, 22, 0.95);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid var(--border-mid);
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: popover-slide-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  max-width: calc(100vw - 24px);
+}
+
+@keyframes popover-slide-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.emoji-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  gap: 8px;
+}
+
+.ep-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ep-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ep-mode-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ep-mode-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.ep-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 11px;
+}
+.ep-close-btn:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.chat-emoji-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.chat-emoji-toggle:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+}
+.chat-emoji-toggle.active {
+  color: var(--accent-glow);
+  background: var(--accent-soft);
 }
 
 /* ---------------- danmaku / flying comments ---------------- */

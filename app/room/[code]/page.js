@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
+import emojiMartData from '@emoji-mart/data';
+const EmojiMartPicker = dynamic(() => import('@emoji-mart/react'), { ssr: false });
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
@@ -16,6 +19,19 @@ function fmt(t) {
 }
 
 const clockFmt = (at) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+export function getAppleEmojiUrl(emoji) {
+  if (!emoji) return '';
+  try {
+    const codePoints = Array.from(emoji)
+      .map((char) => char.codePointAt(0).toString(16).toLowerCase())
+      .filter((hex) => hex !== 'fe0f')
+      .join('-');
+    return `https://cdn.jsdelivr.net/npm/emoji-datasource-apple@15.0.1/img/apple/64/${codePoints}.png`;
+  } catch (e) {
+    return '';
+  }
+}
 
 // ---------- subtitles & media ----------
 const SUB_COLORS = ['#ffffff', '#facc15', '#86efac', '#67e8f9'];
@@ -72,6 +88,9 @@ export default function Room() {
   const [dimmed, setDimmed] = useState(false);
   const [floatingBubbles, setFloatingBubbles] = useState([]);
   const [reactions, setReactions] = useState([]);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [emojiTarget, setEmojiTarget] = useState('react'); // 'react' | 'chat'
+  const emojiPickerRef = useRef(null);
   const [speed, setSpeed] = useState(1);
   const [volume, setVolume] = useState(1);
   const [danmakuEnabled, setDanmakuEnabled] = useState(false);
@@ -1248,6 +1267,21 @@ export default function Room() {
     }
   }, [tab, chatOpen, messages]);
 
+  // close emoji picker when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(e.target)) {
+        if (!e.target.closest('.picker-toggle-btn') && !e.target.closest('.chat-emoji-toggle')) {
+          setEmojiPickerOpen(false);
+        }
+      }
+    }
+    if (emojiPickerOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [emojiPickerOpen]);
+
   // unread count in the tab title
   useEffect(() => {
     document.title = unread > 0 ? `(${unread}) ReelSync` : 'ReelSync — watch local files together';
@@ -1873,21 +1907,40 @@ export default function Room() {
 
             {reactions.length > 0 && (
               <div className="reaction-stream" aria-hidden="true">
-                {reactions.map((r) => (
-                  <span
-                    key={r.id}
-                    className="reaction-item"
-                    style={{
-                      left: `${r.left}%`,
-                      fontSize: `${r.size}px`,
-                      animationDuration: `${r.dur}s`,
-                      '--drift': `${r.drift}px`,
-                      '--rot': `${r.rot}deg`,
-                    }}
-                  >
-                    {r.emoji}
-                  </span>
-                ))}
+                {reactions.map((r) => {
+                  const appleUrl = getAppleEmojiUrl(r.emoji);
+                  return (
+                    <span
+                      key={r.id}
+                      className="reaction-item"
+                      style={{
+                        left: `${r.left}%`,
+                        width: `${Math.round(r.size * 1.35)}px`,
+                        height: `${Math.round(r.size * 1.35)}px`,
+                        animationDuration: `${r.dur}s`,
+                        '--drift': `${r.drift}px`,
+                        '--rot': `${r.rot}deg`,
+                      }}
+                    >
+                      {appleUrl ? (
+                        <img
+                          src={appleUrl}
+                          alt={r.emoji}
+                          className="apple-emoji-img"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                            if (e.currentTarget.nextSibling) {
+                              e.currentTarget.nextSibling.style.display = 'inline';
+                            }
+                          }}
+                        />
+                      ) : null}
+                      <span style={{ display: appleUrl ? 'none' : 'inline', fontSize: `${r.size}px` }}>
+                        {r.emoji}
+                      </span>
+                    </span>
+                  );
+                })}
               </div>
             )}
 
@@ -2356,20 +2409,115 @@ export default function Room() {
               </div>
 
               <div className="reaction-bar">
-                {['🍿', '😂', '🔥', '😱', '💀', '❤️'].map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    className="react-btn"
-                    onClick={() => sendReaction(emoji)}
-                    title={`React ${emoji}`}
-                  >
-                    {emoji}
-                  </button>
-                ))}
+                {['🍿', '😂', '🔥', '😱', '💀', '❤️', '🤌', '👀'].map((emoji) => {
+                  const appleUrl = getAppleEmojiUrl(emoji);
+                  return (
+                    <button
+                      key={emoji}
+                      type="button"
+                      className="react-btn"
+                      onClick={() => sendReaction(emoji)}
+                      title={`React with Apple HD ${emoji}`}
+                    >
+                      {appleUrl ? (
+                        <img src={appleUrl} alt={emoji} className="apple-btn-emoji" />
+                      ) : (
+                        emoji
+                      )}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  className={'react-btn picker-toggle-btn' + (emojiPickerOpen && emojiTarget === 'react' ? ' active' : '')}
+                  onClick={() => {
+                    setEmojiTarget('react');
+                    setEmojiPickerOpen((v) => !v);
+                  }}
+                  title="All 2,300+ Apple HD Emojis..."
+                >
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                    <line x1="9" y1="9" x2="9.01" y2="9" strokeWidth="3" />
+                    <line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="3" />
+                  </svg>
+                </button>
               </div>
 
+              {emojiPickerOpen && (
+                <div className="emoji-picker-popover" ref={emojiPickerRef}>
+                  <div className="emoji-picker-header">
+                    <span className="ep-title">
+                      <img src={getAppleEmojiUrl('✨')} alt="sparkles" style={{ width: 14, height: 14 }} />
+                      Apple HD Emojis
+                    </span>
+                    <div className="ep-actions">
+                      <button
+                        type="button"
+                        className={'ep-mode-btn' + (emojiTarget === 'react' ? ' active' : '')}
+                        onClick={() => setEmojiTarget('react')}
+                        title="Clicking an emoji spawns it live on the video screen"
+                      >
+                        🚀 React on Screen
+                      </button>
+                      <button
+                        type="button"
+                        className={'ep-mode-btn' + (emojiTarget === 'chat' ? ' active' : '')}
+                        onClick={() => setEmojiTarget('chat')}
+                        title="Clicking an emoji inserts it into the chat box"
+                      >
+                        💬 Insert to Chat
+                      </button>
+                      <button
+                        type="button"
+                        className="ep-close-btn"
+                        onClick={() => setEmojiPickerOpen(false)}
+                        title="Close"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                  <EmojiMartPicker
+                    data={emojiMartData}
+                    set="apple"
+                    theme="dark"
+                    autoFocus={true}
+                    previewPosition="none"
+                    skinTonePosition="search"
+                    onEmojiSelect={(e) => {
+                      const char = e.native || e.id;
+                      if (emojiTarget === 'chat') {
+                        if (chatInputRef.current) {
+                          chatInputRef.current.value += char;
+                          chatInputRef.current.focus();
+                        }
+                      } else {
+                        sendReaction(char);
+                      }
+                    }}
+                  />
+                </div>
+              )}
+
               <form className="chat-form" onSubmit={sendChat}>
+                <button
+                  type="button"
+                  className={'chat-emoji-toggle' + (emojiPickerOpen && emojiTarget === 'chat' ? ' active' : '')}
+                  onClick={() => {
+                    setEmojiTarget('chat');
+                    setEmojiPickerOpen((v) => !v);
+                  }}
+                  title="Add emoji to chat"
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                    <line x1="9" y1="9" x2="9.01" y2="9" strokeWidth="3" />
+                    <line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="3" />
+                  </svg>
+                </button>
                 <input ref={chatInputRef} type="text" placeholder="Say something…" maxLength={500} autoComplete="off" />
                 <button className="btn primary send-btn" type="submit" title="Send">
                   <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -2594,18 +2742,41 @@ export default function Room() {
                 )}
               </div>
 
-              <div className="reaction-bar" style={{ marginTop: 'auto', borderTop: '1px solid var(--line)' }}>
-                {['🍿', '😂', '🔥', '😱', '💀', '❤️'].map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    className="react-btn"
-                    onClick={() => sendReaction(emoji)}
-                    title={`React ${emoji}`}
-                  >
-                    {emoji}
-                  </button>
-                ))}
+              <div className="reaction-bar" style={{ marginTop: 'auto', borderTop: '1px solid var(--border)' }}>
+                {['🍿', '😂', '🔥', '😱', '💀', '❤️', '🤌', '👀'].map((emoji) => {
+                  const appleUrl = getAppleEmojiUrl(emoji);
+                  return (
+                    <button
+                      key={emoji}
+                      type="button"
+                      className="react-btn"
+                      onClick={() => sendReaction(emoji)}
+                      title={`React with Apple HD ${emoji}`}
+                    >
+                      {appleUrl ? (
+                        <img src={appleUrl} alt={emoji} className="apple-btn-emoji" />
+                      ) : (
+                        emoji
+                      )}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  className={'react-btn picker-toggle-btn' + (emojiPickerOpen && emojiTarget === 'react' ? ' active' : '')}
+                  onClick={() => {
+                    setEmojiTarget('react');
+                    setEmojiPickerOpen((v) => !v);
+                  }}
+                  title="All 2,300+ Apple HD Emojis..."
+                >
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                    <line x1="9" y1="9" x2="9.01" y2="9" strokeWidth="3" />
+                    <line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="3" />
+                  </svg>
+                </button>
               </div>
             </div>
           )}
