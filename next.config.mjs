@@ -8,17 +8,9 @@ const nextConfig = {
   // Socket.IO app: effects manage long-lived listeners; skip dev double-mount noise.
   reactStrictMode: false,
   turbopack: { root: __dirname },
-  async headers() {
-    return [
-      {
-        source: '/:path*',
-        headers: [
-          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
-          { key: 'Cross-Origin-Embedder-Policy', value: 'credentialless' },
-        ],
-      },
-    ];
-  },
+  // NOTE: no COOP/COEP headers here. They existed for ffmpeg.wasm multithread
+  // (SharedArrayBuffer), but the audio engine runs the single-thread core, so
+  // the isolation only served to break the YouTube iframe embed.
 };
 
 export default nextConfig;
