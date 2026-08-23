@@ -42,6 +42,7 @@ export default function Room() {
   const [source, setSource] = useState(null); // { type: 'youtube', videoId } | null (null = local files)
   const [ytPanelOpen, setYtPanelOpen] = useState(false);
   const [ytUrl, setYtUrl] = useState('');
+  const [adBreak, setAdBreak] = useState(false);
   const [syncOk, setSyncOk] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [playDisabled, setPlayDisabled] = useState(true);
@@ -123,6 +124,7 @@ export default function Room() {
   const ytVideoIdRef = useRef(null);
   const ytLastRef = useRef({ t: 0, at: 0, playing: false }); // seek detection
   const ytTickRef = useRef(null);
+  const ytStallRef = useRef(false); // "playing" but clock frozen = ad (or stall)
 
   const ytMode = () => sourceRef.current?.type === 'youtube';
   const setSourceState = (s) => { sourceRef.current = s; setSource(s); };
@@ -538,7 +540,7 @@ export default function Room() {
         if (typeof expected !== 'number') return;
         setStateLatest(playing, expected);
         const drift = expected - yt.getCurrentTime();
-        if (playing && ytPlayingRef.current && Math.abs(drift) > 2) {
+        if (playing && ytPlayingRef.current && !ytStallRef.current && Math.abs(drift) > 2) {
           guardRef.current.seek++;
           yt.seekTo(expected, true);
           setSyncStatus(false);
@@ -855,7 +857,17 @@ export default function Room() {
       const cur = ytRef.current.getCurrentTime();
       const last = ytLastRef.current;
       const now = Date.now();
-      if (last.playing && ytPlayingRef.current) {
+
+      // Ad/stall detection: player reports PLAYING but the clock is frozen.
+      // During an ad we sit out of sync entirely — no seeks, no corrections.
+      const advancing = cur > last.t + 0.05;
+      const stalled = ytPlayingRef.current && !advancing;
+      if (stalled !== ytStallRef.current) {
+        ytStallRef.current = stalled;
+        setAdBreak(stalled);
+      }
+
+      if (last.playing && ytPlayingRef.current && !ytStallRef.current) {
         const expected = last.t + (now - last.at) / 1000;
         if (Math.abs(cur - expected) > 1.2) {
           if (guardRef.current.seek > 0) guardRef.current.seek--;
@@ -1327,8 +1339,8 @@ export default function Room() {
           <span className="slate-label">ROOM</span>
           <span className="slate-code">{code}</span>
         </button>
-        <span className={'sync-status' + (syncOk ? '' : ' behind')}>
-          <span className="dot"></span><span>{syncOk ? 'in sync' : 'catching up…'}</span>
+        <span className={'sync-status' + (syncOk && !adBreak ? '' : ' behind')}>
+          <span className="dot"></span><span>{adBreak ? 'ad break…' : syncOk ? 'in sync' : 'catching up…'}</span>
         </span>
         {fileMatch && (
           <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')} title={fileMatch.match ? 'Exact file match across participants' : `Duration differs by ${fileMatch.delta}s`}>
