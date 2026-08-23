@@ -870,11 +870,27 @@ export default function Room() {
       setSourceState(s);
       setStateLatest(p, time);
       setResumeOpen(false);
-      if (s?.type === 'youtube') {
+      if (s?.type === 'youtube' && s.videoId) {
         toast(`${actor} started playing ${s.title ? `"${s.title}"` : 'a YouTube video'}`);
         // pause local playback quietly — the room has moved on to YouTube
         const v = videoRef.current;
         if (v && !v.paused) { guardRef.current.pause++; v.pause(); }
+
+        // Directly load new video in existing YouTube player to guarantee instant synchronized switch
+        if (ytRef.current && typeof ytRef.current.loadVideoById === 'function') {
+          ytVideoIdRef.current = s.videoId;
+          ytRef.current.loadVideoById({
+            videoId: s.videoId,
+            startSeconds: Number(time) || 0,
+          });
+          if (p) {
+            guardRef.current.play++;
+            if (typeof ytRef.current.playVideo === 'function') ytRef.current.playVideo();
+          } else {
+            guardRef.current.pause++;
+            if (typeof ytRef.current.pauseVideo === 'function') ytRef.current.pauseVideo();
+          }
+        }
       } else {
         toast(`${actor} switched back to local files`);
         if (!fileLoadedRef.current) setPickerHint('Pick your copy of the file to join in.');
@@ -916,10 +932,7 @@ export default function Room() {
       const cur = ytRef.current.getCurrentTime();
       const last = ytLastRef.current;
       const now = Date.now();
-
-      // Ad/stall detection: player reports PLAYING but the clock is frozen.
-      // During an ad we sit out of sync entirely — no seeks, no corrections.
-      const advancing = cur > last.t + 0.05;
+      const advancing = cur !== last.t;
       const stalled = ytPlayingRef.current && !advancing;
       if (stalled !== ytStallRef.current) {
         ytStallRef.current = stalled;
@@ -966,15 +979,14 @@ export default function Room() {
       maybeClearUnread();
     };
     const onResize = () => maybeClearUnread();
+    // hotkeys: space = play/pause, left/right = seek 5s
     const onKey = (e) => {
-      if (!ytMode() && (!fileLoadedRef.current || !videoRef.current)) return;
-      if (e.target.matches('input, textarea')) return;
-      // , / . = silent keyboard zoom (never wakes the on-screen cluster)
-      if (e.code === 'Comma') nudgeZoom(-0.25);
-      if (e.code === 'Period') nudgeZoom(0.25);
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (ytMode()) {
         const yt = ytRef.current;
-        if (!yt || !yt.getCurrentTime) return;
+        if (!yt || !yt.playVideo) return;
         if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
         if (e.code === 'ArrowRight') yt.seekTo(Math.min(yt.getDuration() || 0, yt.getCurrentTime() + 5), true);
         if (e.code === 'ArrowLeft') yt.seekTo(Math.max(0, yt.getCurrentTime() - 5), true);
@@ -1057,30 +1069,37 @@ export default function Room() {
   // YouTube player lifecycle: create once per mount, load on video change,
   // destroy when the room goes back to local files.
   useEffect(() => {
-    if (source?.type !== 'youtube') {
+    if (source?.type !== 'youtube' || !source.videoId) {
       setYtError('');
       if (ytRef.current) {
-        ytRef.current.destroy();
+        try { ytRef.current.destroy(); } catch {}
         ytRef.current = null;
         ytPlayingRef.current = false;
         ytVideoIdRef.current = null;
       }
       return;
     }
+    const currentVideoId = source.videoId;
     let cancelled = false;
     setYtError('');
     loadYouTubeApi().then(() => {
       if (cancelled) return;
-      if (ytRef.current && ytRef.current.loadVideoById) {
-        if (ytVideoIdRef.current !== source.videoId) {
-          ytVideoIdRef.current = source.videoId;
-          ytRef.current.loadVideoById(source.videoId);
+      if (ytRef.current && typeof ytRef.current.loadVideoById === 'function') {
+        if (ytVideoIdRef.current !== currentVideoId) {
+          ytVideoIdRef.current = currentVideoId;
+          ytRef.current.loadVideoById({
+            videoId: currentVideoId,
+            startSeconds: latestStateRef.current.time || 0,
+          });
+          if (latestStateRef.current.playing) {
+            ytRef.current.playVideo();
+          }
         }
         return;
       }
-      ytVideoIdRef.current = source.videoId;
+      ytVideoIdRef.current = currentVideoId;
       ytRef.current = new window.YT.Player(ytHostRef.current, {
-        videoId: source.videoId,
+        videoId: currentVideoId,
         playerVars: {
           rel: 0,
           playsinline: 1,
@@ -1134,12 +1153,12 @@ export default function Room() {
       });
     }).catch(() => {
       if (!cancelled) {
-        setYtError("YouTube can't be reached from this device — an ad-blocker, DNS filter, VPN, or the network is blocking it. Others in the room are unaffected.");
+        setYtError("YouTube can't be reached from this device.");
       }
     });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source]);
+  }, [source?.videoId, source?.type]);
 
   // autoscroll chat on new messages when visible
   useEffect(() => {
