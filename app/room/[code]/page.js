@@ -49,7 +49,7 @@ export default function Room() {
   const [reactions, setReactions] = useState([]);
   const [speed, setSpeed] = useState(1);
   const [volume, setVolume] = useState(1);
-  const [danmakuEnabled, setDanmakuEnabled] = useState(true);
+  const [danmakuEnabled, setDanmakuEnabled] = useState(false);
   const [danmakuList, setDanmakuList] = useState([]);
   const [fileMatch, setFileMatch] = useState(null);
   const [joinError, setJoinError] = useState('');
@@ -62,6 +62,8 @@ export default function Room() {
   const [subOffset, setSubOffset] = useState(0);
   const [subPanelOpen, setSubPanelOpen] = useState(false);
   const [subStyle, setSubStyle] = useState(SUB_STYLE_DEFAULT);
+  const [zoom, setZoom] = useState(1);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [extAudioName, setExtAudioName] = useState('');
   const [transcodingAudio, setTranscodingAudio] = useState(false);
   const [transcodeProgress, setTranscodeProgress] = useState(0);
@@ -73,7 +75,7 @@ export default function Room() {
   const loadedFileRef = useRef(null);
   const screenRef = useRef(null);
   const chatOpenRef = useRef(true);
-  const danmakuEnabledRef = useRef(true);
+  const danmakuEnabledRef = useRef(false);
   const peerFilesRef = useRef(new Map());
   const timelineRef = useRef(null);
   const fillRef = useRef(null);
@@ -462,6 +464,11 @@ export default function Room() {
     setSubsOn(subsOnRef.current);
   }
 
+  // VLC-style zoom: scales the video frame to crop letterbox bars in fullscreen.
+  function nudgeZoom(delta) {
+    setZoom((z) => Math.min(2, Math.max(1, Math.round((z + delta) * 100) / 100)));
+  }
+
   function beat() {
     const socket = getSocket();
     const video = videoRef.current;
@@ -662,12 +669,14 @@ export default function Room() {
           setDanmakuList((prev) => prev.filter((d) => d.id !== dId));
         }, 7000);
       }
+      // transient popup, bottom-right of the screen — the way you actually
+      // notice a text mid-movie (fullscreen / chat collapsed / phone)
       if (!msg.system && (!chatOpenRef.current || document.fullscreenElement || window.innerWidth <= 768)) {
         const bId = Date.now() + Math.random();
-        setFloatingBubbles((prev) => [...prev.slice(-3), { id: bId, text: msg.text, name: msg.name, color: msg.color }]);
+        setFloatingBubbles((prev) => [...prev.slice(-2), { id: bId, text: msg.text, name: msg.name, color: msg.color }]);
         setTimeout(() => {
           setFloatingBubbles((prev) => prev.filter((b) => b.id !== bId));
-        }, 4500);
+        }, 2000);
       }
       if (!chatVisible()) bumpUnread();
     };
@@ -744,11 +753,18 @@ export default function Room() {
     }, 1000);
     subTimerRef.current = setInterval(updateSubtitles, 80);
 
-    // --- saved subtitle appearance (per person, this device only) ---
+    // --- saved subtitle appearance + zoom (per person, this device only) ---
     try {
       const saved = JSON.parse(localStorage.getItem('reelsync:substyle') || 'null');
       if (saved) setSubStyle({ ...SUB_STYLE_DEFAULT, ...saved });
     } catch { /* ignore corrupt prefs */ }
+    try {
+      const savedZoom = Number(localStorage.getItem('reelsync:zoom'));
+      if (savedZoom >= 1 && savedZoom <= 2) setZoom(savedZoom);
+    } catch { /* ignore */ }
+
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFsChange);
 
     // --- page-level listeners ---
     const onVisibility = () => {
@@ -795,6 +811,7 @@ export default function Room() {
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('resize', onResize);
     document.addEventListener('keydown', onKey);
+    // (onFsChange registered above, removed in cleanup)
 
     // --- cleanup: leave the room, drop everything ---
     return () => {
@@ -815,6 +832,7 @@ export default function Room() {
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('resize', onResize);
       document.removeEventListener('keydown', onKey);
+      document.removeEventListener('fullscreenchange', onFsChange);
       clearInterval(heartbeatRef.current);
       clearInterval(nowTickRef.current);
       clearInterval(subTimerRef.current);
@@ -836,10 +854,13 @@ export default function Room() {
     document.title = unread > 0 ? `(${unread}) ReelSync` : 'ReelSync — watch local files together';
   }, [unread]);
 
-  // remember subtitle appearance on this device
+  // remember subtitle appearance + zoom on this device
   useEffect(() => {
     try { localStorage.setItem('reelsync:substyle', JSON.stringify(subStyle)); } catch { /* private mode */ }
   }, [subStyle]);
+  useEffect(() => {
+    try { localStorage.setItem('reelsync:zoom', String(zoom)); } catch { /* private mode */ }
+  }, [zoom]);
 
   const onPickSubs = (e) => {
     const file = e.target.files && e.target.files[0];
@@ -1147,7 +1168,7 @@ export default function Room() {
           )}
 
           <div className="screen" ref={screenRef}>
-            <video ref={videoRef} playsInline></video>
+            <video ref={videoRef} playsInline style={{ transform: `scale(${zoom})` }}></video>
             <audio ref={extAudioRef} playsInline style={{ display: 'none' }}></audio>
 
             {danmakuEnabled && danmakuList.length > 0 && (
@@ -1178,6 +1199,14 @@ export default function Room() {
                     <span className="fb-text">{b.text}</span>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {isFullscreen && (
+              <div className="zoom-controls">
+                <button type="button" onClick={() => nudgeZoom(0.25)} title="Zoom in (crops black bars)">+</button>
+                <button type="button" className="zoom-level" onClick={() => setZoom(1)} title="Reset zoom">{Math.round(zoom * 100)}%</button>
+                <button type="button" onClick={() => nudgeZoom(-0.25)} title="Zoom out" disabled={zoom <= 1}>−</button>
               </div>
             )}
 
