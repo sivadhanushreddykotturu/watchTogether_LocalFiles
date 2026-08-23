@@ -1919,11 +1919,14 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 14px;
+  padding: 6px 14px;
+  margin-top: 4px;
+  margin-bottom: 6px;
   min-height: 24px;
   font-size: 11.5px;
   color: var(--muted);
   animation: typing-fade-in 0.2s ease-out;
+  flex-shrink: 0;
 }
 
 @keyframes typing-fade-in {

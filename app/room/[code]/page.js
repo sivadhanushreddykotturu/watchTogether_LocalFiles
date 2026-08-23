@@ -1374,7 +1374,7 @@ export default function Room() {
         clearTimeout(t2);
       };
     }
-  }, [tab, chatOpen, messages]);
+  }, [tab, chatOpen, messages, typingUsers]);
 
   // close emoji picker when clicking outside
   useEffect(() => {
@@ -2752,36 +2752,36 @@ export default function Room() {
                     );
                   })
                 )}
-              </div>
 
-              {(() => {
-                const typers = Object.values(typingUsers);
-                if (typers.length === 0) return null;
-                let textNode;
-                if (typers.length === 1) {
-                  textNode = (
-                    <span>
-                      <b style={{ color: typers[0].color }}>{typers[0].name}</b> is typing
-                    </span>
+                {(() => {
+                  const typers = Object.values(typingUsers);
+                  if (typers.length === 0) return null;
+                  let textNode;
+                  if (typers.length === 1) {
+                    textNode = (
+                      <span>
+                        <b style={{ color: typers[0].color }}>{typers[0].name}</b> is typing
+                      </span>
+                    );
+                  } else if (typers.length === 2) {
+                    textNode = (
+                      <span>
+                        <b style={{ color: typers[0].color }}>{typers[0].name}</b> and <b style={{ color: typers[1].color }}>{typers[1].name}</b> are typing
+                      </span>
+                    );
+                  } else {
+                    textNode = <span>Several people are typing</span>;
+                  }
+                  return (
+                    <div className="chat-typing-indicator" aria-live="polite">
+                      <span className="typing-dots">
+                        <span /><span /><span />
+                      </span>
+                      <span className="typing-text">{textNode}</span>
+                    </div>
                   );
-                } else if (typers.length === 2) {
-                  textNode = (
-                    <span>
-                      <b style={{ color: typers[0].color }}>{typers[0].name}</b> and <b style={{ color: typers[1].color }}>{typers[1].name}</b> are typing
-                    </span>
-                  );
-                } else {
-                  textNode = <span>Several people are typing</span>;
-                }
-                return (
-                  <div className="chat-typing-indicator" aria-live="polite">
-                    <span className="typing-dots">
-                      <span /><span /><span />
-                    </span>
-                    <span className="typing-text">{textNode}</span>
-                  </div>
-                );
-              })()}
+                })()}
+              </div>
 
               <div className="reaction-bar">
                 {['🍿', '😂', '🔥', '😱', '💀', '❤️', '🤌', '👀'].map((emoji) => {
