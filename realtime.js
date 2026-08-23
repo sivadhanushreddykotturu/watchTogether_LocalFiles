@@ -65,6 +65,7 @@ function leaveCurrentRoom(io, socket) {
   if (room.voice.delete(socket.id)) {
     io.to(code).emit('peer-voice', { id: socket.id, on: false });
   }
+  io.to(code).emit('user-typing', { id: socket.id, typing: false });
   io.to(code).emit('users', roomUsers(room));
 
   if (room.users.size === 0) {
@@ -253,6 +254,19 @@ function attach(io) {
         name: user ? user.name : 'Someone',
       });
       db.saveRoom(room.code, room.state);
+    });
+
+    // --- live typing indicator ---
+    socket.on('typing', (isTyping) => {
+      const room = rooms.get(socket.data.room);
+      if (!room) return;
+      const user = room.users.get(socket.id);
+      socket.to(room.code).emit('user-typing', {
+        id: socket.id,
+        name: user ? user.name : 'Someone',
+        color: user ? user.color : '#8A93A6',
+        typing: Boolean(isTyping),
+      });
     });
 
     // --- live emoji reactions ---

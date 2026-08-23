@@ -99,6 +99,10 @@ export default function Room() {
   const [floatingBubbles, setFloatingBubbles] = useState([]);
   const [reactions, setReactions] = useState([]);
   const [replyingTo, setReplyingTo] = useState(null); // { id, name, color, text }
+  const [typingUsers, setTypingUsers] = useState({}); // { [socketId]: { name, color, expiresAt } }
+  const isTypingLocalRef = useRef(false);
+  const typingTimeoutRef = useRef(null);
+  const lastTypingEmitRef = useRef(0);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [emojiTarget, setEmojiTarget] = useState('react'); // 'react' | 'chat'
   const emojiPickerRef = useRef(null);
@@ -874,6 +878,19 @@ export default function Room() {
     video.addEventListener('loadedmetadata', onLoadedMetadata);
 
     // --- socket events ---
+    const onUserTyping = ({ id, name, color, typing }) => {
+      if (!id || (meRef.current && id === meRef.current.id)) return;
+      setTypingUsers((prev) => {
+        const next = { ...prev };
+        if (!typing) {
+          delete next[id];
+        } else {
+          next[id] = { name: name || 'Someone', color: color || '#8A93A6', expiresAt: Date.now() + 3500 };
+        }
+        return next;
+      });
+    };
+
     const onPlayback = ({ action, time, playing: p, name: actor }) => {
       applyState({ playing: p, time });
       if (!fileLoadedRef.current) {
@@ -886,18 +903,29 @@ export default function Room() {
     const onUsers = (list) => {
       setUsers(list);
       const next = new Map();
+      const ids = new Set(list.map((u) => u.id));
       for (const u of list) {
         const prev = peersRef.current.get(u.id);
         next.set(u.id, { name: u.name, color: u.color, time: prev ? prev.time : undefined });
       }
       peersRef.current = next;
       setPeerVoice((prev) => {
-        const ids = new Set(list.map((u) => u.id));
+        return Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(id)));
+      });
+      setTypingUsers((prev) => {
         return Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(id)));
       });
       renderTicks();
     };
     const onChat = (msg) => {
+      if (msg.sender) {
+        setTypingUsers((prev) => {
+          if (!prev[msg.sender]) return prev;
+          const next = { ...prev };
+          delete next[msg.sender];
+          return next;
+        });
+      }
       setMessages((prev) => [...prev.slice(-499), msg]);
       if (!msg.system && danmakuEnabledRef.current) {
         const dId = Date.now() + Math.random();
@@ -1041,13 +1069,28 @@ export default function Room() {
     socket.on('source', onSource);
     socket.on('peer-voice', onPeerVoice);
     socket.on('queue-update', onQueueUpdate);
+    socket.on('user-typing', onUserTyping);
 
-    // --- heartbeat + now-strip + subtitle ticker ---
+    // --- heartbeat + now-strip + subtitle ticker + typing expiry ---
     heartbeatRef.current = setInterval(beat, 2000);
     nowTickRef.current = setInterval(() => {
       setNowInfo({ ...latestStateRef.current });
     }, 1000);
     subTimerRef.current = setInterval(updateSubtitles, 80);
+    const typingExpireInterval = setInterval(() => {
+      setTypingUsers((prev) => {
+        const now = Date.now();
+        let changed = false;
+        const next = { ...prev };
+        for (const [id, user] of Object.entries(next)) {
+          if (user.expiresAt <= now) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 1000);
 
     // YouTube has no seek event — poll for jumps (and keep the timeline fresh).
     ytTickRef.current = setInterval(() => {
@@ -1166,6 +1209,7 @@ export default function Room() {
       socket.off('source', onSource);
       socket.off('peer-voice', onPeerVoice);
       socket.off('queue-update', onQueueUpdate);
+      socket.off('user-typing', onUserTyping);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('seeked', onSeeked);
@@ -1186,6 +1230,7 @@ export default function Room() {
       clearInterval(nowTickRef.current);
       clearInterval(subTimerRef.current);
       clearInterval(ytTickRef.current);
+      clearInterval(typingExpireInterval);
       if (voiceRef.current) voiceRef.current.leave();
       releaseWakeLock();
       if (video.src) { URL.revokeObjectURL(video.src); }
@@ -1849,19 +1894,53 @@ export default function Room() {
     }
   };
 
+  const handleChatInputChange = (e) => {
+    const val = e.target.value;
+    const socket = getSocket();
+    if (!socket.connected) return;
+
+    if (val.trim().length > 0) {
+      const now = Date.now();
+      if (!isTypingLocalRef.current || now - lastTypingEmitRef.current > 2200) {
+        socket.emit('typing', true);
+        isTypingLocalRef.current = true;
+        lastTypingEmitRef.current = now;
+      }
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = setTimeout(() => {
+        socket.emit('typing', false);
+        isTypingLocalRef.current = false;
+      }, 3000);
+    } else {
+      if (isTypingLocalRef.current) {
+        socket.emit('typing', false);
+        isTypingLocalRef.current = false;
+      }
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    }
+  };
+
   const sendChat = (e) => {
     e.preventDefault();
     const text = chatInputRef.current.value.trim();
     if (!text) return;
-    getSocket().emit('chat', {
-      text,
-      replyTo: replyingTo ? {
-        id: replyingTo.id,
-        name: replyingTo.name,
-        color: replyingTo.color,
-        text: replyingTo.text,
-      } : null,
-    });
+    const socket = getSocket();
+    if (socket.connected) {
+      socket.emit('chat', {
+        text,
+        replyTo: replyingTo ? {
+          id: replyingTo.id,
+          name: replyingTo.name,
+          color: replyingTo.color,
+          text: replyingTo.text,
+        } : null,
+      });
+      if (isTypingLocalRef.current) {
+        socket.emit('typing', false);
+        isTypingLocalRef.current = false;
+      }
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    }
     chatInputRef.current.value = '';
     setReplyingTo(null);
     chatInputRef.current.focus();
@@ -2675,6 +2754,35 @@ export default function Room() {
                 )}
               </div>
 
+              {(() => {
+                const typers = Object.values(typingUsers);
+                if (typers.length === 0) return null;
+                let textNode;
+                if (typers.length === 1) {
+                  textNode = (
+                    <span>
+                      <b style={{ color: typers[0].color }}>{typers[0].name}</b> is typing
+                    </span>
+                  );
+                } else if (typers.length === 2) {
+                  textNode = (
+                    <span>
+                      <b style={{ color: typers[0].color }}>{typers[0].name}</b> and <b style={{ color: typers[1].color }}>{typers[1].name}</b> are typing
+                    </span>
+                  );
+                } else {
+                  textNode = <span>Several people are typing</span>;
+                }
+                return (
+                  <div className="chat-typing-indicator" aria-live="polite">
+                    <span className="typing-dots">
+                      <span /><span /><span />
+                    </span>
+                    <span className="typing-text">{textNode}</span>
+                  </div>
+                );
+              })()}
+
               <div className="reaction-bar">
                 {['🍿', '😂', '🔥', '😱', '💀', '❤️', '🤌', '👀'].map((emoji) => {
                   const appleUrl = getAppleEmojiUrl(emoji);
@@ -2775,6 +2883,7 @@ export default function Room() {
                   placeholder={replyingTo ? `Replying to ${replyingTo.name}…` : "Say something…"}
                   maxLength={500}
                   autoComplete="off"
+                  onChange={handleChatInputChange}
                   onKeyDown={(e) => {
                     if (e.key === 'Escape' && replyingTo) {
                       setReplyingTo(null);

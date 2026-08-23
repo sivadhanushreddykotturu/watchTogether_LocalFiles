@@ -1914,6 +1914,65 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   100% { background: transparent; }
 }
 
+/* ── Live Typing Indicator ── */
+.chat-typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px;
+  min-height: 24px;
+  font-size: 11.5px;
+  color: var(--muted);
+  animation: typing-fade-in 0.2s ease-out;
+}
+
+@keyframes typing-fade-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 10px;
+}
+
+.typing-dots span {
+  width: 4px;
+  height: 4px;
+  background: var(--accent-glow);
+  border-radius: 50%;
+  display: inline-block;
+  animation: typing-bounce 1.3s infinite ease-in-out;
+}
+
+.typing-dots span:nth-child(1) { animation-delay: 0s; }
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+.typing-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.typing-text b {
+  font-weight: 700;
+}
+
 /* system event pill */
 .msg.system {
   border-left: none;
