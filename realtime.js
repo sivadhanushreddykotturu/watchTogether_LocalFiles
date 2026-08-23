@@ -156,7 +156,7 @@ function attach(io) {
         rooms.set(code, room);
       }
 
-      const history = rejoin ? undefined : await db.getHistory(code);
+      const history = await db.getHistory(code);
       joinRoom(io, socket, code, name, { rejoin, history }, cb);
     });
 

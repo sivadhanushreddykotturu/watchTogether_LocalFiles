@@ -61,10 +61,19 @@ function saveRoom(code, state) {
 
 // ---- chat ----
 
-function addMessage(code, { sender, name, color, text }) {
+function addMessage(code, { id, sender, name, color, text, replyTo }) {
   if (!db) return;
   db.collection('messages')
-    .insertOne({ roomCode: code, sender, name, color, text, at: new Date() })
+    .insertOne({
+      msgId: id || null,
+      roomCode: code,
+      sender,
+      name,
+      color,
+      text,
+      replyTo: replyTo || null,
+      at: new Date(),
+    })
     .catch((err) => console.error('addMessage failed:', err.message));
 }
 
@@ -76,7 +85,16 @@ async function getHistory(code, limit = 50) {
       .sort({ at: -1 })
       .limit(limit)
       .toArray();
-    return docs.reverse().map((m) => ({ system: false, sender: m.sender, name: m.name, color: m.color, text: m.text, at: m.at }));
+    return docs.reverse().map((m) => ({
+      id: m.msgId || String(m._id),
+      system: false,
+      sender: m.sender,
+      name: m.name,
+      color: m.color,
+      text: m.text,
+      replyTo: m.replyTo || null,
+      at: new Date(m.at).getTime(),
+    }));
   } catch { return []; }
 }
 
