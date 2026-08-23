@@ -189,18 +189,36 @@ function attach(io) {
     });
 
     // --- chat ---
-    socket.on('chat', (text) => {
+    socket.on('chat', (payload) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
       const user = room.users.get(socket.id);
+
+      let text = '';
+      let replyTo = null;
+      if (typeof payload === 'string') {
+        text = payload;
+      } else if (payload && typeof payload === 'object') {
+        text = payload.text;
+        if (payload.replyTo) {
+          replyTo = {
+            id: payload.replyTo.id,
+            name: String(payload.replyTo.name || '').slice(0, 24),
+            color: payload.replyTo.color || '#8A93A6',
+            text: String(payload.replyTo.text || '').slice(0, 150),
+          };
+        }
+      }
       text = String(text || '').trim().slice(0, 500);
       if (!text) return;
       const msg = {
+        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
         system: false,
         sender: socket.id,
         name: user ? user.name : 'Anonymous',
         color: user ? user.color : '#8A93A6',
         text,
+        replyTo,
         at: Date.now(),
       };
       io.to(room.code).emit('chat', msg);

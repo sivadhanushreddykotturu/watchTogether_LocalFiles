@@ -98,6 +98,7 @@ export default function Room() {
   const [dimmed, setDimmed] = useState(false);
   const [floatingBubbles, setFloatingBubbles] = useState([]);
   const [reactions, setReactions] = useState([]);
+  const [replyingTo, setReplyingTo] = useState(null); // { id, name, color, text }
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [emojiTarget, setEmojiTarget] = useState('react'); // 'react' | 'chat'
   const emojiPickerRef = useRef(null);
@@ -1823,12 +1824,46 @@ export default function Room() {
     applyState(latestStateRef.current);
   };
 
+  const handleStartReply = (msg) => {
+    if (!msg || msg.system) return;
+    setReplyingTo({
+      id: msg.id || msg.at,
+      name: msg.name,
+      color: msg.color,
+      text: msg.text,
+    });
+    if (chatInputRef.current) {
+      chatInputRef.current.focus();
+    }
+  };
+
+  const scrollToMessage = (msgId) => {
+    if (!msgId) return;
+    const el = document.getElementById(`msg-${msgId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('highlight-flash');
+      setTimeout(() => {
+        if (el) el.classList.remove('highlight-flash');
+      }, 1600);
+    }
+  };
+
   const sendChat = (e) => {
     e.preventDefault();
     const text = chatInputRef.current.value.trim();
     if (!text) return;
-    getSocket().emit('chat', text);
+    getSocket().emit('chat', {
+      text,
+      replyTo: replyingTo ? {
+        id: replyingTo.id,
+        name: replyingTo.name,
+        color: replyingTo.color,
+        text: replyingTo.text,
+      } : null,
+    });
     chatInputRef.current.value = '';
+    setReplyingTo(null);
     chatInputRef.current.focus();
   };
 
@@ -2585,7 +2620,7 @@ export default function Room() {
                       const prev = arr[i - 1];
                     const isGrouped = prev && !prev.system && prev.sender === m.sender && (m.at - prev.at < 90000);
                     return (
-                      <div key={i} className={'msg' + (isOwn ? ' own' : '') + (isGrouped ? ' grouped' : '')}>
+                      <div key={i} id={`msg-${m.id || m.at}`} className={'msg' + (isOwn ? ' own' : '') + (isGrouped ? ' grouped' : '')}>
                         {!isGrouped ? (
                           <div className="m-avatar" style={{ background: m.color }}>
                             {m.name ? m.name[0].toUpperCase() : '?'}
@@ -2603,8 +2638,35 @@ export default function Room() {
                               <span className="when">{clockFmt(m.at)}</span>
                             </div>
                           )}
-                          <div className="m-bubble">
-                            <div className="m-text">{renderChatText(m.text)}</div>
+                          <div className="m-bubble-wrap">
+                            {m.replyTo && (
+                              <div
+                                className="m-reply-quote"
+                                style={{ borderLeftColor: m.replyTo.color || 'var(--accent-glow)' }}
+                                onClick={() => scrollToMessage(m.replyTo.id)}
+                                title="Jump to quoted message"
+                              >
+                                <span className="mr-author" style={{ color: m.replyTo.color || 'var(--accent-glow)' }}>
+                                  {m.replyTo.name}
+                                </span>
+                                <span className="mr-snippet">{renderChatText(m.replyTo.text)}</span>
+                              </div>
+                            )}
+                            <div className="m-bubble">
+                              <div className="m-text">{renderChatText(m.text)}</div>
+                            </div>
+                            <button
+                              type="button"
+                              className="msg-reply-btn"
+                              onClick={() => handleStartReply(m)}
+                              title="Reply to message"
+                            >
+                              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="9 17 4 12 9 7" />
+                                <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+                              </svg>
+                              <span>Reply</span>
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -2670,6 +2732,26 @@ export default function Room() {
                 </div>
               )}
 
+              {replyingTo && (
+                <div className="chat-reply-banner">
+                  <div className="crb-bar" style={{ background: replyingTo.color || 'var(--accent-glow)' }} />
+                  <div className="crb-content">
+                    <div className="crb-header">
+                      <span>Replying to <b style={{ color: replyingTo.color || 'var(--accent-glow)' }}>{replyingTo.name}</b></span>
+                    </div>
+                    <div className="crb-snippet">{renderChatText(replyingTo.text)}</div>
+                  </div>
+                  <button
+                    type="button"
+                    className="crb-close"
+                    onClick={() => setReplyingTo(null)}
+                    title="Cancel reply (Esc)"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
               <form className="chat-form" onSubmit={sendChat}>
                 <button
                   type="button"
@@ -2687,7 +2769,18 @@ export default function Room() {
                     <line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="3" />
                   </svg>
                 </button>
-                <input ref={chatInputRef} type="text" placeholder="Say something…" maxLength={500} autoComplete="off" />
+                <input
+                  ref={chatInputRef}
+                  type="text"
+                  placeholder={replyingTo ? `Replying to ${replyingTo.name}…` : "Say something…"}
+                  maxLength={500}
+                  autoComplete="off"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape' && replyingTo) {
+                      setReplyingTo(null);
+                    }
+                  }}
+                />
                 <button className="btn primary send-btn" type="submit" title="Send">
                   <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 </button>
