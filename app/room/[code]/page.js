@@ -2294,18 +2294,50 @@ export default function Room() {
               </div>
 
               <div className="chat" ref={chatScrollRef}>
-                {messages.map((m, i) =>
-                  m.system ? (
-                    <div key={i} className="msg system">{m.text}</div>
-                  ) : (
-                    <div key={i} className={'msg' + (m.sender === meId ? ' own' : '')}>
-                      <span className="m-avatar" style={{ background: m.color }}>{m.name[0].toUpperCase()}</span>
-                      <span className="m-body">
-                        <span className="who" style={{ color: m.color }}>{m.name}<span className="when">{clockFmt(m.at)}</span></span>
-                        <span className="m-text">{renderChatText(m.text)}</span>
-                      </span>
-                    </div>
-                  )
+                {messages.length === 0 ? (
+                  <div className="chat-empty">
+                    <div className="chat-empty-icon">💬</div>
+                    <div className="chat-empty-title">Welcome to the Room!</div>
+                    <span className="chat-empty-hint">Say hi or share timestamps (e.g. 05:20) to jump to moments together.</span>
+                  </div>
+                ) : (
+                  messages.map((m, i) => {
+                    if (m.system) {
+                      return (
+                        <div key={i} className="msg system">
+                          <span className="system-pill">{m.text}</span>
+                        </div>
+                      );
+                    }
+                    const isOwn = m.sender === meId;
+                    const prev = messages[i - 1];
+                    const isGrouped = prev && !prev.system && prev.sender === m.sender && (m.at - prev.at < 90000);
+                    return (
+                      <div key={i} className={'msg' + (isOwn ? ' own' : '') + (isGrouped ? ' grouped' : '')}>
+                        {!isGrouped ? (
+                          <div className="m-avatar" style={{ background: m.color }}>
+                            {m.name ? m.name[0].toUpperCase() : '?'}
+                          </div>
+                        ) : (
+                          <div className="m-avatar-spacer" />
+                        )}
+                        <div className="m-body">
+                          {!isGrouped && (
+                            <div className="m-header">
+                              <span className="who" style={{ color: m.color }}>
+                                {m.name}
+                                {isOwn && <span className="you-badge">YOU</span>}
+                              </span>
+                              <span className="when">{clockFmt(m.at)}</span>
+                            </div>
+                          )}
+                          <div className="m-bubble">
+                            <div className="m-text">{renderChatText(m.text)}</div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
                 )}
               </div>
 
