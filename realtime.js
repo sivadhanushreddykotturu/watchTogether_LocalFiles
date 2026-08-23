@@ -74,10 +74,8 @@ function leaveCurrentRoom(io, socket) {
   }
 
   if (user) {
-    // Announce the leave only if they don't come back within the grace window.
     const timer = setTimeout(() => {
       room.recentlyLeft.delete(user.name);
-      io.to(code).emit('chat', { system: true, text: `${user.name} left`, at: Date.now() });
     }, LEAVE_GRACE_MS);
     room.recentlyLeft.set(user.name, timer);
   }

@@ -409,35 +409,73 @@ export default function Room() {
 
   const renderChatText = (text) => {
     if (!text) return '';
-    const regex = /\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b/g;
+
+    const trimmed = text.trim();
+    // Check if message is exclusively emojis (1 to 5 emojis)
+    const emojiMatchArr = trimmed.match(/(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)/gu) || [];
+    const textWithoutEmojis = trimmed.replace(/(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)/gu, '').replace(/\s+/g, '');
+    const isJumbo = textWithoutEmojis.length === 0 && emojiMatchArr.length >= 1 && emojiMatchArr.length <= 5;
+
+    const combinedRegex = /(?:(\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b)|(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*))/gu;
     const parts = [];
     let lastIndex = 0;
     let match;
-    while ((match = regex.exec(text)) !== null) {
+
+    while ((match = combinedRegex.exec(text)) !== null) {
       if (match.index > lastIndex) {
         parts.push(text.substring(lastIndex, match.index));
       }
-      const fullMatch = match[0];
-      const hours = Number(match[1] || 0);
-      const minutes = Number(match[2]);
-      const seconds = Number(match[3]);
-      const totalSeconds = hours * 3600 + minutes * 60 + seconds;
-      parts.push(
-        <button
-          key={match.index}
-          className="time-link"
-          onClick={() => seekToSeconds(totalSeconds)}
-          title={`Jump to ${fullMatch}`}
-          type="button"
-        >
-          {fullMatch}
-        </button>
-      );
-      lastIndex = regex.lastIndex;
+      const val = match[0];
+      if (/^\d/.test(val) && val.includes(':')) {
+        const timeMatch = val.match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})$/);
+        if (timeMatch) {
+          const hours = Number(timeMatch[1] || 0);
+          const minutes = Number(timeMatch[2]);
+          const seconds = Number(timeMatch[3]);
+          const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+          parts.push(
+            <button
+              key={match.index}
+              className="time-link"
+              onClick={() => seekToSeconds(totalSeconds)}
+              title={`Jump to ${val}`}
+              type="button"
+            >
+              {val}
+            </button>
+          );
+        } else {
+          parts.push(val);
+        }
+      } else {
+        const appleUrl = getAppleEmojiUrl(val);
+        parts.push(
+          <span key={match.index} className={isJumbo ? 'chat-emoji-wrap jumbo' : 'chat-emoji-wrap'}>
+            {appleUrl ? (
+              <img
+                src={appleUrl}
+                alt={val}
+                className={isJumbo ? 'chat-apple-emoji jumbo' : 'chat-apple-emoji'}
+                loading="lazy"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  if (e.currentTarget.nextSibling) {
+                    e.currentTarget.nextSibling.style.display = 'inline';
+                  }
+                }}
+              />
+            ) : null}
+            <span style={{ display: appleUrl ? 'none' : 'inline' }}>{val}</span>
+          </span>
+        );
+      }
+      lastIndex = combinedRegex.lastIndex;
     }
+
     if (lastIndex < text.length) {
       parts.push(text.substring(lastIndex));
     }
+
     return parts.length > 0 ? parts : text;
   };
 
@@ -2526,23 +2564,25 @@ export default function Room() {
               </div>
 
               <div className="chat" ref={chatScrollRef}>
-                {messages.length === 0 ? (
+                {messages.filter((m) => !(m.system && (m.text?.includes('left') || m.text?.includes('disconnected')))).length === 0 ? (
                   <div className="chat-empty">
                     <div className="chat-empty-icon">💬</div>
                     <div className="chat-empty-title">Welcome to the Room!</div>
                     <span className="chat-empty-hint">Say hi or share timestamps (e.g. 05:20) to jump to moments together.</span>
                   </div>
                 ) : (
-                  messages.map((m, i) => {
-                    if (m.system) {
-                      return (
-                        <div key={i} className="msg system">
-                          <span className="system-pill">{m.text}</span>
-                        </div>
-                      );
-                    }
-                    const isOwn = m.sender === meId;
-                    const prev = messages[i - 1];
+                  messages
+                    .filter((m) => !(m.system && (m.text?.includes('left') || m.text?.includes('disconnected'))))
+                    .map((m, i, arr) => {
+                      if (m.system) {
+                        return (
+                          <div key={i} className="msg system">
+                            <span className="system-pill">{m.text}</span>
+                          </div>
+                        );
+                      }
+                      const isOwn = m.sender === meId;
+                      const prev = arr[i - 1];
                     const isGrouped = prev && !prev.system && prev.sender === m.sender && (m.at - prev.at < 90000);
                     return (
                       <div key={i} className={'msg' + (isOwn ? ' own' : '') + (isGrouped ? ' grouped' : '')}>

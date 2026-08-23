@@ -1085,6 +1085,35 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   color: var(--accent-glow);
 }
 
+/* ── Inline Apple HD Chat Emojis ── */
+.chat-emoji-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: -0.22em;
+  line-height: 1;
+}
+
+.chat-emoji-wrap.jumbo {
+  vertical-align: middle;
+  margin: 3px 4px;
+}
+
+.chat-apple-emoji {
+  width: 1.3em;
+  height: 1.3em;
+  vertical-align: -0.2em;
+  object-fit: contain;
+  display: inline-block;
+  pointer-events: none;
+}
+
+.chat-apple-emoji.jumbo {
+  width: 32px;
+  height: 32px;
+  vertical-align: middle;
+}
+
 /* ── Apple Emoji Picker Popover ── */
 .emoji-picker-popover {
   position: absolute;
