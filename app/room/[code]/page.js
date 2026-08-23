@@ -913,6 +913,7 @@ export default function Room() {
       setStateLatest(p, time);
       setResumeOpen(false);
       if (s?.type === 'youtube' && s.videoId) {
+        setSubPanelOpen(false);
         toast(`${actor} started playing ${s.title ? `"${s.title}"` : 'a YouTube video'}`);
         // pause local playback quietly — the room has moved on to YouTube
         const v = videoRef.current;
@@ -1035,6 +1036,8 @@ export default function Room() {
         if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
         if (e.code === 'ArrowRight') yt.seekTo(Math.min(yt.getDuration() || 0, yt.getCurrentTime() + 5), true);
         if (e.code === 'ArrowLeft') yt.seekTo(Math.max(0, yt.getCurrentTime() - 5), true);
+        if (e.code === 'KeyC') toggleYtCaptions();
+        if (e.code === 'KeyL' || e.code === 'KeyD') setDimmed((prev) => !prev);
         return;
       }
       const v = videoRef.current;
@@ -1588,10 +1591,17 @@ export default function Room() {
     try {
       if (next) {
         if (typeof yt.loadModule === 'function') yt.loadModule('captions');
-        if (typeof yt.setOption === 'function') yt.setOption('captions', 'track', { languageCode: 'en' });
+        if (typeof yt.setOption === 'function') {
+          try { yt.setOption('captions', 'track', { languageCode: 'en' }); } catch {}
+          try { yt.setOption('captions', 'reload', true); } catch {}
+        }
       } else {
-        if (typeof yt.unloadModule === 'function') yt.unloadModule('captions');
-        if (typeof yt.setOption === 'function') yt.setOption('captions', 'track', {});
+        if (typeof yt.setOption === 'function') {
+          try { yt.setOption('captions', 'track', {}); } catch {}
+        }
+        if (typeof yt.unloadModule === 'function') {
+          try { yt.unloadModule('captions'); } catch {}
+        }
       }
     } catch (e) {
       console.warn('Captions toggle error:', e);
@@ -1685,8 +1695,18 @@ export default function Room() {
           <span className="slate-label">ROOM</span>
           <span className="slate-code">{code}</span>
         </button>
-        <button className={'mobile-action-btn' + (subsOn ? ' active' : '')} onClick={() => setSubPanelOpen(!subPanelOpen)}>
-          CC {subsOn ? 'On' : 'Off'}
+        <button
+          className={'mobile-action-btn' + (source?.type === 'youtube' ? (ytCcOn ? ' active' : '') : (subsOn ? ' active' : ''))}
+          onClick={() => {
+            if (source?.type === 'youtube') {
+              toggleYtCaptions();
+            } else {
+              setSubPanelOpen(!subPanelOpen);
+            }
+          }}
+          title={source?.type === 'youtube' ? 'Captions' : 'Subtitles'}
+        >
+          CC {source?.type === 'youtube' ? (ytCcOn ? 'On' : 'Off') : (subsOn ? 'On' : 'Off')}
         </button>
         {fileMatch && (
           <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')}>
@@ -1914,7 +1934,7 @@ export default function Room() {
               <button className="btn primary big" onClick={resume}>Catch up with the room</button>
             </div>
 
-            {subPanelOpen && (
+            {subPanelOpen && source?.type !== 'youtube' && (
               <>
                 <div className="sub-backdrop" onClick={() => setSubPanelOpen(false)} />
                 <div className="sub-panel">
@@ -2206,12 +2226,18 @@ export default function Room() {
               </button>
 
               <button
-                className={'t-btn cc' + (subPanelOpen ? ' active' : '') + (subsOn ? ' on' : '')}
-                onClick={() => setSubPanelOpen(!subPanelOpen)}
-                title="Subtitles (V to cycle)"
+                className={'t-btn cc' + (source?.type === 'youtube' ? (ytCcOn ? ' active on' : '') : (subPanelOpen ? ' active' : '') + (subsOn ? ' on' : ''))}
+                onClick={() => {
+                  if (source?.type === 'youtube') {
+                    toggleYtCaptions();
+                  } else {
+                    setSubPanelOpen(!subPanelOpen);
+                  }
+                }}
+                title={source?.type === 'youtube' ? (ytCcOn ? 'Disable Captions (C)' : 'Enable Captions (C)') : 'Subtitles (V to cycle)'}
               >
                 CC
-                {subsOn && <span className="cc-dot" />}
+                {(source?.type === 'youtube' ? ytCcOn : subsOn) && <span className="cc-dot" />}
               </button>
 
               <button className="t-btn" onClick={fullscreen} title="Fullscreen">
