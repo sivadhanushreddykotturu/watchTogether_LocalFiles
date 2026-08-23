@@ -69,6 +69,16 @@ export default function Room() {
   const [subStyle, setSubStyle] = useState(SUB_STYLE_DEFAULT);
   const [zoom, setZoom] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [zoomUiVisible, setZoomUiVisible] = useState(false);
+  const zoomUiTimerRef = useRef(null);
+
+  // player-chrome behavior: controls wake on cursor/touch activity, fade when idle
+  function pokeZoomUi() {
+    if (!document.fullscreenElement) return;
+    setZoomUiVisible(true);
+    clearTimeout(zoomUiTimerRef.current);
+    zoomUiTimerRef.current = setTimeout(() => setZoomUiVisible(false), 2500);
+  }
   const [extAudioName, setExtAudioName] = useState('');
   const [transcodingAudio, setTranscodingAudio] = useState(false);
   const [transcodeProgress, setTranscodeProgress] = useState(0);
@@ -898,8 +908,16 @@ export default function Room() {
       if (savedZoom >= 1 && savedZoom <= 2) setZoom(savedZoom);
     } catch { /* ignore */ }
 
-    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    const onFsChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+      if (!document.fullscreenElement) setZoomUiVisible(false);
+    };
     document.addEventListener('fullscreenchange', onFsChange);
+    const screenEl = screenRef.current;
+    if (screenEl) {
+      screenEl.addEventListener('mousemove', pokeZoomUi);
+      screenEl.addEventListener('pointerdown', pokeZoomUi);
+    }
 
     // --- page-level listeners ---
     const onVisibility = () => {
@@ -912,6 +930,9 @@ export default function Room() {
     const onKey = (e) => {
       if (!ytMode() && (!fileLoadedRef.current || !videoRef.current)) return;
       if (e.target.matches('input, textarea')) return;
+      // , / . = silent keyboard zoom (never wakes the on-screen cluster)
+      if (e.code === 'Comma') nudgeZoom(-0.25);
+      if (e.code === 'Period') nudgeZoom(0.25);
       if (ytMode()) {
         const yt = ytRef.current;
         if (!yt || !yt.getCurrentTime) return;
@@ -977,6 +998,11 @@ export default function Room() {
       window.removeEventListener('resize', onResize);
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('fullscreenchange', onFsChange);
+      if (screenEl) {
+        screenEl.removeEventListener('mousemove', pokeZoomUi);
+        screenEl.removeEventListener('pointerdown', pokeZoomUi);
+      }
+      clearTimeout(zoomUiTimerRef.current);
       clearInterval(heartbeatRef.current);
       clearInterval(nowTickRef.current);
       clearInterval(subTimerRef.current);
@@ -1451,7 +1477,7 @@ export default function Room() {
             )}
 
             {isFullscreen && (
-              <div className="zoom-controls">
+              <div className={'zoom-controls' + (zoomUiVisible ? ' show' : '')}>
                 <button type="button" onClick={() => nudgeZoom(0.25)} title="Zoom in (crops black bars)">+</button>
                 <button type="button" className="zoom-level" onClick={() => setZoom(1)} title="Reset zoom">{Math.round(zoom * 100)}%</button>
                 <button type="button" onClick={() => nudgeZoom(-0.25)} title="Zoom out" disabled={zoom <= 1}>−</button>

@@ -1018,6 +1018,15 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   flex-direction: column;
   gap: 6px;
   z-index: 26;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+.zoom-controls.show {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 .zoom-controls button {
   width: 38px;
