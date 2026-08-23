@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
-import { loadYouTubeApi, parseYouTubeId } from '../../../lib/youtube';
+import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo } from '../../../lib/youtube';
 
 // ---------- helpers ----------
 function fmt(t) {
@@ -39,7 +39,11 @@ export default function Room() {
   const [pickerOpen, setPickerOpen] = useState(true);
   const [pickerHint, setPickerHint] = useState('');
   const [resumeOpen, setResumeOpen] = useState(false);
-  const [source, setSource] = useState(null); // { type: 'youtube', videoId } | null (null = local files)
+  const [source, setSource] = useState(null); // { type: 'youtube', videoId, title } | null (null = local files)
+  const [queue, setQueue] = useState([]);
+  const [queueInput, setQueueInput] = useState('');
+  const [queueLoading, setQueueLoading] = useState(false);
+  const queueRef = useRef([]);
   const [ytPanelOpen, setYtPanelOpen] = useState(false);
   const [ytUrl, setYtUrl] = useState('');
   const [adBreak, setAdBreak] = useState(false);
@@ -139,7 +143,17 @@ export default function Room() {
   const ytStallRef = useRef(false); // "playing" but clock frozen = ad (or stall)
 
   const ytMode = () => sourceRef.current?.type === 'youtube';
-  const setSourceState = (s) => { sourceRef.current = s; setSource(s); };
+  const setSourceState = (s) => {
+    sourceRef.current = s;
+    setSource(s);
+    if (s?.type === 'youtube' && !s.title && s.videoId) {
+      fetchYouTubeInfo(s.videoId).then((info) => {
+        if (info && info.title) {
+          setSource((prev) => (prev?.videoId === s.videoId ? { ...prev, title: info.title } : prev));
+        }
+      });
+    }
+  };
 
   // Time/duration adapters — the sync engine reads through these so it
   // doesn't care whether the source is a local file or YouTube.
@@ -615,6 +629,10 @@ export default function Room() {
       offsetRef.current = res.state.subOffset || 0;
       setSubOffset(offsetRef.current);
       setSourceState(res.state.source || null);
+      if (Array.isArray(res.state.queue)) {
+        setQueue(res.state.queue);
+        queueRef.current = res.state.queue;
+      }
       setUsers(res.users);
       setMessages(Array.isArray(res.history) ? res.history : []);
       if (res.state.playing) {
@@ -822,6 +840,10 @@ export default function Room() {
         setMeId(res.self.id);
         setStateLatest(res.state.playing, res.state.time);
         setUsers(res.users);
+        if (Array.isArray(res.state.queue)) {
+          setQueue(res.state.queue);
+          queueRef.current = res.state.queue;
+        }
         applyState(latestStateRef.current);
         setSyncStatus(true);
         if (videoRef.current && videoRef.current.duration) {
@@ -849,13 +871,23 @@ export default function Room() {
       setStateLatest(p, time);
       setResumeOpen(false);
       if (s?.type === 'youtube') {
-        toast(`${actor} queued a YouTube video`);
+        toast(`${actor} started playing ${s.title ? `"${s.title}"` : 'a YouTube video'}`);
         // pause local playback quietly — the room has moved on to YouTube
         const v = videoRef.current;
         if (v && !v.paused) { guardRef.current.pause++; v.pause(); }
       } else {
         toast(`${actor} switched back to local files`);
         if (!fileLoadedRef.current) setPickerHint('Pick your copy of the file to join in.');
+      }
+    };
+    const onQueueUpdate = ({ queue: q, action, item, name: actor }) => {
+      const list = Array.isArray(q) ? q : [];
+      setQueue(list);
+      queueRef.current = list;
+      if (action === 'add' && item) {
+        toast(`${actor || 'Someone'} added "${item.title || 'a video'}" to queue`);
+      } else if (action === 'next' && item) {
+        toast(`Now playing: ${item.title || 'Next video'}`);
       }
     };
     socket.on('playback', onPlayback);
@@ -869,6 +901,7 @@ export default function Room() {
     socket.on('disconnect', onDisconnect);
     socket.on('subtitle', onSubtitle);
     socket.on('source', onSource);
+    socket.on('queue-update', onQueueUpdate);
 
     // --- heartbeat + now-strip + subtitle ticker ---
     heartbeatRef.current = setInterval(beat, 2000);
@@ -994,6 +1027,7 @@ export default function Room() {
       socket.off('disconnect', onDisconnect);
       socket.off('subtitle', onSubtitle);
       socket.off('source', onSource);
+      socket.off('queue-update', onQueueUpdate);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('seeked', onSeeked);
@@ -1051,6 +1085,8 @@ export default function Room() {
           rel: 0,
           playsinline: 1,
           enablejsapi: 1,
+          iv_load_policy: 3,
+          modestbranding: 1,
           origin: typeof window !== 'undefined' ? window.location.origin : undefined,
         },
         events: {
@@ -1078,6 +1114,10 @@ export default function Room() {
               ytPlayingRef.current = false;
               setPlaying(false);
               releaseWakeLock();
+              if (queueRef.current.length > 0) {
+                const socket = getSocket();
+                if (socket.connected) socket.emit('queue-next');
+              }
             }
           },
           onError: (e) => {
@@ -1328,13 +1368,54 @@ export default function Room() {
     }
   };
 
-  const queueYouTube = () => {
-    const id = parseYouTubeId(ytUrl);
-    if (!id) { toast("That doesn't look like a YouTube link"); return; }
+  const handlePlayYouTube = async (playNow = true, customUrl = null) => {
+    const raw = customUrl !== null ? customUrl : ytUrl;
+    const id = parseYouTubeId(raw);
+    if (!id) { toast("That doesn't look like a valid YouTube link"); return; }
     const socket = getSocket();
-    if (socket.connected) socket.emit('source', { type: 'youtube', videoId: id });
+    if (!socket.connected) return;
+    const info = await fetchYouTubeInfo(id);
+    if (playNow) {
+      socket.emit('source', { type: 'youtube', videoId: id, title: info.title });
+    } else {
+      socket.emit('queue-add', { videoId: id, title: info.title, playNow: false });
+    }
     setYtUrl('');
     setYtPanelOpen(false);
+  };
+
+  const handleQueueAdd = async (playNow = false) => {
+    const id = parseYouTubeId(queueInput);
+    if (!id) { toast("Paste a valid YouTube link or video ID"); return; }
+    const socket = getSocket();
+    if (!socket.connected) return;
+    setQueueLoading(true);
+    const info = await fetchYouTubeInfo(id);
+    socket.emit('queue-add', { videoId: id, title: info.title, playNow }, () => {
+      setQueueLoading(false);
+    });
+    setQueueInput('');
+    setQueueLoading(false);
+  };
+
+  const playQueueItem = (itemId) => {
+    const socket = getSocket();
+    if (socket.connected) socket.emit('queue-play', itemId);
+  };
+
+  const removeQueueItem = (itemId) => {
+    const socket = getSocket();
+    if (socket.connected) socket.emit('queue-remove', itemId);
+  };
+
+  const nextQueueItem = () => {
+    const socket = getSocket();
+    if (socket.connected) socket.emit('queue-next');
+  };
+
+  const clearQueue = () => {
+    const socket = getSocket();
+    if (socket.connected) socket.emit('queue-clear');
   };
 
   const switchToLocal = () => {
@@ -1712,20 +1793,24 @@ export default function Room() {
             {ytPanelOpen && (
               <div className="sub-panel yt-panel">
                 <div className="sub-row">
-                  <span className="sub-label">Watch a YouTube video together</span>
+                  <span className="sub-label">YouTube Video</span>
                   <input
                     type="text"
                     className="yt-url"
                     placeholder="Paste YouTube link…"
                     value={ytUrl}
                     onChange={(e) => setYtUrl(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') queueYouTube(); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handlePlayYouTube(true); }}
                   />
-                  <button className="btn primary sm" onClick={queueYouTube}>Watch</button>
+                  <button className="btn primary sm" onClick={() => handlePlayYouTube(true)}>Play Now</button>
+                  <button className="btn ghost sm" onClick={() => handlePlayYouTube(false)}>+ Add to Queue</button>
                 </div>
                 {source?.type === 'youtube' && (
                   <div className="sub-row">
                     <button className="btn ghost sm" onClick={switchToLocal}>← Back to local files</button>
+                    {queue.length > 0 && (
+                      <button className="btn ghost sm" onClick={nextQueueItem}>Skip to next ({queue.length} in queue) →</button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1743,6 +1828,14 @@ export default function Room() {
                   </svg>
                 )}
               </button>
+
+              {queue.length > 0 && (
+                <button className="t-btn skip-btn" onClick={nextQueueItem} title={`Next video in queue (${queue.length} left)`}>
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+                  </svg>
+                </button>
+              )}
 
               <div
                 className="timeline"
@@ -1774,10 +1867,10 @@ export default function Room() {
               >
                 <option value="0.5">0.5x</option>
                 <option value="0.75">0.75x</option>
-                <option value="1">1.0x</option>
+                <option value="1.0">1.0x</option>
                 <option value="1.25">1.25x</option>
                 <option value="1.5">1.5x</option>
-                <option value="2">2.0x</option>
+                <option value="2.0">2.0x</option>
               </select>
 
               <div className="volume-wrap">
@@ -1827,9 +1920,25 @@ export default function Room() {
 
         <aside className="side">
           <div className="side-top-bar">
-            <div className="side-top-info">
-              <span className="side-title">Live Chat</span>
-              <span className="side-count">({users.length})</span>
+            <div className="side-tabs">
+              <button
+                type="button"
+                className={'side-tab-btn' + (tab === 'chat' ? ' active' : '')}
+                onClick={() => setTab('chat')}
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <span>Chat</span>
+                {unread > 0 && <span className="unread-dot">{unread}</span>}
+              </button>
+              <button
+                type="button"
+                className={'side-tab-btn' + (tab === 'queue' ? ' active' : '')}
+                onClick={() => setTab('queue')}
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+                <span>Queue</span>
+                {queue.length > 0 && <span className="queue-pill">{queue.length}</span>}
+              </button>
             </div>
             <button
               className="side-collapse-btn"
@@ -1837,58 +1946,180 @@ export default function Room() {
                 chatOpenRef.current = false;
                 setChatOpen(false);
               }}
-              title="Collapse chat"
+              title="Collapse sidebar"
               type="button"
             >
               <svg viewBox="0 0 24 24" width="16" height="16"><path d="M5 12h14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg>
             </button>
           </div>
 
-          <div className="viewers">
-            {users.map((u) => (
-              <span key={u.id} className={'viewer' + (u.id === meId ? ' me' : '')}>
-                <span className="avatar" style={{ background: u.color }}>{u.name[0].toUpperCase()}</span>
-                {u.name}
-              </span>
-            ))}
-          </div>
-
-          <div className="chat" ref={chatScrollRef}>
-            {messages.map((m, i) =>
-              m.system ? (
-                <div key={i} className="msg system">{m.text}</div>
-              ) : (
-                <div key={i} className={'msg' + (m.sender === meId ? ' own' : '')}>
-                  <span className="m-avatar" style={{ background: m.color }}>{m.name[0].toUpperCase()}</span>
-                  <span className="m-body">
-                    <span className="who" style={{ color: m.color }}>{m.name}<span className="when">{clockFmt(m.at)}</span></span>
-                    <span className="m-text">{renderChatText(m.text)}</span>
+          {tab === 'chat' ? (
+            <>
+              <div className="viewers">
+                {users.map((u) => (
+                  <span key={u.id} className={'viewer' + (u.id === meId ? ' me' : '')}>
+                    <span className="avatar" style={{ background: u.color }}>{u.name[0].toUpperCase()}</span>
+                    {u.name}
                   </span>
+                ))}
+              </div>
+
+              <div className="chat" ref={chatScrollRef}>
+                {messages.map((m, i) =>
+                  m.system ? (
+                    <div key={i} className="msg system">{m.text}</div>
+                  ) : (
+                    <div key={i} className={'msg' + (m.sender === meId ? ' own' : '')}>
+                      <span className="m-avatar" style={{ background: m.color }}>{m.name[0].toUpperCase()}</span>
+                      <span className="m-body">
+                        <span className="who" style={{ color: m.color }}>{m.name}<span className="when">{clockFmt(m.at)}</span></span>
+                        <span className="m-text">{renderChatText(m.text)}</span>
+                      </span>
+                    </div>
+                  )
+                )}
+              </div>
+
+              <div className="reaction-bar">
+                {['🍿', '😂', '🔥', '😱', '💀', '❤️'].map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    className="react-btn"
+                    onClick={() => sendReaction(emoji)}
+                    title={`React ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+
+              <form className="chat-form" onSubmit={sendChat}>
+                <input ref={chatInputRef} type="text" placeholder="Say something…" maxLength={500} autoComplete="off" />
+                <button className="btn primary send-btn" type="submit" title="Send">
+                  <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </button>
+              </form>
+            </>
+          ) : (
+            <div className="queue-container">
+              <div className="queue-add-box">
+                <input
+                  type="text"
+                  className="queue-input"
+                  placeholder="Paste YouTube link…"
+                  value={queueInput}
+                  onChange={(e) => setQueueInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleQueueAdd(false); }}
+                />
+                <div className="queue-add-actions">
+                  <button
+                    type="button"
+                    className="btn primary sm"
+                    onClick={() => handleQueueAdd(false)}
+                    disabled={queueLoading || !queueInput.trim()}
+                  >
+                    + Queue
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost sm"
+                    onClick={() => handleQueueAdd(true)}
+                    disabled={queueLoading || !queueInput.trim()}
+                  >
+                    ▶ Play Now
+                  </button>
                 </div>
-              )
-            )}
-          </div>
+              </div>
 
-          <div className="reaction-bar">
-            {['🍿', '😂', '🔥', '😱', '💀', '❤️'].map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                className="react-btn"
-                onClick={() => sendReaction(emoji)}
-                title={`React ${emoji}`}
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
+              {source?.type === 'youtube' && (
+                <div className="queue-now-playing">
+                  <div className="qnp-header">
+                    <span className="qnp-badge">NOW PLAYING</span>
+                    {queue.length > 0 && (
+                      <button type="button" className="qnp-skip-btn" onClick={nextQueueItem} title="Skip to next video in queue">
+                        Next ⏭
+                      </button>
+                    )}
+                  </div>
+                  <div className="qnp-content">
+                    <img
+                      src={`https://img.youtube.com/vi/${source.videoId}/mqdefault.jpg`}
+                      alt="Thumbnail"
+                      className="qnp-thumb"
+                    />
+                    <div className="qnp-info">
+                      <div className="qnp-title" title={source.title || 'YouTube Video'}>
+                        {source.title || 'YouTube Video'}
+                      </div>
+                      <div className="qnp-subtitle">Synchronized Room Playback</div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
-          <form className="chat-form" onSubmit={sendChat}>
-            <input ref={chatInputRef} type="text" placeholder="Say something…" maxLength={500} autoComplete="off" />
-            <button className="btn primary send-btn" type="submit" title="Send">
-              <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </button>
-          </form>
+              <div className="queue-list-header">
+                <span className="ql-title">Up Next</span>
+                <span className="ql-count">({queue.length})</span>
+                {queue.length > 0 && (
+                  <button type="button" className="ql-clear" onClick={clearQueue} title="Clear all queued videos">
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              <div className="queue-scroll">
+                {queue.length === 0 ? (
+                  <div className="queue-empty">
+                    <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                    <p>The queue is empty</p>
+                    <span>Paste a YouTube link above to queue up videos to watch next together!</span>
+                  </div>
+                ) : (
+                  <div className="queue-items">
+                    {queue.map((item, idx) => (
+                      <div key={item.id || idx} className="queue-item">
+                        <span className="qi-index">#{idx + 1}</span>
+                        <img
+                          src={`https://img.youtube.com/vi/${item.videoId}/mqdefault.jpg`}
+                          alt="Thumbnail"
+                          className="qi-thumb"
+                        />
+                        <div className="qi-details">
+                          <div className="qi-title" title={item.title}>
+                            {item.title}
+                          </div>
+                          <div className="qi-meta">
+                            Added by <span className="qi-by">{item.addedByName || 'Someone'}</span>
+                          </div>
+                        </div>
+                        <div className="qi-actions">
+                          <button
+                            type="button"
+                            className="qi-btn play"
+                            onClick={() => playQueueItem(item.id)}
+                            title="Play now"
+                          >
+                            ▶
+                          </button>
+                          <button
+                            type="button"
+                            className="qi-btn remove"
+                            onClick={() => removeQueueItem(item.id)}
+                            title="Remove from queue"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </aside>
       </div>
 

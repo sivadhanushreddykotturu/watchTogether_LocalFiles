@@ -45,7 +45,7 @@ function freshRoom(code, state) {
     code,
     users: new Map(),
     recentlyLeft: new Map(),
-    state: state || { playing: false, time: 0, updatedAt: Date.now(), subOffset: 0, source: null },
+    state: state || { playing: false, time: 0, updatedAt: Date.now(), subOffset: 0, source: null, queue: [] },
   };
 }
 
@@ -115,6 +115,7 @@ function joinRoom(io, socket, code, name, { rejoin = false, history } = {}, cb) 
           time: currentPosition(room.state),
           subOffset: room.state.subOffset || 0,
           source: room.state.source || null,
+          queue: room.state.queue || [],
         },
         history,
       });
@@ -146,7 +147,7 @@ function attach(io) {
           if (typeof cb === 'function') cb({ error: 'No room with that code. Check it and try again.' });
           return;
         }
-        room = freshRoom(code, saved.state ? { subOffset: 0, source: null, ...saved.state } : undefined);
+        room = freshRoom(code, saved.state ? { subOffset: 0, source: null, queue: [], ...saved.state } : undefined);
         rooms.set(code, room);
       }
 
@@ -258,13 +259,13 @@ function attach(io) {
 
     // --- source switch: local files <-> YouTube. Resetting the source also
     // resets the playhead; everyone (including the setter) applies it uniformly.
-    socket.on('source', ({ type, videoId } = {}) => {
+    socket.on('source', ({ type, videoId, title } = {}) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
 
       if (type === 'youtube') {
         if (!/^[A-Za-z0-9_-]{11}$/.test(String(videoId || ''))) return;
-        room.state.source = { type: 'youtube', videoId };
+        room.state.source = { type: 'youtube', videoId, title: String(title || '').slice(0, 150) };
       } else {
         room.state.source = null; // back to local files
       }
@@ -280,6 +281,124 @@ function attach(io) {
         name: user ? user.name : 'Someone',
       });
       db.saveRoom(room.code, room.state); // background write
+    });
+
+    // --- queue management ---
+    socket.on('queue-add', ({ videoId, title, playNow } = {}, cb) => {
+      const room = rooms.get(socket.data.room);
+      if (!room) return;
+      if (!/^[A-Za-z0-9_-]{11}$/.test(String(videoId || ''))) return;
+
+      const user = room.users.get(socket.id);
+      const item = {
+        id: 'q_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+        videoId,
+        title: String(title || 'YouTube Video').slice(0, 150),
+        addedBy: socket.id,
+        addedByName: user ? user.name : 'Someone',
+      };
+
+      if (!room.state.queue) room.state.queue = [];
+
+      if (playNow || (!room.state.source && room.state.queue.length === 0)) {
+        room.state.source = { type: 'youtube', videoId: item.videoId, title: item.title };
+        room.state.time = 0;
+        room.state.playing = true;
+        room.state.updatedAt = Date.now();
+
+        io.to(room.code).emit('source', {
+          source: room.state.source,
+          playing: room.state.playing,
+          time: 0,
+          name: user ? user.name : 'Someone',
+        });
+      } else {
+        room.state.queue.push(item);
+      }
+
+      io.to(room.code).emit('queue-update', {
+        queue: room.state.queue,
+        action: playNow ? 'play' : 'add',
+        item,
+        name: user ? user.name : 'Someone',
+      });
+
+      db.saveRoom(room.code, room.state);
+      if (typeof cb === 'function') cb({ ok: true, queue: room.state.queue });
+    });
+
+    socket.on('queue-remove', (itemId) => {
+      const room = rooms.get(socket.data.room);
+      if (!room || !room.state.queue) return;
+      room.state.queue = room.state.queue.filter((i) => i.id !== itemId);
+      io.to(room.code).emit('queue-update', {
+        queue: room.state.queue,
+        action: 'remove',
+      });
+      db.saveRoom(room.code, room.state);
+    });
+
+    socket.on('queue-play', (itemId) => {
+      const room = rooms.get(socket.data.room);
+      if (!room || !room.state.queue) return;
+      const idx = room.state.queue.findIndex((i) => i.id === itemId);
+      if (idx === -1) return;
+      const [item] = room.state.queue.splice(idx, 1);
+      room.state.source = { type: 'youtube', videoId: item.videoId, title: item.title };
+      room.state.time = 0;
+      room.state.playing = true;
+      room.state.updatedAt = Date.now();
+
+      const user = room.users.get(socket.id);
+      io.to(room.code).emit('source', {
+        source: room.state.source,
+        playing: room.state.playing,
+        time: 0,
+        name: user ? user.name : 'Someone',
+      });
+      io.to(room.code).emit('queue-update', {
+        queue: room.state.queue,
+        action: 'play',
+        item,
+        name: user ? user.name : 'Someone',
+      });
+      db.saveRoom(room.code, room.state);
+    });
+
+    socket.on('queue-next', () => {
+      const room = rooms.get(socket.data.room);
+      if (!room || !room.state.queue || room.state.queue.length === 0) return;
+      const item = room.state.queue.shift();
+      room.state.source = { type: 'youtube', videoId: item.videoId, title: item.title };
+      room.state.time = 0;
+      room.state.playing = true;
+      room.state.updatedAt = Date.now();
+
+      const user = room.users.get(socket.id);
+      io.to(room.code).emit('source', {
+        source: room.state.source,
+        playing: room.state.playing,
+        time: 0,
+        name: user ? user.name : 'Someone',
+      });
+      io.to(room.code).emit('queue-update', {
+        queue: room.state.queue,
+        action: 'next',
+        item,
+        name: user ? user.name : 'Someone',
+      });
+      db.saveRoom(room.code, room.state);
+    });
+
+    socket.on('queue-clear', () => {
+      const room = rooms.get(socket.data.room);
+      if (!room) return;
+      room.state.queue = [];
+      io.to(room.code).emit('queue-update', {
+        queue: [],
+        action: 'clear',
+      });
+      db.saveRoom(room.code, room.state);
     });
 
     socket.on('leave-room', () => leaveCurrentRoom(io, socket));
