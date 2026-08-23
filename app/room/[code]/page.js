@@ -43,6 +43,7 @@ export default function Room() {
   const [ytPanelOpen, setYtPanelOpen] = useState(false);
   const [ytUrl, setYtUrl] = useState('');
   const [adBreak, setAdBreak] = useState(false);
+  const [ytError, setYtError] = useState('');
   const [syncOk, setSyncOk] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [playDisabled, setPlayDisabled] = useState(true);
@@ -1023,6 +1024,7 @@ export default function Room() {
   // destroy when the room goes back to local files.
   useEffect(() => {
     if (source?.type !== 'youtube') {
+      setYtError('');
       if (ytRef.current) {
         ytRef.current.destroy();
         ytRef.current = null;
@@ -1032,6 +1034,7 @@ export default function Room() {
       return;
     }
     let cancelled = false;
+    setYtError('');
     loadYouTubeApi().then(() => {
       if (cancelled) return;
       if (ytRef.current && ytRef.current.loadVideoById) {
@@ -1072,8 +1075,22 @@ export default function Room() {
               releaseWakeLock();
             }
           },
+          onError: (e) => {
+            const map = {
+              2: 'That video ID looks invalid — re-copy the link.',
+              5: "This video can't play in an embedded player.",
+              100: 'Video not found — it may be private or deleted.',
+              101: "The owner doesn't allow embedding this video.",
+              150: "The owner doesn't allow embedding this video.",
+            };
+            setYtError(map[e.data] || "This video can't be embedded.");
+          },
         },
       });
+    }).catch(() => {
+      if (!cancelled) {
+        setYtError("YouTube can't be reached from this device — an ad-blocker, DNS filter, VPN, or the network is blocking it. Others in the room are unaffected.");
+      }
     });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1437,6 +1454,13 @@ export default function Room() {
             {source?.type === 'youtube' && (
               <div className="yt-host" style={{ transform: `scale(${zoom})` }}>
                 <div ref={ytHostRef} className="yt-frame" />
+              </div>
+            )}
+
+            {ytError && (
+              <div className="yt-error">
+                <p className="yt-error-main">{ytError}</p>
+                <p className="yt-error-sub">Quick check: open <strong>youtube.com</strong> directly on this device. If that also fails, the block is on your network/DNS, not ReelSync.</p>
               </div>
             )}
 
