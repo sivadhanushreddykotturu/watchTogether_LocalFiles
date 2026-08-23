@@ -314,6 +314,17 @@ input[type="text"]::placeholder { color: #525b70; }
   transition: transform 0.2s ease;
 }
 
+/* fullscreen is the cinema, not a card: no border, no radius, no height cap */
+.screen:fullscreen,
+.screen:-webkit-full-screen {
+  border: none;
+  border-radius: 0;
+}
+.screen:fullscreen video,
+.screen:-webkit-full-screen video {
+  max-height: none;
+}
+
 /* file picker state — perfectly centered over the screen */
 .picker {
   position: absolute;
