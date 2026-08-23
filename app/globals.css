@@ -1064,7 +1064,8 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   align-items: center;
   justify-content: center;
   background: #000;
-  z-index: 4;
+  z-index: 10;
+  pointer-events: auto;
 }
 
 .web-embed-iframe {
@@ -1072,6 +1073,7 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   height: 100%;
   border: none;
   background: #000;
+  pointer-events: auto;
 }
 
 .qnp-thumb.placeholder,

@@ -2130,7 +2130,7 @@ export default function Room() {
               </div>
             )}
 
-            <div className={'picker' + (pickerOpen && source?.type !== 'youtube' ? '' : ' hidden')}>
+            <div className={'picker' + (pickerOpen && !source ? '' : ' hidden')}>
               <label className="pick-orb" htmlFor="fileInput" title="Choose video file">
                 <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor" style={{ transform: 'translateX(2px)' }}>
                   <path d="M8 5.14v13.72c0 .86.94 1.38 1.66.92l10.78-6.86c.69-.44.69-1.4 0-1.84L9.66 4.22A1.08 1.08 0 0 0 8 5.14z"/>
@@ -2143,11 +2143,11 @@ export default function Room() {
               <p className="picker-hint">{pickerHint}</p>
             </div>
 
-            <div className={'resume' + (resumeOpen ? '' : ' hidden')}>
+            <div className={'resume' + (resumeOpen && !source ? '' : ' hidden')}>
               <button className="btn primary big" onClick={resume}>Catch up with the room</button>
             </div>
 
-            {subPanelOpen && source?.type !== 'youtube' && (
+            {subPanelOpen && !source && (
               <>
                 <div className="sub-backdrop" onClick={() => setSubPanelOpen(false)} />
                 <div className="sub-panel">
