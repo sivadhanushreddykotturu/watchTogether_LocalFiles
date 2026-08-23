@@ -799,43 +799,38 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   box-shadow: 0 0 10px rgba(250, 204, 21, 0.25);
 }
 
-/* ---------------- subtle live emoji reactions (bottom-right corner) ---------------- */
+/* ---------------- live emoji reactions — scattered rise ---------------- */
 
 .reaction-stream {
   position: absolute;
-  right: 20px;
-  bottom: 24px;
-  width: 100px;
-  height: 240px;
-  display: flex;
-  flex-direction: column-reverse;
-  align-items: flex-end;
+  inset: 0;
   pointer-events: none;
   overflow: hidden;
-  z-index: 22;
+  z-index: 24;
 }
 
 .reaction-item {
-  font-size: 26px;
+  position: absolute;
+  bottom: 18px;
   filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.6));
-  animation: float-up-fade 2.2s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+  animation: reaction-rise linear forwards;
+  will-change: transform, opacity;
 }
 
-@keyframes float-up-fade {
+@keyframes reaction-rise {
   0% {
     opacity: 0;
-    transform: translateY(20px) scale(0.6);
+    transform: translate(0, 0) scale(0.5) rotate(0deg);
   }
-  15% {
+  8% {
     opacity: 0.95;
-    transform: translateY(0) scale(1.15);
   }
-  30% {
-    transform: translateY(-25px) scale(1);
+  25% {
+    transform: translate(calc(var(--drift) * 0.35), -12vh) scale(1.15) rotate(calc(var(--rot) * 0.4));
   }
   100% {
     opacity: 0;
-    transform: translateY(-160px) scale(0.85);
+    transform: translate(var(--drift), -48vh) scale(0.9) rotate(var(--rot));
   }
 }
 

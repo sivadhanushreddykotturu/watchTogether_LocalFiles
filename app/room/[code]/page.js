@@ -771,10 +771,20 @@ export default function Room() {
     };
 
     const onReaction = ({ emoji, id }) => {
-      setReactions((prev) => [...prev.slice(-8), { id: id || Date.now() + Math.random(), emoji }]);
+      // each reaction gets its own scatter: spot, sideways wander, size, spin, pace
+      const item = {
+        id: id || Date.now() + Math.random(),
+        emoji,
+        left: 35 + Math.random() * 60,      // % — scattered across the right 60%
+        drift: -40 + Math.random() * 80,    // px of sideways wander
+        size: 22 + Math.random() * 18,      // px
+        dur: 2.4 + Math.random() * 1.4,     // seconds
+        rot: -24 + Math.random() * 48,      // deg
+      };
+      setReactions((prev) => [...prev.slice(-11), item]);
       setTimeout(() => {
-        setReactions((prev) => prev.filter((r) => r.id !== id));
-      }, 2200);
+        setReactions((prev) => prev.filter((r) => r.id !== item.id));
+      }, item.dur * 1000 + 250);
     };
 
     const onPeerFileMeta = ({ id, duration, size, name: fileName }) => {
@@ -1412,7 +1422,17 @@ export default function Room() {
             {reactions.length > 0 && (
               <div className="reaction-stream" aria-hidden="true">
                 {reactions.map((r) => (
-                  <span key={r.id} className="reaction-item">
+                  <span
+                    key={r.id}
+                    className="reaction-item"
+                    style={{
+                      left: `${r.left}%`,
+                      fontSize: `${r.size}px`,
+                      animationDuration: `${r.dur}s`,
+                      '--drift': `${r.drift}px`,
+                      '--rot': `${r.rot}deg`,
+                    }}
+                  >
                     {r.emoji}
                   </span>
                 ))}
