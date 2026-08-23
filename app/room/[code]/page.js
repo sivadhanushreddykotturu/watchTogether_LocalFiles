@@ -113,6 +113,7 @@ export default function Room() {
   const peersRef = useRef(new Map());
   const guardRef = useRef({ play: 0, pause: 0, seek: 0 });
   const lastLocalPauseRef = useRef(0);
+  const lastLocalSeekRef = useRef(0); // grace window so drift correction can't yank back a fresh local seek
   const wakeLockRef = useRef(null);
   const heartbeatRef = useRef(null);
   const nowTickRef = useRef(null);
@@ -516,6 +517,10 @@ export default function Room() {
   function emitPlayback(action) {
     const socket = getSocket();
     if (!socket.connected) return;
+    // every local seek funnels through here — timestamp it so the heartbeat's
+    // drift correction gives the server a round-trip to catch up, instead of
+    // snapping us back to the stale position mid-hop
+    if (action === 'seek') lastLocalSeekRef.current = Date.now();
     socket.emit('playback', { action, time: currentTimeAny() });
   }
 
@@ -550,7 +555,7 @@ export default function Room() {
         if (typeof expected !== 'number') return;
         setStateLatest(playing, expected);
         const drift = expected - yt.getCurrentTime();
-        if (playing && ytPlayingRef.current && !ytStallRef.current && Math.abs(drift) > 2) {
+        if (playing && ytPlayingRef.current && !ytStallRef.current && Math.abs(drift) > 2 && Date.now() - lastLocalSeekRef.current > 1500) {
           guardRef.current.seek++;
           yt.seekTo(expected, true);
           setSyncStatus(false);
@@ -568,7 +573,7 @@ export default function Room() {
       if (typeof expected !== 'number') return;
       setStateLatest(playing, expected);
       const drift = expected - video.currentTime;
-      if (playing && !video.paused && Math.abs(drift) > 1.5) {
+      if (playing && !video.paused && Math.abs(drift) > 1.5 && Date.now() - lastLocalSeekRef.current > 1500) {
         guardRef.current.seek++;
         video.currentTime = expected;
         if (extAudioRef.current && extAudioRef.current.src) {
