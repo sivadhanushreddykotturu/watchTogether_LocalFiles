@@ -223,7 +223,7 @@ function attach(io) {
     socket.on('playback-speed', (speed) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
-      const rate = Math.min(2, Math.max(0.5, Number(speed) || 1));
+      const rate = Math.min(2, Math.max(0.25, Number(speed) || 1));
       room.state.time = currentPosition(room.state);
       room.state.updatedAt = Date.now();
       room.state.speed = rate;

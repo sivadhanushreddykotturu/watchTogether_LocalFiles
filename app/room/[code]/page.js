@@ -781,11 +781,19 @@ export default function Room() {
         setAudioTracks(list);
       }
     };
+    const onRateChange = () => {
+      const v = videoRef.current;
+      if (!v) return;
+      const newRate = Number(v.playbackRate);
+      if (!newRate || Math.abs(newRate - speedRef.current) < 0.01) return;
+      changeSpeed(newRate, true);
+    };
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
     video.addEventListener('seeking', onSeeking);
     video.addEventListener('seeked', onSeeked);
     video.addEventListener('ended', onEnded);
+    video.addEventListener('ratechange', onRateChange);
     video.addEventListener('timeupdate', onTime);
     video.addEventListener('loadedmetadata', onLoadedMetadata);
 
@@ -910,6 +918,9 @@ export default function Room() {
             videoId: s.videoId,
             startSeconds: Number(time) || 0,
           });
+          if (speedRef.current && typeof ytRef.current.setPlaybackRate === 'function') {
+            try { ytRef.current.setPlaybackRate(speedRef.current); } catch {}
+          }
           if (p) {
             guardRef.current.play++;
             if (typeof ytRef.current.playVideo === 'function') ytRef.current.playVideo();
@@ -1071,6 +1082,7 @@ export default function Room() {
       video.removeEventListener('pause', onPause);
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('ended', onEnded);
+      video.removeEventListener('ratechange', onRateChange);
       video.removeEventListener('timeupdate', onTime);
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
       document.removeEventListener('visibilitychange', onVisibility);
@@ -1118,6 +1130,9 @@ export default function Room() {
             videoId: currentVideoId,
             startSeconds: latestStateRef.current.time || 0,
           });
+          if (speedRef.current && typeof ytRef.current.setPlaybackRate === 'function') {
+            try { ytRef.current.setPlaybackRate(speedRef.current); } catch {}
+          }
           if (latestStateRef.current.playing) {
             ytRef.current.playVideo();
           }
@@ -1147,6 +1162,11 @@ export default function Room() {
               guardRef.current.play++;
               try { e.target.playVideo(); } catch {}
             }
+          },
+          onPlaybackRateChange: (e) => {
+            const newRate = Number(e.data);
+            if (!newRate || Math.abs(newRate - speedRef.current) < 0.01) return;
+            changeSpeed(newRate, true);
           },
           onStateChange: (e) => {
             const S = window.YT.PlayerState;
@@ -1999,11 +2019,13 @@ export default function Room() {
                 onChange={(e) => changeSpeed(e.target.value)}
                 title="Playback speed (synced)"
               >
+                <option value="0.25">0.25x</option>
                 <option value="0.5">0.5x</option>
                 <option value="0.75">0.75x</option>
                 <option value="1">1.0x</option>
                 <option value="1.25">1.25x</option>
                 <option value="1.5">1.5x</option>
+                <option value="1.75">1.75x</option>
                 <option value="2">2.0x</option>
               </select>
 
