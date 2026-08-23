@@ -259,18 +259,19 @@ function attach(io) {
 
     // --- source switch: local files <-> YouTube. Resetting the source also
     // resets the playhead; everyone (including the setter) applies it uniformly.
-    socket.on('source', ({ type, videoId, title } = {}) => {
+    socket.on('source', ({ type, videoId, title, playing = true } = {}) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
 
       if (type === 'youtube') {
         if (!/^[A-Za-z0-9_-]{11}$/.test(String(videoId || ''))) return;
         room.state.source = { type: 'youtube', videoId, title: String(title || '').slice(0, 150) };
+        room.state.playing = Boolean(playing);
       } else {
         room.state.source = null; // back to local files
+        room.state.playing = false;
       }
       room.state.time = 0;
-      room.state.playing = false;
       room.state.updatedAt = Date.now();
 
       const user = room.users.get(socket.id);

@@ -1109,6 +1109,7 @@ export default function Room() {
       ytRef.current = new window.YT.Player(ytHostRef.current, {
         videoId: currentVideoId,
         playerVars: {
+          autoplay: latestStateRef.current.playing ? 1 : 0,
           rel: 0,
           playsinline: 1,
           enablejsapi: 1,
@@ -1117,9 +1118,13 @@ export default function Room() {
           origin: typeof window !== 'undefined' ? window.location.origin : undefined,
         },
         events: {
-          onReady: () => {
+          onReady: (e) => {
             ytLastRef.current = { t: 0, at: Date.now(), playing: false };
             applyState(latestStateRef.current); // join mid-playback if the room is rolling
+            if (latestStateRef.current.playing) {
+              guardRef.current.play++;
+              try { e.target.playVideo(); } catch {}
+            }
           },
           onStateChange: (e) => {
             const S = window.YT.PlayerState;
@@ -1403,7 +1408,7 @@ export default function Room() {
     if (!socket.connected) return;
     const info = await fetchYouTubeInfo(id);
     if (playNow) {
-      socket.emit('source', { type: 'youtube', videoId: id, title: info.title });
+      socket.emit('source', { type: 'youtube', videoId: id, title: info.title, playing: true });
     } else {
       socket.emit('queue-add', { videoId: id, title: info.title, playNow: false });
     }
@@ -1497,7 +1502,7 @@ export default function Room() {
     const socket = getSocket();
     if (!socket.connected) return;
     if (playNow) {
-      socket.emit('source', { type: 'youtube', videoId: item.id, title: item.title });
+      socket.emit('source', { type: 'youtube', videoId: item.id, title: item.title, playing: true });
       toast(`Playing "${item.title}"`);
       setYtSearchModalOpen(false);
       setYtPanelOpen(false);
