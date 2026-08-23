@@ -608,6 +608,37 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   border-radius: 50%;
 }
 
+/* ---------------- YouTube mode ---------------- */
+
+.yt-host {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  z-index: 1;
+  transition: transform 0.2s ease;
+}
+.yt-frame,
+.yt-host iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.t-btn.yt-btn.active { color: var(--accent); border-color: var(--accent); }
+
+.yt-url {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 9px 12px;
+  font-size: 13px;
+}
+.yt-url:focus { border-color: var(--accent); outline: none; }
+.yt-url::placeholder { color: #525b70; }
+
 /* ---------------- transport ---------------- */
 
 .transport {

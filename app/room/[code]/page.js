@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
+import { loadYouTubeApi, parseYouTubeId } from '../../../lib/youtube';
 
 // ---------- helpers ----------
 function fmt(t) {
@@ -38,6 +39,9 @@ export default function Room() {
   const [pickerOpen, setPickerOpen] = useState(true);
   const [pickerHint, setPickerHint] = useState('');
   const [resumeOpen, setResumeOpen] = useState(false);
+  const [source, setSource] = useState(null); // { type: 'youtube', videoId } | null (null = local files)
+  const [ytPanelOpen, setYtPanelOpen] = useState(false);
+  const [ytUrl, setYtUrl] = useState('');
   const [syncOk, setSyncOk] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [playDisabled, setPlayDisabled] = useState(true);
@@ -112,6 +116,27 @@ export default function Room() {
   const offsetRef = useRef(0);
   const subsOnRef = useRef(false);
   const subTimerRef = useRef(null);
+  const sourceRef = useRef(null);          // mirror of `source` for event handlers
+  const ytRef = useRef(null);              // YT.Player instance
+  const ytHostRef = useRef(null);          // div the iframe replaces
+  const ytPlayingRef = useRef(false);      // last known YT state
+  const ytVideoIdRef = useRef(null);
+  const ytLastRef = useRef({ t: 0, at: 0, playing: false }); // seek detection
+  const ytTickRef = useRef(null);
+
+  const ytMode = () => sourceRef.current?.type === 'youtube';
+  const setSourceState = (s) => { sourceRef.current = s; setSource(s); };
+
+  // Time/duration adapters — the sync engine reads through these so it
+  // doesn't care whether the source is a local file or YouTube.
+  function currentTimeAny() {
+    if (ytMode() && ytRef.current?.getCurrentTime) return ytRef.current.getCurrentTime();
+    return videoRef.current ? videoRef.current.currentTime : 0;
+  }
+  function durationAny() {
+    if (ytMode() && ytRef.current?.getDuration) return ytRef.current.getDuration();
+    return videoRef.current ? videoRef.current.duration : 0;
+  }
 
   // ---------- small utilities ----------
   const toast = (text) => {
@@ -251,6 +276,7 @@ export default function Room() {
   const setVol = (v) => {
     const val = Math.max(0, Math.min(1, Number(v) || 0));
     setVolume(val);
+    if (ytMode() && ytRef.current?.setVolume) ytRef.current.setVolume(Math.round(val * 100));
     if (videoRef.current) {
       videoRef.current.volume = val;
       videoRef.current.muted = false;
@@ -267,6 +293,7 @@ export default function Room() {
     setSpeed(spd);
     if (videoRef.current) videoRef.current.playbackRate = spd;
     if (extAudioRef.current) extAudioRef.current.playbackRate = spd;
+    if (ytRef.current?.setPlaybackRate) ytRef.current.setPlaybackRate(spd);
     const socket = getSocket();
     if (socket.connected) socket.emit('playback-speed', spd);
     if (announce) toast(`Playback speed: ${spd}x`);
@@ -352,9 +379,9 @@ export default function Room() {
 
   // ---------- player core ----------
   function updateTimeline() {
-    const video = videoRef.current;
-    const d = video && video.duration;
-    if (!fileLoadedRef.current || !d || !isFinite(d)) {
+    const d = durationAny();
+    const t = currentTimeAny();
+    if ((ytMode() && !ytRef.current) || (!ytMode() && !fileLoadedRef.current) || !d || !isFinite(d)) {
       if (fillRef.current) fillRef.current.style.width = '0%';
       if (headRef.current) headRef.current.style.left = '0%';
       if (curRef.current) curRef.current.textContent = '0:00';
@@ -362,10 +389,10 @@ export default function Room() {
       renderTicks();
       return;
     }
-    const pct = (video.currentTime / d) * 100;
+    const pct = (t / d) * 100;
     fillRef.current.style.width = pct + '%';
     headRef.current.style.left = pct + '%';
-    curRef.current.textContent = fmt(video.currentTime);
+    curRef.current.textContent = fmt(t);
     durRef.current.textContent = fmt(d);
     renderTicks();
   }
@@ -374,9 +401,8 @@ export default function Room() {
     const box = ticksRef.current;
     if (!box) return;
     box.innerHTML = '';
-    const video = videoRef.current;
-    const d = video && video.duration;
-    if (!fileLoadedRef.current || !d || !isFinite(d)) return;
+    const d = durationAny();
+    if ((ytMode() && !ytRef.current) || (!ytMode() && !fileLoadedRef.current) || !d || !isFinite(d)) return;
     for (const [id, p] of peersRef.current) {
       if (id === (meRef.current && meRef.current.id) || typeof p.time !== 'number') continue;
       const el = document.createElement('div');
@@ -390,6 +416,35 @@ export default function Room() {
 
   function applyState(state) {
     setStateLatest(state.playing, state.time);
+
+    // YouTube mode: drive the iframe player instead of the <video> element.
+    if (sourceRef.current?.type === 'youtube') {
+      const yt = ytRef.current;
+      const guard = guardRef.current;
+      if (!yt || !yt.seekTo) { updateTimeline(); return; }
+      if (Math.abs(yt.getCurrentTime() - state.time) > 0.5) {
+        guard.seek++;
+        yt.seekTo(state.time, true);
+      }
+      if (state.playing) {
+        guard.play++;
+        yt.playVideo();
+        setResumeOpen(false);
+        // autoplay blocked = no PLAYING event arrives — undo the guard and ask for a tap
+        setTimeout(() => {
+          if (!ytPlayingRef.current && guardRef.current.play > 0) {
+            guardRef.current.play--;
+            setResumeOpen(true);
+          }
+        }, 900);
+      } else if (ytPlayingRef.current) {
+        guard.pause++;
+        yt.pauseVideo();
+      }
+      updateTimeline();
+      return;
+    }
+
     const video = videoRef.current;
     if (!fileLoadedRef.current || !video) { updateTimeline(); return; }
     video.muted = false;
@@ -427,8 +482,12 @@ export default function Room() {
   }
 
   async function ensureWakeLock() {
-    const video = videoRef.current;
-    if (!('wakeLock' in navigator) || wakeLockRef.current || !fileLoadedRef.current || !video || video.paused) return;
+    if (ytMode()) {
+      if (!('wakeLock' in navigator) || wakeLockRef.current || !ytPlayingRef.current) return;
+    } else {
+      const video = videoRef.current;
+      if (!('wakeLock' in navigator) || wakeLockRef.current || !fileLoadedRef.current || !video || video.paused) return;
+    }
     try {
       wakeLockRef.current = await navigator.wakeLock.request('screen');
       wakeLockRef.current.addEventListener('release', () => { wakeLockRef.current = null; });
@@ -444,9 +503,8 @@ export default function Room() {
 
   function emitPlayback(action) {
     const socket = getSocket();
-    if (socket.connected && videoRef.current) {
-      socket.emit('playback', { action, time: videoRef.current.currentTime });
-    }
+    if (!socket.connected) return;
+    socket.emit('playback', { action, time: currentTimeAny() });
   }
 
   // VLC-style delay: positive pushes subtitles later. Room-wide — everyone
@@ -471,6 +529,27 @@ export default function Room() {
 
   function beat() {
     const socket = getSocket();
+
+    // YouTube mode heartbeat: same drift-correction contract, iframe time source.
+    if (sourceRef.current?.type === 'youtube') {
+      const yt = ytRef.current;
+      if (!yt || !yt.getCurrentTime || !socket.connected) return;
+      socket.emit('time-update', yt.getCurrentTime(), ({ expected, playing } = {}) => {
+        if (typeof expected !== 'number') return;
+        setStateLatest(playing, expected);
+        const drift = expected - yt.getCurrentTime();
+        if (playing && ytPlayingRef.current && Math.abs(drift) > 2) {
+          guardRef.current.seek++;
+          yt.seekTo(expected, true);
+          setSyncStatus(false);
+          setTimeout(() => setSyncStatus(true), 1200);
+        } else if (playing && !ytPlayingRef.current && Date.now() - lastLocalPauseRef.current > 5000) {
+          setResumeOpen(true);
+        }
+      });
+      return;
+    }
+
     const video = videoRef.current;
     if (!fileLoadedRef.current || !video || !socket.connected) return;
     socket.emit('time-update', video.currentTime, ({ expected, playing } = {}) => {
@@ -517,6 +596,7 @@ export default function Room() {
       setStateLatest(res.state.playing, res.state.time);
       offsetRef.current = res.state.subOffset || 0;
       setSubOffset(offsetRef.current);
+      setSourceState(res.state.source || null);
       setUsers(res.users);
       setMessages(Array.isArray(res.history) ? res.history : []);
       if (res.state.playing) {
@@ -578,7 +658,7 @@ export default function Room() {
         setSubText((prev) => (prev ? '' : prev));
         return;
       }
-      const t = v.currentTime * 1000 - offsetRef.current;
+      const t = currentTimeAny() * 1000 - offsetRef.current;
       const matching = [];
       for (let i = 0; i < cues.length; i++) {
         const c = cues[i];
@@ -684,6 +764,7 @@ export default function Room() {
     const onPlaybackSpeed = ({ speed: spd, name: actor }) => {
       setSpeed(spd);
       if (videoRef.current) videoRef.current.playbackRate = spd;
+      if (ytRef.current?.setPlaybackRate) ytRef.current.setPlaybackRate(spd);
       toast(`${actor} set speed to ${spd}x`);
     };
 
@@ -735,6 +816,20 @@ export default function Room() {
       setSubOffset(o);
       toast(`${actor} set subtitle delay to ${fmtOffset(o)}`);
     };
+    const onSource = ({ source: s, playing: p, time, name: actor }) => {
+      setSourceState(s);
+      setStateLatest(p, time);
+      setResumeOpen(false);
+      if (s?.type === 'youtube') {
+        toast(`${actor} queued a YouTube video`);
+        // pause local playback quietly — the room has moved on to YouTube
+        const v = videoRef.current;
+        if (v && !v.paused) { guardRef.current.pause++; v.pause(); }
+      } else {
+        toast(`${actor} switched back to local files`);
+        if (!fileLoadedRef.current) setPickerHint('Pick your copy of the file to join in.');
+      }
+    };
     socket.on('playback', onPlayback);
     socket.on('users', onUsers);
     socket.on('chat', onChat);
@@ -745,6 +840,7 @@ export default function Room() {
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('subtitle', onSubtitle);
+    socket.on('source', onSource);
 
     // --- heartbeat + now-strip + subtitle ticker ---
     heartbeatRef.current = setInterval(beat, 2000);
@@ -752,6 +848,23 @@ export default function Room() {
       setNowInfo({ ...latestStateRef.current });
     }, 1000);
     subTimerRef.current = setInterval(updateSubtitles, 80);
+
+    // YouTube has no seek event — poll for jumps (and keep the timeline fresh).
+    ytTickRef.current = setInterval(() => {
+      if (!ytMode() || !ytRef.current || !ytRef.current.getCurrentTime) return;
+      const cur = ytRef.current.getCurrentTime();
+      const last = ytLastRef.current;
+      const now = Date.now();
+      if (last.playing && ytPlayingRef.current) {
+        const expected = last.t + (now - last.at) / 1000;
+        if (Math.abs(cur - expected) > 1.2) {
+          if (guardRef.current.seek > 0) guardRef.current.seek--;
+          else emitPlayback('seek');
+        }
+      }
+      ytLastRef.current = { t: cur, at: now, playing: ytPlayingRef.current };
+      updateTimeline();
+    }, 250);
 
     // --- saved subtitle appearance + zoom (per person, this device only) ---
     try {
@@ -775,8 +888,16 @@ export default function Room() {
     };
     const onResize = () => maybeClearUnread();
     const onKey = (e) => {
-      if (!fileLoadedRef.current || !videoRef.current) return;
+      if (!ytMode() && (!fileLoadedRef.current || !videoRef.current)) return;
       if (e.target.matches('input, textarea')) return;
+      if (ytMode()) {
+        const yt = ytRef.current;
+        if (!yt || !yt.getCurrentTime) return;
+        if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+        if (e.code === 'ArrowRight') yt.seekTo(Math.min(yt.getDuration() || 0, yt.getCurrentTime() + 5), true);
+        if (e.code === 'ArrowLeft') yt.seekTo(Math.max(0, yt.getCurrentTime() - 5), true);
+        return;
+      }
       const v = videoRef.current;
       if (e.code === 'Space') {
         e.preventDefault();
@@ -823,6 +944,7 @@ export default function Room() {
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off('subtitle', onSubtitle);
+      socket.off('source', onSource);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('seeked', onSeeked);
@@ -836,12 +958,73 @@ export default function Room() {
       clearInterval(heartbeatRef.current);
       clearInterval(nowTickRef.current);
       clearInterval(subTimerRef.current);
+      clearInterval(ytTickRef.current);
       releaseWakeLock();
       if (video.src) { URL.revokeObjectURL(video.src); }
       document.title = 'ReelSync — watch local files together';
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
+
+  // YouTube player lifecycle: create once per mount, load on video change,
+  // destroy when the room goes back to local files.
+  useEffect(() => {
+    if (source?.type !== 'youtube') {
+      if (ytRef.current) {
+        ytRef.current.destroy();
+        ytRef.current = null;
+        ytPlayingRef.current = false;
+        ytVideoIdRef.current = null;
+      }
+      return;
+    }
+    let cancelled = false;
+    loadYouTubeApi().then(() => {
+      if (cancelled) return;
+      if (ytRef.current && ytRef.current.loadVideoById) {
+        if (ytVideoIdRef.current !== source.videoId) {
+          ytVideoIdRef.current = source.videoId;
+          ytRef.current.loadVideoById(source.videoId);
+        }
+        return;
+      }
+      ytVideoIdRef.current = source.videoId;
+      ytRef.current = new window.YT.Player(ytHostRef.current, {
+        videoId: source.videoId,
+        playerVars: { rel: 0, playsinline: 1 },
+        events: {
+          onReady: () => {
+            ytLastRef.current = { t: 0, at: Date.now(), playing: false };
+            applyState(latestStateRef.current); // join mid-playback if the room is rolling
+          },
+          onStateChange: (e) => {
+            const S = window.YT.PlayerState;
+            if (e.data === S.PLAYING) {
+              ytPlayingRef.current = true;
+              setPlaying(true);
+              setSyncStatus(true);
+              ensureWakeLock();
+              if (guardRef.current.play > 0) { guardRef.current.play--; return; }
+              emitPlayback('play');
+            } else if (e.data === S.PAUSED) {
+              ytPlayingRef.current = false;
+              setPlaying(false);
+              releaseWakeLock();
+              if (guardRef.current.pause > 0) { guardRef.current.pause--; return; }
+              lastLocalPauseRef.current = Date.now();
+              emitPlayback('pause');
+            } else if (e.data === S.ENDED) {
+              ytPlayingRef.current = false;
+              setPlaying(false);
+              releaseWakeLock();
+            }
+          },
+        },
+      });
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source]);
 
   // autoscroll chat on new messages when visible
   useEffect(() => {
@@ -1032,6 +1215,12 @@ export default function Room() {
   };
 
   const togglePlay = () => {
+    if (ytMode()) {
+      const yt = ytRef.current;
+      if (!yt || !yt.playVideo) return;
+      if (ytPlayingRef.current) yt.pauseVideo(); else yt.playVideo();
+      return;
+    }
     const v = videoRef.current;
     if (!fileLoadedRef.current || !v) return;
     userIntentRef.current = true;
@@ -1041,21 +1230,42 @@ export default function Room() {
   };
 
   const onScrub = (e, commit) => {
-    const v = videoRef.current;
-    if (!fileLoadedRef.current || !v || !v.duration) return;
+    const d = durationAny();
+    if (!d || !isFinite(d)) return;
+    if (!ytMode() && !fileLoadedRef.current) return;
     const rect = timelineRef.current.getBoundingClientRect();
     const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-    const t = ratio * v.duration;
+    const t = ratio * d;
     fillRef.current.style.width = ratio * 100 + '%';
     headRef.current.style.left = ratio * 100 + '%';
     curRef.current.textContent = fmt(t);
     if (commit) {
-      v.currentTime = t; // fires 'seeked' once -> broadcast
-      if (extAudioRef.current && extAudioRef.current.src) {
-        extAudioRef.current.currentTime = t;
-        if (!v.paused) extAudioRef.current.play().catch(() => {});
+      if (ytMode()) {
+        ytRef.current.seekTo(t, true); // poll detects the jump -> broadcast
+      } else {
+        const v = videoRef.current;
+        v.currentTime = t; // fires 'seeked' once -> broadcast
+        if (extAudioRef.current && extAudioRef.current.src) {
+          extAudioRef.current.currentTime = t;
+          if (!v.paused) extAudioRef.current.play().catch(() => {});
+        }
       }
     }
+  };
+
+  const queueYouTube = () => {
+    const id = parseYouTubeId(ytUrl);
+    if (!id) { toast("That doesn't look like a YouTube link"); return; }
+    const socket = getSocket();
+    if (socket.connected) socket.emit('source', { type: 'youtube', videoId: id });
+    setYtUrl('');
+    setYtPanelOpen(false);
+  };
+
+  const switchToLocal = () => {
+    const socket = getSocket();
+    if (socket.connected) socket.emit('source', { type: 'local' });
+    setYtPanelOpen(false);
   };
 
   const copyCode = async () => {
@@ -1168,8 +1378,14 @@ export default function Room() {
           )}
 
           <div className="screen" ref={screenRef}>
-            <video ref={videoRef} playsInline style={{ transform: `scale(${zoom})` }}></video>
+            <video ref={videoRef} playsInline className={source?.type === 'youtube' ? 'hidden' : ''} style={{ transform: `scale(${zoom})` }}></video>
             <audio ref={extAudioRef} playsInline style={{ display: 'none' }}></audio>
+
+            {source?.type === 'youtube' && (
+              <div className="yt-host" style={{ transform: `scale(${zoom})` }}>
+                <div ref={ytHostRef} className="yt-frame" />
+              </div>
+            )}
 
             {danmakuEnabled && danmakuList.length > 0 && (
               <div className="danmaku-layer" aria-hidden="true">
@@ -1231,7 +1447,7 @@ export default function Room() {
               </div>
             )}
 
-            <div className={'picker' + (pickerOpen ? '' : ' hidden')}>
+            <div className={'picker' + (pickerOpen && source?.type !== 'youtube' ? '' : ' hidden')}>
               <label className="pick-orb" htmlFor="fileInput" title="Choose video file">
                 <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor" style={{ transform: 'translateX(2px)' }}>
                   <path d="M8 5.14v13.72c0 .86.94 1.38 1.66.92l10.78-6.86c.69-.44.69-1.4 0-1.84L9.66 4.22A1.08 1.08 0 0 0 8 5.14z"/>
@@ -1401,8 +1617,29 @@ export default function Room() {
           </div>
 
           <div className="transport-wrap">
+            {ytPanelOpen && (
+              <div className="sub-panel yt-panel">
+                <div className="sub-row">
+                  <span className="sub-label">Watch a YouTube video together</span>
+                  <input
+                    type="text"
+                    className="yt-url"
+                    placeholder="Paste YouTube link…"
+                    value={ytUrl}
+                    onChange={(e) => setYtUrl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') queueYouTube(); }}
+                  />
+                  <button className="btn primary sm" onClick={queueYouTube}>Watch</button>
+                </div>
+                {source?.type === 'youtube' && (
+                  <div className="sub-row">
+                    <button className="btn ghost sm" onClick={switchToLocal}>← Back to local files</button>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="transport">
-              <button className="t-btn" onClick={togglePlay} disabled={playDisabled} title="Play / pause (space)">
+              <button className="t-btn" onClick={togglePlay} disabled={playDisabled && source?.type !== 'youtube'} title="Play / pause (space)">
                 {playing ? (
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
                     <rect x="6" y="4.5" width="3.5" height="15" rx="1.5"/>
@@ -1420,7 +1657,7 @@ export default function Room() {
                 ref={timelineRef}
                 title="Seek"
                 onPointerDown={(e) => {
-                  if (!fileLoadedRef.current || !videoRef.current || !videoRef.current.duration) return;
+                  if (!durationAny()) return;
                   scrubbingRef.current = true;
                   timelineRef.current.setPointerCapture(e.pointerId);
                   onScrub(e, false);
@@ -1463,6 +1700,14 @@ export default function Room() {
                   {Math.round(volume * 100)}%
                 </span>
               </div>
+
+              <button
+                className={'t-btn yt-btn' + (source?.type === 'youtube' ? ' active' : '')}
+                onClick={() => setYtPanelOpen(!ytPanelOpen)}
+                title="YouTube together"
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18"><path d="M22 12s0-3.3-.42-4.8a2.5 2.5 0 0 0-1.76-1.77C18.25 5 12 5 12 5s-6.25 0-7.82.43A2.5 2.5 0 0 0 2.42 7.2C2 8.7 2 12 2 12s0 3.3.42 4.8c.23.86.9 1.53 1.76 1.77C5.75 19 12 19 12 19s6.25 0 7.82-.43a2.5 2.5 0 0 0 1.76-1.77C22 15.3 22 12 22 12zM10 15.5v-7l6 3.5-6 3.5z" fill="currentColor"/></svg>
+              </button>
 
               <button
                 className={'t-btn dim-btn' + (dimmed ? ' active' : '')}

@@ -45,7 +45,7 @@ function freshRoom(code, state) {
     code,
     users: new Map(),
     recentlyLeft: new Map(),
-    state: state || { playing: false, time: 0, updatedAt: Date.now(), subOffset: 0 },
+    state: state || { playing: false, time: 0, updatedAt: Date.now(), subOffset: 0, source: null },
   };
 }
 
@@ -110,7 +110,12 @@ function joinRoom(io, socket, code, name, { rejoin = false, history } = {}, cb) 
         code,
         self: { id: socket.id, ...user },
         users: roomUsers(room),
-        state: { playing: room.state.playing, time: currentPosition(room.state), subOffset: room.state.subOffset || 0 },
+        state: {
+          playing: room.state.playing,
+          time: currentPosition(room.state),
+          subOffset: room.state.subOffset || 0,
+          source: room.state.source || null,
+        },
         history,
       });
   }
@@ -141,7 +146,7 @@ function attach(io) {
           if (typeof cb === 'function') cb({ error: 'No room with that code. Check it and try again.' });
           return;
         }
-        room = freshRoom(code, saved.state ? { subOffset: 0, ...saved.state } : undefined);
+        room = freshRoom(code, saved.state ? { subOffset: 0, source: null, ...saved.state } : undefined);
         rooms.set(code, room);
       }
 
@@ -249,6 +254,32 @@ function attach(io) {
         size: Number(size) || 0,
         name: String(name || ''),
       });
+    });
+
+    // --- source switch: local files <-> YouTube. Resetting the source also
+    // resets the playhead; everyone (including the setter) applies it uniformly.
+    socket.on('source', ({ type, videoId } = {}) => {
+      const room = rooms.get(socket.data.room);
+      if (!room) return;
+
+      if (type === 'youtube') {
+        if (!/^[A-Za-z0-9_-]{11}$/.test(String(videoId || ''))) return;
+        room.state.source = { type: 'youtube', videoId };
+      } else {
+        room.state.source = null; // back to local files
+      }
+      room.state.time = 0;
+      room.state.playing = false;
+      room.state.updatedAt = Date.now();
+
+      const user = room.users.get(socket.id);
+      io.to(room.code).emit('source', {
+        source: room.state.source,
+        playing: room.state.playing,
+        time: 0,
+        name: user ? user.name : 'Someone',
+      });
+      db.saveRoom(room.code, room.state); // background write
     });
 
     socket.on('leave-room', () => leaveCurrentRoom(io, socket));

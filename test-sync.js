@@ -135,6 +135,30 @@ async function main() {
   check('rejoin response omits history', e2Join.history === undefined);
   check('rejoin still returns state+users', e2Join.state.time === 10 && e2Join.users.length === 4);
 
+  // --- source: YouTube switch broadcasts, resets playhead, persists in state ---
+  const bSrc = [];
+  b.on('source', (m) => bSrc.push(m));
+
+  a.emit('source', { type: 'youtube', videoId: 'dQw4w9WgXcQ' });
+  await wait(200);
+  const srcMsg = bSrc.find((m) => m.source && m.source.type === 'youtube');
+  check('B receives YouTube source with videoId+actor', srcMsg && srcMsg.source.videoId === 'dQw4w9WgXcQ' && srcMsg.name === 'Alice');
+  check('source switch resets playhead', srcMsg && srcMsg.time === 0 && srcMsg.playing === false);
+
+  a.emit('source', { type: 'youtube', videoId: 'not-a-real-id' });
+  await wait(300);
+  check('invalid videoId rejected silently', bSrc.filter((m) => m.source && m.source.type === 'youtube').length === 1);
+
+  const f = io(URL);
+  await wait(200);
+  const fJoin = await new Promise((res) => f.emit('join-room', { code: created.code, name: 'Fred' }, res));
+  check('late joiner inherits YouTube source', fJoin.state.source && fJoin.state.source.videoId === 'dQw4w9WgXcQ');
+
+  a.emit('source', { type: 'local' });
+  await wait(200);
+  check('switch back to local clears source', bSrc.some((m) => m.source === null));
+  f.close();
+
   // --- B leaves for real: announcement arrives after the grace window ---
   b.emit('leave-room');
   await wait(600);
