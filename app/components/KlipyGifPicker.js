@@ -44,7 +44,10 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
   }, []);
 
   const handleProviderSwitch = (p) => {
+    if (p === provider) return;
     setProvider(p);
+    setGifs([]);
+    setError('');
     fetchGifs(query, p);
   };
 
