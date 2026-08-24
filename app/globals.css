@@ -3689,11 +3689,11 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 
 /* Chat GIF bubble embeds */
 .chat-gif-wrap {
-  margin-top: 5px;
+  margin-top: 4px;
   width: fit-content;
-  max-width: 170px;
-  max-height: 120px;
-  border-radius: 10px;
+  max-width: 140px !important;
+  max-height: 95px !important;
+  border-radius: 8px;
   overflow: hidden;
   background: var(--surface-2);
   border: 1px solid var(--border-subtle);
@@ -3702,10 +3702,10 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 
 .chat-gif-img {
   display: block;
-  width: 170px;
-  max-width: 170px;
-  height: 120px;
-  max-height: 120px;
+  width: 140px !important;
+  max-width: 140px !important;
+  height: 95px !important;
+  max-height: 95px !important;
   object-fit: cover;
   border-radius: 8px;
 }
