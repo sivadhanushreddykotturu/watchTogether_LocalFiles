@@ -141,14 +141,25 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
               onClick={() => onSelectGif && onSelectGif(gif)}
               title={gif.title}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={gif.previewUrl}
-                alt={gif.title}
-                loading="lazy"
-                referrerPolicy="no-referrer"
-                className="tgp-img"
-              />
+              {gif.previewUrl?.includes('.mp4') || gif.isVideo ? (
+                <video
+                  src={gif.previewUrl}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="tgp-img"
+                />
+              ) : (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={gif.previewUrl}
+                  alt={gif.title}
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  className="tgp-img"
+                />
+              )}
               <div className="tgp-item-overlay">
                 <span className="tgp-send-label">Send</span>
               </div>

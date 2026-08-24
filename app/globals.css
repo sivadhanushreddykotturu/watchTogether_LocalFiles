@@ -3690,19 +3690,22 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 /* Chat GIF bubble embeds */
 .chat-gif-wrap {
   margin-top: 5px;
-  max-width: 190px;
+  width: fit-content;
+  max-width: 170px;
+  max-height: 120px;
   border-radius: 10px;
   overflow: hidden;
   background: var(--surface-2);
   border: 1px solid var(--border-subtle);
+  display: flex;
 }
 
 .chat-gif-img {
   display: block;
-  width: 100%;
-  max-width: 190px;
-  height: auto;
-  max-height: 140px;
+  width: 170px;
+  max-width: 170px;
+  height: 120px;
+  max-height: 120px;
   object-fit: cover;
   border-radius: 8px;
 }

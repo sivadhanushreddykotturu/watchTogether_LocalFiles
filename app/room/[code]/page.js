@@ -481,7 +481,7 @@ export default function Room() {
       if (isSnippet) {
         return <span style={{ fontStyle: 'italic', opacity: 0.9 }}>🎬 [GIF]</span>;
       }
-      const isMp4 = trimmed.includes('.mp4');
+      const isMp4 = trimmed.includes('.mp4') || trimmed.includes('redgifs') || trimmed.includes('/api/proxy/hls');
       if (isMp4) {
         return (
           <div className="chat-gif-wrap">

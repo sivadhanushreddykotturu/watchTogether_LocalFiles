@@ -66,14 +66,15 @@ export async function GET(request) {
       const rawGifs = Array.isArray(json.gifs) ? json.gifs : [];
 
       const results = rawGifs.map((g) => {
-        const poster = g.urls?.thumbnail || g.urls?.poster || '';
-        const full = g.urls?.sd || g.urls?.hd || g.urls?.poster || poster;
+        const preview = g.urls?.vthumbnail || g.urls?.sd || g.urls?.thumbnail || g.urls?.poster || '';
+        const full = g.urls?.sd || g.urls?.hd || g.urls?.poster || preview;
         return {
           id: String(g.id || Math.random()),
           title: g.description || (Array.isArray(g.tags) && g.tags.length ? g.tags.slice(0, 3).join(', ') : 'RedGIF'),
-          previewUrl: poster ? `/api/proxy/hls?url=${encodeURIComponent(poster)}` : full,
-          url: full ? `/api/proxy/hls?url=${encodeURIComponent(full)}` : poster,
+          previewUrl: preview ? `/api/proxy/hls?url=${encodeURIComponent(preview)}` : full,
+          url: full ? `/api/proxy/hls?url=${encodeURIComponent(full)}` : preview,
           rawUrl: full,
+          isVideo: true,
           width: g.width || 150,
           height: g.height || 150,
         };
