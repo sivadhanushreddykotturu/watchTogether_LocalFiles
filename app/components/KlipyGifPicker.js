@@ -25,13 +25,13 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
       } else if (data.ok && Array.isArray(data.results)) {
         setGifs(data.results);
         setNeedsKey(false);
-        if (data.results.length === 0) {
-          setError(searchQuery ? `No GIFs found for "${searchQuery}"` : 'No trending GIFs found.');
-        }
+        setError('');
       } else {
+        setGifs([]);
         setError(data.error || 'Failed to load GIFs');
       }
     } catch (err) {
+      setGifs([]);
       setError(err.message || 'Error connecting to GIF service');
     } finally {
       setLoading(false);
@@ -112,7 +112,7 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
           </div>
         )}
 
-        {error && (
+        {!loading && error && gifs.length === 0 && (
           <div className="tgp-error-wrap">
             <span className="tgp-error-icon">⚠️</span>
             <p className="tgp-error-text">{error}</p>

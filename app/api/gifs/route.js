@@ -57,6 +57,9 @@ export async function GET(request) {
       });
 
       if (!res.ok) {
+        if (res.status === 404) {
+          return NextResponse.json({ ok: true, provider: 'REDGIFS', results: [] });
+        }
         return NextResponse.json({ ok: false, error: `RedGIFs returned ${res.status}`, results: [] });
       }
 
