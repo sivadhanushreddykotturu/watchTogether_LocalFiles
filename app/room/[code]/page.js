@@ -1399,7 +1399,7 @@ export default function Room() {
     setCurrentHlsQuality(-1);
 
     if (source?.type === 'hls' && source.url) {
-      setFileLoaded(true);
+      setPlayDisabled(false);
       fileLoadedRef.current = true;
       fileIdentityRef.current = source.url;
       hasLocalFileRef.current = true;
@@ -1464,7 +1464,7 @@ export default function Room() {
     }
 
     if (source?.type === 'direct' && source.url) {
-      setFileLoaded(true);
+      setPlayDisabled(false);
       fileLoadedRef.current = true;
       fileIdentityRef.current = source.url;
       hasLocalFileRef.current = true;
@@ -2659,7 +2659,7 @@ export default function Room() {
               </>
             )}
             <div className="transport">
-              <button className="t-btn" onClick={togglePlay} disabled={playDisabled && source?.type !== 'youtube'} title="Play / pause (space)">
+              <button className="t-btn" onClick={togglePlay} disabled={playDisabled && source?.type !== 'youtube' && source?.type !== 'hls' && source?.type !== 'direct'} title="Play / pause (space)">
                 {playing ? (
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
                     <rect x="6" y="4.5" width="3.5" height="15" rx="1.5"/>
