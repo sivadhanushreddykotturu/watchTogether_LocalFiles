@@ -9,6 +9,7 @@ import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
 import { parseMediaUrl, resolveMediaUrl } from '../../../lib/mediaEmbeds';
 import { VoiceSession } from '../../../lib/voice';
+import Hls from 'hls.js';
 
 // mic icons for the viewer chips
 const micIcon = (on) =>
@@ -121,6 +122,9 @@ export default function Room() {
   const [subOffset, setSubOffset] = useState(0);
   const [subPanelOpen, setSubPanelOpen] = useState(false);
   const [subStyle, setSubStyle] = useState(SUB_STYLE_DEFAULT);
+  const [hlsQualities, setHlsQualities] = useState([]);
+  const [currentHlsQuality, setCurrentHlsQuality] = useState(-1);
+  const [qualityPanelOpen, setQualityPanelOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zoomUiVisible, setZoomUiVisible] = useState(false);
@@ -396,6 +400,16 @@ export default function Room() {
     const socket = getSocket();
     if (socket.connected) socket.emit('playback-speed', spd);
     if (announce) toast(`Playback speed: ${spd}x`);
+  };
+
+  // ---------- video quality switching ----------
+  const changeHlsQuality = (index) => {
+    if (!hlsRef.current) return;
+    hlsRef.current.currentLevel = index;
+    setCurrentHlsQuality(index);
+    const label = hlsQualities.find((q) => q.index === index)?.label || 'Auto';
+    toast(`Video Quality: ${label}`);
+    setQualityPanelOpen(false);
   };
 
   // ---------- live emoji reactions ----------
@@ -1381,6 +1395,8 @@ export default function Room() {
       hlsRef.current.destroy();
       hlsRef.current = null;
     }
+    setHlsQualities([]);
+    setCurrentHlsQuality(-1);
 
     if (source?.type === 'hls' && source.url) {
       setFileLoaded(true);
@@ -1388,50 +1404,57 @@ export default function Room() {
       fileIdentityRef.current = source.url;
       hasLocalFileRef.current = true;
 
-      // Import Hls dynamically or use native Safari HLS
-      import('hls.js').then(({ default: Hls }) => {
-        if (Hls.isSupported()) {
-          const hls = new Hls({
-            enableWorker: true,
-            lowLatencyMode: false,
-          });
-          hls.loadSource(source.url);
-          hls.attachMedia(video);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            if (latestStateRef.current.time) {
-              video.currentTime = latestStateRef.current.time;
-            }
-            if (latestStateRef.current.playing) {
-              video.play().catch(() => {});
-            }
-          });
-          hls.on(Hls.Events.ERROR, (event, data) => {
-            if (data.fatal) {
-              switch (data.type) {
-                case Hls.ErrorTypes.NETWORK_ERROR:
-                  hls.startLoad();
-                  break;
-                case Hls.ErrorTypes.MEDIA_ERROR:
-                  hls.recoverMediaError();
-                  break;
-                default:
-                  hls.destroy();
-                  break;
-              }
-            }
-          });
-          hlsRef.current = hls;
-        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          // Native Safari / iOS
-          video.src = source.url;
+      if (typeof window !== 'undefined' && Hls && Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+        });
+        hls.loadSource(source.url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+          if (data && data.levels && data.levels.length > 0) {
+            const list = [
+              { index: -1, label: 'Auto' },
+              ...data.levels.map((lvl, idx) => ({
+                index: idx,
+                label: lvl.height ? `${lvl.height}p` : `${lvl.bitrate ? Math.round(lvl.bitrate / 1000) + 'k' : 'Level ' + idx}`,
+              })),
+            ];
+            setHlsQualities(list);
+          }
           if (latestStateRef.current.time) {
             video.currentTime = latestStateRef.current.time;
           }
           if (latestStateRef.current.playing) {
             video.play().catch(() => {});
           }
+        });
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                hls.recoverMediaError();
+                break;
+              default:
+                hls.destroy();
+                break;
+            }
+          }
+        });
+        hlsRef.current = hls;
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Native Safari / iOS
+        video.src = source.url;
+        if (latestStateRef.current.time) {
+          video.currentTime = latestStateRef.current.time;
         }
-      });
+        if (latestStateRef.current.playing) {
+          video.play().catch(() => {});
+        }
+      }
       return () => {
         if (hlsRef.current) {
           hlsRef.current.destroy();
@@ -2605,6 +2628,36 @@ export default function Room() {
                 </div>
               </>
             )}
+
+            {qualityPanelOpen && (
+              <>
+                <div className="sub-backdrop" onClick={() => setQualityPanelOpen(false)} />
+                <div className="sub-panel quality-panel">
+                  <div className="sub-panel-head">
+                    <span className="sub-panel-title">Video Quality</span>
+                    <button className="sub-close-btn" onClick={() => setQualityPanelOpen(false)} title="Close">
+                      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
+                    </button>
+                  </div>
+                  <div className="sub-row">
+                    <div className="btn-group" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {hlsQualities.map((q) => (
+                        <button
+                          key={q.index}
+                          type="button"
+                          className={'btn ghost sm' + (currentHlsQuality === q.index ? ' sel' : '')}
+                          style={{ justifyContent: 'space-between', width: '100%' }}
+                          onClick={() => changeHlsQuality(q.index)}
+                        >
+                          <span>{q.label}</span>
+                          {currentHlsQuality === q.index && <span>✓</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
             <div className="transport">
               <button className="t-btn" onClick={togglePlay} disabled={playDisabled && source?.type !== 'youtube'} title="Play / pause (space)">
                 {playing ? (
@@ -2693,6 +2746,18 @@ export default function Room() {
               >
                 <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41M12 6a6 6 0 1 0 0 12 6 6 0 0 0 0-12z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
               </button>
+
+              {hlsQualities.length > 0 && (
+                <button
+                  className={'t-btn quality-btn' + (qualityPanelOpen ? ' active' : '')}
+                  onClick={() => setQualityPanelOpen(!qualityPanelOpen)}
+                  title="Video Quality"
+                >
+                  <span style={{ fontSize: '10.5px', fontWeight: '800', letterSpacing: '0.04em' }}>
+                    {hlsQualities.find((q) => q.index === currentHlsQuality)?.label || 'AUTO'}
+                  </span>
+                </button>
+              )}
 
               <button
                 className={'t-btn cc' + (source?.type === 'youtube' ? (ytCcOn ? ' active on' : '') : (subPanelOpen ? ' active' : '') + (subsOn ? ' on' : ''))}
