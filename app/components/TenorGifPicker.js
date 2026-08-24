@@ -2,23 +2,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 
-const CATEGORIES = [
-  { label: '🔥 Trending', query: '' },
-  { label: '😂 LOL', query: 'laughing lol' },
-  { label: '🍿 Popcorn', query: 'popcorn eating' },
-  { label: '❤️ Love', query: 'love heart' },
-  { label: '😱 Shock', query: 'shocked what' },
-  { label: '🎉 Party', query: 'party dance celebrate' },
-  { label: '💀 Dead', query: 'dead dying lol' },
-  { label: '🤦 Facepalm', query: 'facepalm' },
-  { label: '👀 Suspicious', query: 'suspicious side eye' },
-  { label: '👏 Clap', query: 'applause clapping' },
-  { label: '🐱 Cats', query: 'cute cat' },
-];
-
 export default function KlipyGifPicker({ onSelectGif, onClose }) {
   const [query, setQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState('🔥 Trending');
   const [gifs, setGifs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -34,11 +19,14 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
       const data = await res.json();
       if (data.needsKey) {
         setNeedsKey(true);
-        setError('KLIPY API Key required. Set KLIPY_API_KEY in environment variables.');
+        setError('KLIPY API Key required. Set KLIPY_API_KEY in Render environment variables.');
         setGifs([]);
       } else if (data.ok && Array.isArray(data.results)) {
         setGifs(data.results);
         setNeedsKey(false);
+        if (data.results.length === 0) {
+          setError(searchQuery ? `No GIFs found for "${searchQuery}"` : 'No trending GIFs found.');
+        }
       } else {
         setError(data.error || 'Failed to load GIFs');
       }
@@ -49,7 +37,7 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
     }
   };
 
-  // Initial load
+  // Initial load: trending GIFs
   useEffect(() => {
     fetchGifs('');
   }, []);
@@ -61,12 +49,6 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
     searchTimeoutRef.current = setTimeout(() => {
       fetchGifs(val);
     }, 350);
-  };
-
-  const handleCategoryClick = (cat) => {
-    setActiveCategory(cat.label);
-    setQuery(cat.query);
-    fetchGifs(cat.query);
   };
 
   return (
@@ -104,19 +86,6 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
             ✕
           </button>
         )}
-      </div>
-
-      <div className="tgp-categories-bar">
-        {CATEGORIES.map((cat) => (
-          <button
-            key={cat.label}
-            type="button"
-            className={`tgp-cat-pill ${activeCategory === cat.label && !query ? 'active' : ''}`}
-            onClick={() => handleCategoryClick(cat)}
-          >
-            {cat.label}
-          </button>
-        ))}
       </div>
 
       <div className="tgp-grid-container">
