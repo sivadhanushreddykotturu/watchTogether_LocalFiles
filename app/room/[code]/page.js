@@ -733,19 +733,27 @@ export default function Room() {
   function beat() {
     const socket = getSocket();
 
-    // YouTube mode heartbeat: same drift-correction contract, iframe time source.
+    // YouTube mode heartbeat: smooth dual-stage drift correction
     if (sourceRef.current?.type === 'youtube') {
       const yt = ytRef.current;
       if (!yt || !yt.getCurrentTime || !socket.connected) return;
       socket.emit('time-update', yt.getCurrentTime(), ({ expected, playing } = {}) => {
         if (typeof expected !== 'number') return;
         setStateLatest(playing, expected);
-        const drift = expected - yt.getCurrentTime();
-        if (playing && ytPlayingRef.current && !ytStallRef.current && Math.abs(drift) > 2 && Date.now() - lastLocalSeekRef.current > 1500) {
-          guardRef.current.seek++;
-          yt.seekTo(expected, true);
-          setSyncStatus(false);
-          setTimeout(() => setSyncStatus(true), 1200);
+        const cur = yt.getCurrentTime();
+        const drift = expected - cur;
+        const absDrift = Math.abs(drift);
+
+        if (playing && ytPlayingRef.current && !ytStallRef.current && Date.now() - lastLocalSeekRef.current > 2000) {
+          if (absDrift > 2.5) {
+            guardRef.current.seek++;
+            yt.seekTo(expected, true);
+          } else if (absDrift > 0.6 && typeof yt.setPlaybackRate === 'function') {
+            // Smooth micro-nudge (no jarring seek)
+            try { yt.setPlaybackRate(drift > 0 ? 1.05 : 0.95); } catch {}
+          } else if (typeof yt.setPlaybackRate === 'function') {
+            try { yt.setPlaybackRate(speedRef.current || 1); } catch {}
+          }
         } else if (playing && !ytPlayingRef.current && Date.now() - lastLocalPauseRef.current > 5000) {
           setResumeOpen(true);
         }
@@ -754,21 +762,34 @@ export default function Room() {
     }
 
     const video = videoRef.current;
-    if (!fileLoadedRef.current || !video || !socket.connected) return;
+    if ((!fileLoadedRef.current && !sourceRef.current?.url) || !video || !socket.connected) return;
     socket.emit('time-update', video.currentTime, ({ expected, playing } = {}) => {
       if (typeof expected !== 'number') return;
       setStateLatest(playing, expected);
       const drift = expected - video.currentTime;
-      if (playing && !video.paused && Math.abs(drift) > 1.5 && Date.now() - lastLocalSeekRef.current > 1500) {
-        guardRef.current.seek++;
-        video.currentTime = expected;
-        if (extAudioRef.current && extAudioRef.current.src) {
-          extAudioRef.current.currentTime = expected;
+      const absDrift = Math.abs(drift);
+      const baseSpeed = speedRef.current || 1;
+
+      if (playing && !video.paused && Date.now() - lastLocalSeekRef.current > 2000) {
+        if (absDrift > 2.5) {
+          guardRef.current.seek++;
+          video.currentTime = expected;
+          if (extAudioRef.current && extAudioRef.current.src) {
+            extAudioRef.current.currentTime = expected;
+          }
+          video.playbackRate = baseSpeed;
+          if (extAudioRef.current) extAudioRef.current.playbackRate = baseSpeed;
+        } else if (absDrift > 0.5) {
+          // Smooth micro-catchup via playbackRate (imperceptible and zero buffer stall)
+          const nudge = drift > 0 ? 1.04 : 0.96;
+          video.playbackRate = baseSpeed * nudge;
+          if (extAudioRef.current) extAudioRef.current.playbackRate = baseSpeed * nudge;
+        } else if (Math.abs(video.playbackRate - baseSpeed) > 0.01) {
+          video.playbackRate = baseSpeed;
+          if (extAudioRef.current) extAudioRef.current.playbackRate = baseSpeed;
         }
-        setSyncStatus(false);
-        setTimeout(() => setSyncStatus(true), 1200);
       } else if (playing && video.paused && Date.now() - lastLocalPauseRef.current > 5000) {
-        setResumeOpen(true); // room is rolling but we're stopped (not a deliberate pause)
+        setResumeOpen(true);
       }
     });
   }
@@ -1109,6 +1130,8 @@ export default function Room() {
             if (typeof ytRef.current.pauseVideo === 'function') ytRef.current.pauseVideo();
           }
         }
+      } else if (s?.type === 'ph' || s?.type === 'hls' || s?.type === 'direct') {
+        toast(`${actor} started playing ${s.title ? `"${s.title}"` : (s.platform || 'video stream')}`);
       } else {
         toast(`${actor} switched back to local files`);
         if (!fileLoadedRef.current) setPickerHint('Pick your copy of the file to join in.');
@@ -2273,9 +2296,6 @@ export default function Room() {
           <span className="slate-label">ROOM</span>
           <span className="slate-code">{code}</span>
         </button>
-        <span className={'sync-status' + (syncOk && !adBreak ? '' : ' behind')}>
-          <span className="dot"></span><span>{adBreak ? 'ad break…' : syncOk ? 'in sync' : 'catching up…'}</span>
-        </span>
         {fileMatch && (
           <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')} title={fileMatch.match ? 'Exact file match across participants' : `Duration differs by ${fileMatch.delta}s`}>
             {fileMatch.match ? '✓ Same File' : `⚠️ ${fileMatch.delta}s diff`}
