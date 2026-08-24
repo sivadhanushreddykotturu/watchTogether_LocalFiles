@@ -128,19 +128,27 @@ function handleHlsProxy(req, res, defaultReferer = '') {
       return;
     }
 
-    // Direct zero-copy pipe for video/audio chunks (supporting .m4s fMP4, .mp4 init headers, .ts, .woff2, .jpg)
+    // Direct zero-copy pipe for video/audio chunks & thumbnails (supporting .m4s fMP4, .mp4 init headers, .ts, .jpg, .webp, .png)
     let mime = 'video/MP2T';
     if (targetUrl.includes('.m4s') || targetUrl.includes('.mp4') || targetUrl.includes('init-') || contentType.includes('mp4') || contentType.includes('iso.segment')) {
       mime = 'video/mp4';
     } else if (contentType && contentType.includes('mpegurl')) {
       mime = 'application/vnd.apple.mpegurl';
+    } else if (contentType && (contentType.includes('image') || contentType.includes('jpeg') || contentType.includes('png') || contentType.includes('webp'))) {
+      mime = contentType;
+    } else if (targetUrl.includes('.jpg') || targetUrl.includes('.jpeg')) {
+      mime = 'image/jpeg';
+    } else if (targetUrl.includes('.webp')) {
+      mime = 'image/webp';
+    } else if (targetUrl.includes('.png')) {
+      mime = 'image/png';
     }
 
     res.writeHead(upstreamRes.statusCode, {
       'Content-Type': mime,
       'Content-Length': upstreamRes.headers['content-length'] || undefined,
       'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'public, max-age=3600',
+      'Cache-Control': 'public, max-age=86400',
     });
     upstreamRes.pipe(res);
   });
@@ -155,8 +163,8 @@ function handleHlsProxy(req, res, defaultReferer = '') {
 
 app.prepare().then(() => {
   const server = http.createServer((req, res) => {
-    // Universal zero-copy HLS stream proxy
-    if (req.url.startsWith('/api/proxy/hls') || req.url.startsWith('/api/ph/stream')) {
+    // Universal zero-copy HLS stream & image proxy
+    if (req.url.startsWith('/api/proxy/hls') || req.url.startsWith('/api/ph/stream') || req.url.startsWith('/api/ph/thumb')) {
       handleHlsProxy(req, res);
       return;
     }
