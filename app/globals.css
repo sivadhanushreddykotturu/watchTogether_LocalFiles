@@ -3417,7 +3417,13 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: popover-slide-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+.tenor-gif-picker {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .tgp-tabs {
@@ -3425,6 +3431,7 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   gap: 6px;
   padding: 8px 12px 0 12px;
   background: var(--surface-2);
+  flex-shrink: 0;
 }
 
 .tgp-tab {
@@ -3562,11 +3569,15 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 }
 
 .tgp-grid-container {
-  flex: 1;
+  flex: 1 1 0%;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 8px;
   position: relative;
   scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .tgp-loading-wrap, .tgp-empty-wrap, .tgp-error-wrap {

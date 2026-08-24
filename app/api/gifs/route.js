@@ -44,9 +44,8 @@ export async function GET(request) {
         return NextResponse.json({ ok: false, error: 'Could not authenticate with RedGIFs', results: [] });
       }
 
-      const endpoint = q
-        ? `https://api.redgifs.com/v2/gifs/search?search_text=${encodeURIComponent(q)}&count=24&order=trending`
-        : `https://api.redgifs.com/v2/gifs/trending?count=24`;
+      const searchTerm = q || 'trending';
+      const endpoint = `https://api.redgifs.com/v2/gifs/search?search_text=${encodeURIComponent(searchTerm)}&count=30&order=trending`;
 
       const res = await fetch(endpoint, {
         headers: {
