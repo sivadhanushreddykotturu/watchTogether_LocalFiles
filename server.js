@@ -43,14 +43,21 @@ function handleHlsProxy(req, res, defaultReferer = '') {
     if (targetUrl.includes('pornhub.com') || targetUrl.includes('phncdn.com')) {
       referer = 'https://www.pornhub.com/';
     } else if (targetUrl.includes('net52.cc') || targetUrl.includes('makhi4.top') || targetUrl.includes('netmirror') || targetUrl.includes('nm-cdn')) {
-      referer = 'https://net52.cc/';
+      const idMatch = targetUrl.match(/(?:\/files\/|\/hls\/)(\d+)/);
+      referer = idMatch ? `https://net52.cc/play.php?id=${idMatch[1]}` : 'https://net52.cc/';
     }
   }
+
+  const clientIp = req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : req.socket.remoteAddress;
 
   const upstreamHeaders = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': '*/*',
   };
+  if (clientIp) {
+    upstreamHeaders['X-Forwarded-For'] = clientIp;
+    upstreamHeaders['CF-Connecting-IP'] = clientIp;
+  }
   if (referer) upstreamHeaders['Referer'] = referer;
   if (referer && referer.includes('pornhub')) {
     upstreamHeaders['Cookie'] = 'accessAgeDisclaimerPH=1; age_verified=1;';
