@@ -3420,11 +3420,35 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   animation: popover-slide-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.tenor-gif-picker {
+.tgp-tabs {
   display: flex;
-  flex-direction: column;
-  height: 100%;
-  width: 100%;
+  gap: 6px;
+  padding: 8px 12px 0 12px;
+  background: var(--surface-2);
+}
+
+.tgp-tab {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--dim);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tgp-tab:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tgp-tab.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .tgp-head {

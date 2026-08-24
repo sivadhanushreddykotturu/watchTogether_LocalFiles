@@ -5,13 +5,86 @@ export const dynamic = 'force-dynamic';
 
 const DEFAULT_KLIPY_KEY = 'Mwft2l8yULIpjBclwfxk9C82TQ994nFTFA3EHAE3TUlVxMSVSOZyG4YLdvqf1kuH';
 
+let cachedRedgifsToken = null;
+let tokenExpiresAt = 0;
+
+async function getRedgifsToken() {
+  if (cachedRedgifsToken && Date.now() < tokenExpiresAt) {
+    return cachedRedgifsToken;
+  }
+  try {
+    const res = await fetch('https://api.redgifs.com/v2/auth/temporary', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    cachedRedgifsToken = data.token;
+    tokenExpiresAt = Date.now() + 20 * 60 * 60 * 1000;
+    return cachedRedgifsToken;
+  } catch (e) {
+    console.error('Failed to get RedGIFs token:', e);
+    return null;
+  }
+}
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const q = (searchParams.get('q') || '').trim();
+  const provider = (searchParams.get('provider') || 'klipy').toLowerCase();
   const klipyKey = process.env.KLIPY_API_KEY || process.env.NEXT_PUBLIC_KLIPY_API_KEY || DEFAULT_KLIPY_KEY;
   const giphyKey = process.env.GIPHY_API_KEY;
 
-  // 1. Primary: KLIPY
+  // 1. RedGIFs (NSFW Provider)
+  if (provider === 'redgifs') {
+    try {
+      const token = await getRedgifsToken();
+      if (!token) {
+        return NextResponse.json({ ok: false, error: 'Could not authenticate with RedGIFs', results: [] });
+      }
+
+      const endpoint = q
+        ? `https://api.redgifs.com/v2/gifs/search?search_text=${encodeURIComponent(q)}&count=24&order=trending`
+        : `https://api.redgifs.com/v2/gifs/trending?count=24`;
+
+      const res = await fetch(endpoint, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        next: { revalidate: 60 }
+      });
+
+      if (!res.ok) {
+        return NextResponse.json({ ok: false, error: `RedGIFs returned ${res.status}`, results: [] });
+      }
+
+      const json = await res.json();
+      const rawGifs = Array.isArray(json.gifs) ? json.gifs : [];
+
+      const results = rawGifs.map((g) => {
+        const poster = g.urls?.thumbnail || g.urls?.poster || '';
+        const full = g.urls?.sd || g.urls?.hd || g.urls?.poster || poster;
+        return {
+          id: String(g.id || Math.random()),
+          title: g.description || (Array.isArray(g.tags) && g.tags.length ? g.tags.slice(0, 3).join(', ') : 'RedGIF'),
+          previewUrl: poster ? `/api/proxy/hls?url=${encodeURIComponent(poster)}` : full,
+          url: full ? `/api/proxy/hls?url=${encodeURIComponent(full)}` : poster,
+          rawUrl: full,
+          width: g.width || 150,
+          height: g.height || 150,
+        };
+      }).filter((item) => item.previewUrl && item.url);
+
+      return NextResponse.json({ ok: true, provider: 'REDGIFS', results });
+    } catch (err) {
+      console.error('RedGIFs API error:', err);
+      return NextResponse.json({ ok: false, error: err.message, results: [] });
+    }
+  }
+
+  // 2. Primary Standard: KLIPY
   if (klipyKey) {
     try {
       const endpoint = q
@@ -44,7 +117,6 @@ export async function GET(request) {
 
       const results = rawList.map((item) => {
         const file = item.file || {};
-        // KLIPY structures file as { hd: { gif, webp }, md: {...}, sm: {...}, xs: {...} }
         const preview =
           file.sm?.webp?.url ||
           file.sm?.gif?.url ||
@@ -81,7 +153,7 @@ export async function GET(request) {
     }
   }
 
-  // 2. Fallback: GIPHY
+  // 3. Fallback: GIPHY
   if (giphyKey) {
     try {
       const endpoint = q

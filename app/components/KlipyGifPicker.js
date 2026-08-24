@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 export default function KlipyGifPicker({ onSelectGif, onClose }) {
+  const [provider, setProvider] = useState('klipy');
   const [query, setQuery] = useState('');
   const [gifs, setGifs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -11,11 +12,11 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
   const searchTimeoutRef = useRef(null);
   const containerRef = useRef(null);
 
-  const fetchGifs = async (searchQuery) => {
+  const fetchGifs = async (searchQuery, activeProvider = provider) => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/gifs?q=' + encodeURIComponent(searchQuery || ''));
+      const res = await fetch(`/api/gifs?provider=${activeProvider}&q=${encodeURIComponent(searchQuery || '')}`);
       const data = await res.json();
       if (data.needsKey) {
         setNeedsKey(true);
@@ -39,20 +40,42 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
 
   // Initial load: trending GIFs
   useEffect(() => {
-    fetchGifs('');
+    fetchGifs('', provider);
   }, []);
+
+  const handleProviderSwitch = (p) => {
+    setProvider(p);
+    fetchGifs(query, p);
+  };
 
   const handleSearchChange = (e) => {
     const val = e.target.value;
     setQuery(val);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {
-      fetchGifs(val);
+      fetchGifs(val, provider);
     }, 350);
   };
 
   return (
     <div className="tenor-gif-picker" ref={containerRef}>
+      <div className="tgp-tabs">
+        <button
+          type="button"
+          className={'tgp-tab' + (provider === 'klipy' ? ' active' : '')}
+          onClick={() => handleProviderSwitch('klipy')}
+        >
+          🎭 KLIPY
+        </button>
+        <button
+          type="button"
+          className={'tgp-tab' + (provider === 'redgifs' ? ' active' : '')}
+          onClick={() => handleProviderSwitch('redgifs')}
+        >
+          🔞 RedGIFs
+        </button>
+      </div>
+
       <div className="tgp-head">
         <div className="tgp-search-wrap">
           <svg className="tgp-search-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2">
@@ -62,7 +85,7 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
           <input
             type="text"
             className="tgp-search-input"
-            placeholder="Search KLIPY"
+            placeholder={provider === 'redgifs' ? 'Search RedGIFs…' : 'Search KLIPY…'}
             value={query}
             onChange={handleSearchChange}
             autoFocus
@@ -120,6 +143,7 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
                 src={gif.previewUrl}
                 alt={gif.title}
                 loading="lazy"
+                referrerPolicy="no-referrer"
                 className="tgp-img"
               />
               <div className="tgp-item-overlay">
@@ -131,7 +155,7 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
       </div>
 
       <div className="tgp-footer">
-        <span className="tgp-powered">Powered by KLIPY</span>
+        <span className="tgp-powered">Powered by {provider === 'redgifs' ? 'RedGIFs' : 'KLIPY'}</span>
       </div>
     </div>
   );

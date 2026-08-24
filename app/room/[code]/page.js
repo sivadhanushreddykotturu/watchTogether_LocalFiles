@@ -468,8 +468,8 @@ export default function Room() {
     if (typeof str !== 'string') return false;
     const s = str.trim();
     return (
-      (s.startsWith('http://') || s.startsWith('https://')) &&
-      (s.includes('tenor.com') || s.includes('giphy.com') || s.includes('klipy') || /\.(gif|webp)(\?|$)/i.test(s))
+      (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('/api/proxy/hls')) &&
+      (s.includes('tenor.com') || s.includes('giphy.com') || s.includes('klipy') || s.includes('redgifs') || /\.(gif|webp|mp4)(\?|$)/i.test(s) || s.includes('media.redgifs.com'))
     );
   };
 
@@ -481,10 +481,25 @@ export default function Room() {
       if (isSnippet) {
         return <span style={{ fontStyle: 'italic', opacity: 0.9 }}>🎬 [GIF]</span>;
       }
+      const isMp4 = trimmed.includes('.mp4');
+      if (isMp4) {
+        return (
+          <div className="chat-gif-wrap">
+            <video
+              src={trimmed}
+              autoPlay
+              loop
+              muted
+              playsInline
+              className="chat-gif-img"
+            />
+          </div>
+        );
+      }
       return (
         <div className="chat-gif-wrap">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={trimmed} alt="GIF" className="chat-gif-img" loading="lazy" />
+          <img src={trimmed} alt="GIF" className="chat-gif-img" referrerPolicy="no-referrer" loading="lazy" />
         </div>
       );
     }

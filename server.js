@@ -42,6 +42,8 @@ function handleHlsProxy(req, res, defaultReferer = '') {
   if (!referer) {
     if (targetUrl.includes('pornhub.com') || targetUrl.includes('phncdn.com')) {
       referer = 'https://www.pornhub.com/';
+    } else if (targetUrl.includes('redgifs.com')) {
+      referer = 'https://www.redgifs.com/';
     } else if (targetUrl.includes('ahcdn.com') || targetUrl.includes('xhamster')) {
       referer = 'https://xhamster.com/';
     } else if (targetUrl.includes('net52.cc') || targetUrl.includes('makhi4.top') || targetUrl.includes('netmirror') || targetUrl.includes('nm-cdn')) {
