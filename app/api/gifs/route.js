@@ -44,8 +44,9 @@ export async function GET(request) {
         return NextResponse.json({ ok: false, error: 'Could not authenticate with RedGIFs', results: [] });
       }
 
-      const searchTerm = q || 'trending';
-      const endpoint = `https://api.redgifs.com/v2/gifs/search?search_text=${encodeURIComponent(searchTerm)}&count=30`;
+      const endpoint = q
+        ? `https://api.redgifs.com/v2/gifs/search?search_text=${encodeURIComponent(q)}&order=best&count=40`
+        : `https://api.redgifs.com/v2/gifs/search?search_text=trending&order=trending&count=40`;
 
       const res = await fetch(endpoint, {
         headers: {
@@ -65,7 +66,11 @@ export async function GET(request) {
       const json = await res.json();
       const rawGifs = Array.isArray(json.gifs) ? json.gifs : [];
 
-      const results = rawGifs.map((g) => {
+      // Filter out global boosted sponsor ads (e.g. candyai, jerkmate ads) that RedGIFs injects on every search
+      const realGifs = rawGifs.filter((g) => !g.cta && !g.promoted && g.userName !== 'candyai' && g.userName !== 'jerkmate.com');
+      const listToUse = realGifs.length > 0 ? realGifs : rawGifs;
+
+      const results = listToUse.map((g) => {
         const preview = g.urls?.vthumbnail || g.urls?.sd || g.urls?.thumbnail || g.urls?.poster || '';
         const full = g.urls?.sd || g.urls?.hd || g.urls?.poster || preview;
         return {
