@@ -113,9 +113,10 @@ function handleHlsProxy(req, res, defaultReferer = '') {
       return;
     }
 
-    // Direct zero-copy pipe for video/audio chunks (.ts, .js, .m4s)
+    // Direct zero-copy pipe for video/audio chunks (disguised by CDNs as .woff2, .jpg, .js, .ts)
+    const mime = (contentType && contentType.includes('mpegurl')) ? 'application/vnd.apple.mpegurl' : 'video/MP2T';
     res.writeHead(upstreamRes.statusCode, {
-      'Content-Type': contentType || 'video/MP2T',
+      'Content-Type': mime,
       'Content-Length': upstreamRes.headers['content-length'] || undefined,
       'Access-Control-Allow-Origin': '*',
       'Cache-Control': 'public, max-age=3600',
