@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 3000;
 const https = require('https');
 const urlModule = require('url');
 
-function handlePhStream(req, res) {
+function handleHlsProxy(req, res, defaultReferer = '') {
   const parsed = urlModule.parse(req.url, true);
   const targetUrl = parsed.query.url;
   if (!targetUrl) {
@@ -25,12 +25,23 @@ function handlePhStream(req, res) {
     return;
   }
 
+  let referer = parsed.query.referer || defaultReferer;
+  if (!referer) {
+    if (targetUrl.includes('pornhub.com') || targetUrl.includes('phncdn.com')) {
+      referer = 'https://www.pornhub.com/';
+    } else if (targetUrl.includes('net52.cc') || targetUrl.includes('makhi4.top') || targetUrl.includes('netmirror')) {
+      referer = 'https://net52.cc/';
+    }
+  }
+
   const upstreamHeaders = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': 'https://www.pornhub.com/',
-    'Cookie': 'accessAgeDisclaimerPH=1; age_verified=1;',
     'Accept': '*/*',
   };
+  if (referer) upstreamHeaders['Referer'] = referer;
+  if (referer && referer.includes('pornhub')) {
+    upstreamHeaders['Cookie'] = 'accessAgeDisclaimerPH=1; age_verified=1;';
+  }
 
   const clientReq = https.get(targetUrl, { headers: upstreamHeaders }, (upstreamRes) => {
     if (upstreamRes.statusCode >= 400) {
@@ -48,13 +59,28 @@ function handlePhStream(req, res) {
       upstreamRes.on('end', () => {
         const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
         const rewritten = data.split('\n').map((line) => {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#')) return line;
+          let modifiedLine = line;
+
+          // Rewrite URI="..." in #EXT-X-MEDIA (e.g. multi-track audio playlists)
+          if (modifiedLine.includes('URI="')) {
+            modifiedLine = modifiedLine.replace(/URI="([^"]+)"/g, (match, p1) => {
+              let abs = p1;
+              if (!abs.startsWith('http://') && !abs.startsWith('https://')) {
+                abs = baseUrl + abs;
+              }
+              const proxyUrl = `/api/proxy/hls?url=${encodeURIComponent(abs)}${referer ? '&referer=' + encodeURIComponent(referer) : ''}`;
+              return `URI="${proxyUrl}"`;
+            });
+          }
+
+          const trimmed = modifiedLine.trim();
+          if (!trimmed || trimmed.startsWith('#')) return modifiedLine;
+
           let absUrl = trimmed;
           if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
             absUrl = baseUrl + trimmed;
           }
-          return `/api/ph/stream?url=${encodeURIComponent(absUrl)}`;
+          return `/api/proxy/hls?url=${encodeURIComponent(absUrl)}${referer ? '&referer=' + encodeURIComponent(referer) : ''}`;
         }).join('\n');
 
         res.writeHead(200, {
@@ -67,7 +93,7 @@ function handlePhStream(req, res) {
       return;
     }
 
-    // Direct pipe for .ts chunks: 0 memory overhead, direct zero-copy socket streaming!
+    // Direct zero-copy pipe for video/audio chunks (.ts, .js, .m4s)
     res.writeHead(upstreamRes.statusCode, {
       'Content-Type': contentType || 'video/MP2T',
       'Content-Length': upstreamRes.headers['content-length'] || undefined,
@@ -87,9 +113,9 @@ function handlePhStream(req, res) {
 
 app.prepare().then(() => {
   const server = http.createServer((req, res) => {
-    // Zero-copy direct streaming for PH HLS video chunks
-    if (req.url.startsWith('/api/ph/stream')) {
-      handlePhStream(req, res);
+    // Universal zero-copy HLS stream proxy
+    if (req.url.startsWith('/api/proxy/hls') || req.url.startsWith('/api/ph/stream')) {
+      handleHlsProxy(req, res);
       return;
     }
 

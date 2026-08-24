@@ -3610,4 +3610,36 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   border-radius: 8px;
 }
 
+/* Stream Expired Modal Overlay */
+.stream-expired-modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.stream-expired-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border-mid);
+  border-radius: 16px;
+  padding: 24px;
+  max-width: 440px;
+  width: 100%;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  text-align: center;
+  animation: popover-slide-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.stream-expired-card .sec-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+
 

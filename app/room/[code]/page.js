@@ -128,6 +128,11 @@ export default function Room() {
   const [hlsQualities, setHlsQualities] = useState([]);
   const [currentHlsQuality, setCurrentHlsQuality] = useState(-1);
   const [qualityPanelOpen, setQualityPanelOpen] = useState(false);
+  const [hlsAudioTracks, setHlsAudioTracks] = useState([]);
+  const [currentAudioTrack, setCurrentAudioTrack] = useState(-1);
+  const [audioPanelOpen, setAudioPanelOpen] = useState(false);
+  const [streamExpiredOpen, setStreamExpiredOpen] = useState(false);
+  const [renewStreamUrl, setRenewStreamUrl] = useState('');
   const [zoom, setZoom] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zoomUiVisible, setZoomUiVisible] = useState(false);
@@ -413,6 +418,37 @@ export default function Room() {
     const label = hlsQualities.find((q) => q.index === index)?.label || 'Auto';
     toast(`Video Quality: ${label}`);
     setQualityPanelOpen(false);
+  };
+
+  // ---------- multi-audio track switching ----------
+  const changeAudioTrack = (trackId) => {
+    if (!hlsRef.current) return;
+    hlsRef.current.audioTrack = trackId;
+    setCurrentAudioTrack(trackId);
+    const track = hlsAudioTracks.find((t) => t.id === trackId);
+    toast(`Audio Language: ${track?.name || track?.lang || 'Track ' + (trackId + 1)}`);
+    setAudioPanelOpen(false);
+  };
+
+  // ---------- stream renewal on token expiry ----------
+  const handleRenewStream = async (e) => {
+    if (e) e.preventDefault();
+    if (!renewStreamUrl.trim()) return;
+    const resolved = await resolveMediaUrl(renewStreamUrl.trim());
+    if (resolved) {
+      const currentTime = currentTimeAny();
+      setStreamExpiredOpen(false);
+      setRenewStreamUrl('');
+      const socket = getSocket();
+      socket.emit('source', resolved);
+      toast('Stream renewed!');
+      setTimeout(() => {
+        socket.emit('playback', { action: 'seek', time: currentTime });
+        if (latestStateRef.current.playing) {
+          socket.emit('playback', { action: 'play', time: currentTime });
+        }
+      }, 600);
+    }
   };
 
   // ---------- live emoji reactions ----------
@@ -1420,6 +1456,9 @@ export default function Room() {
     }
     setHlsQualities([]);
     setCurrentHlsQuality(-1);
+    setHlsAudioTracks([]);
+    setCurrentAudioTrack(-1);
+    setStreamExpiredOpen(false);
 
     if (source?.type === 'hls' && source.url) {
       setPlayDisabled(false);
@@ -1455,8 +1494,33 @@ export default function Room() {
             video.play().catch(() => {});
           }
         });
+        hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (event, data) => {
+          if (data && data.audioTracks && data.audioTracks.length > 0) {
+            const tracks = data.audioTracks.map((t) => ({
+              id: t.id,
+              name: t.name || t.lang || `Track ${t.id + 1}`,
+              lang: t.lang || '',
+              default: t.default,
+            }));
+            setHlsAudioTracks(tracks);
+            const defTrack = tracks.find((t) => t.default);
+            setCurrentAudioTrack(hls.audioTrack >= 0 ? hls.audioTrack : (defTrack ? defTrack.id : 0));
+          }
+        });
+        hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (event, data) => {
+          setCurrentAudioTrack(data.id);
+        });
         hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.response && (data.response.code === 403 || data.response.code === 401)) {
+            console.warn('Stream token expired (403):', data);
+            setStreamExpiredOpen(true);
+            return;
+          }
           if (data.fatal) {
+            if (data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR || data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT) {
+              setStreamExpiredOpen(true);
+              return;
+            }
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
                 hls.startLoad();
@@ -1466,6 +1530,7 @@ export default function Room() {
                 break;
               default:
                 hls.destroy();
+                setStreamExpiredOpen(true);
                 break;
             }
           }
@@ -2711,6 +2776,62 @@ export default function Room() {
                 </div>
               </>
             )}
+
+            {audioPanelOpen && (
+              <>
+                <div className="sub-backdrop" onClick={() => setAudioPanelOpen(false)} />
+                <div className="sub-panel audio-panel">
+                  <div className="sub-panel-head">
+                    <span className="sub-panel-title">Audio Language</span>
+                    <button className="sub-close-btn" onClick={() => setAudioPanelOpen(false)} title="Close">
+                      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
+                    </button>
+                  </div>
+                  <div className="sub-row">
+                    <div className="btn-group" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '220px', overflowY: 'auto' }}>
+                      {hlsAudioTracks.map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          className={'btn ghost sm' + (currentAudioTrack === t.id ? ' sel' : '')}
+                          style={{ justifyContent: 'space-between', width: '100%' }}
+                          onClick={() => changeAudioTrack(t.id)}
+                        >
+                          <span>{t.name || t.lang || `Audio Track ${t.id + 1}`}</span>
+                          {currentAudioTrack === t.id && <span>✓</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {streamExpiredOpen && (
+              <div className="stream-expired-modal-overlay">
+                <div className="stream-expired-card">
+                  <div className="sec-icon">⚠️</div>
+                  <h3 style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: '700' }}>Stream Link Expired</h3>
+                  <p style={{ margin: '0 0 16px', fontSize: '13px', color: 'var(--dim)', lineHeight: '1.4' }}>
+                    The temporary CDN token for this stream ended. Paste the updated link below to resume watching at the exact same second.
+                  </p>
+                  <form onSubmit={handleRenewStream} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <input
+                      type="text"
+                      className="yt-url"
+                      placeholder="Paste refreshed stream link…"
+                      value={renewStreamUrl}
+                      onChange={(e) => setRenewStreamUrl(e.target.value)}
+                      autoFocus
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                      <button type="button" className="btn ghost sm" onClick={() => setStreamExpiredOpen(false)}>Dismiss</button>
+                      <button type="submit" className="btn primary sm" disabled={!renewStreamUrl.trim()}>Resume Playback</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
             <div className="transport">
               <button className="t-btn" onClick={togglePlay} disabled={playDisabled && source?.type !== 'youtube' && source?.type !== 'hls' && source?.type !== 'direct'} title="Play / pause (space)">
                 {playing ? (
@@ -2808,6 +2929,18 @@ export default function Room() {
                 >
                   <span style={{ fontSize: '10.5px', fontWeight: '800', letterSpacing: '0.04em' }}>
                     {hlsQualities.find((q) => q.index === currentHlsQuality)?.label || 'AUTO'}
+                  </span>
+                </button>
+              )}
+
+              {hlsAudioTracks.length > 1 && (
+                <button
+                  className={'t-btn audio-btn' + (audioPanelOpen ? ' active' : '')}
+                  onClick={() => setAudioPanelOpen(!audioPanelOpen)}
+                  title="Audio Language"
+                >
+                  <span style={{ fontSize: '10px', fontWeight: '800', letterSpacing: '0.04em' }}>
+                    🎧 {(hlsAudioTracks.find((t) => t.id === currentAudioTrack)?.lang || 'AUD').toUpperCase().slice(0, 3)}
                   </span>
                 </button>
               )}
