@@ -295,20 +295,23 @@ function attach(io) {
       });
     });
 
-    // --- source switch: local files <-> YouTube <-> 18+ Web Embed <-> Direct Stream. Resetting the source also
+    // --- source switch: local files <-> YouTube <-> HLS / PH Stream <-> Web Embed <-> Direct Stream. Resetting the source also
     // resets the playhead; everyone (including the setter) applies it uniformly.
-    socket.on('source', ({ type, videoId, embedUrl, url, title, platform, playing = true } = {}) => {
+    socket.on('source', ({ type, videoId, embedUrl, url, title, platform, viewkey, playing = true } = {}) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
 
       if (type === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(String(videoId || ''))) {
         room.state.source = { type: 'youtube', videoId, title: String(title || 'YouTube Video').slice(0, 150), platform: 'YouTube' };
         room.state.playing = Boolean(playing);
+      } else if ((type === 'hls' || type === 'direct') && url) {
+        room.state.source = { type, url: String(url), title: String(title || 'Video Stream').slice(0, 150), platform: String(platform || 'Stream').slice(0, 50), viewkey: viewkey || null };
+        room.state.playing = Boolean(playing);
+      } else if (type === 'ph' && viewkey) {
+        room.state.source = { type: 'ph', viewkey, url: url || null, embedUrl: embedUrl || null, title: String(title || 'PH Video').slice(0, 150), platform: 'PH' };
+        room.state.playing = Boolean(playing);
       } else if (type === 'embed' && embedUrl) {
         room.state.source = { type: 'embed', embedUrl: String(embedUrl).slice(0, 500), title: String(title || 'Web Video').slice(0, 150), platform: String(platform || 'Web Embed').slice(0, 50) };
-        room.state.playing = Boolean(playing);
-      } else if (type === 'direct' && url) {
-        room.state.source = { type: 'direct', url: String(url).slice(0, 500), title: String(title || 'Direct Stream').slice(0, 150), platform: 'Direct Stream' };
         room.state.playing = Boolean(playing);
       } else {
         room.state.source = null; // back to local files
@@ -328,12 +331,12 @@ function attach(io) {
     });
 
     // --- queue management ---
-    socket.on('queue-add', ({ videoId, type, embedUrl, url, title, platform, playNow } = {}, cb) => {
+    socket.on('queue-add', ({ videoId, type, embedUrl, url, title, platform, viewkey, playNow } = {}, cb) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
-      if (!videoId && !embedUrl && !url) return;
+      if (!videoId && !embedUrl && !url && !viewkey) return;
 
-      const itemType = type || (videoId ? 'youtube' : embedUrl ? 'embed' : 'direct');
+      const itemType = type || (videoId ? 'youtube' : url ? 'hls' : viewkey ? 'ph' : 'embed');
       const user = room.users.get(socket.id);
       const item = {
         id: 'q_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
@@ -341,6 +344,7 @@ function attach(io) {
         videoId: videoId || null,
         embedUrl: embedUrl || null,
         url: url || null,
+        viewkey: viewkey || null,
         title: String(title || (itemType === 'youtube' ? 'YouTube Video' : 'Web Video')).slice(0, 150),
         platform: String(platform || (itemType === 'youtube' ? 'YouTube' : 'Web Video')).slice(0, 50),
         addedBy: socket.id,
@@ -355,6 +359,7 @@ function attach(io) {
           videoId: item.videoId,
           embedUrl: item.embedUrl,
           url: item.url,
+          viewkey: item.viewkey,
           title: item.title,
           platform: item.platform,
         };
@@ -364,23 +369,22 @@ function attach(io) {
 
         io.to(room.code).emit('source', {
           source: room.state.source,
-          playing: room.state.playing,
+          playing: true,
           time: 0,
           name: user ? user.name : 'Someone',
         });
+        db.saveRoom(room.code, room.state);
       } else {
         room.state.queue.push(item);
+        io.to(room.code).emit('queue-update', {
+          queue: room.state.queue,
+          action: 'add',
+          item,
+          actor: user ? user.name : 'Someone',
+        });
+        db.saveRoom(room.code, room.state);
       }
-
-      io.to(room.code).emit('queue-update', {
-        queue: room.state.queue,
-        action: playNow ? 'play' : 'add',
-        item,
-        name: user ? user.name : 'Someone',
-      });
-
-      db.saveRoom(room.code, room.state);
-      if (typeof cb === 'function') cb({ ok: true, queue: room.state.queue });
+      if (typeof cb === 'function') cb({ ok: true });
     });
 
     socket.on('queue-remove', (itemId) => {

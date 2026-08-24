@@ -7,7 +7,7 @@ import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
-import { parseMediaUrl } from '../../../lib/mediaEmbeds';
+import { parseMediaUrl, resolveMediaUrl } from '../../../lib/mediaEmbeds';
 import { VoiceSession } from '../../../lib/voice';
 
 // mic icons for the viewer chips
@@ -191,6 +191,7 @@ export default function Room() {
   const ytLastRef = useRef({ t: 0, at: 0, playing: false }); // seek detection
   const ytTickRef = useRef(null);
   const ytStallRef = useRef(false); // "playing" but clock frozen = ad (or stall)
+  const hlsRef = useRef(null);
   const voiceRef = useRef(null); // VoiceSession, created lazily
   const voiceAudioRef = useRef(null); // hidden container for remote audio elements
 
@@ -204,6 +205,23 @@ export default function Room() {
           setSource((prev) => (prev?.videoId === s.videoId ? { ...prev, title: info.title } : prev));
         }
       });
+    } else if (s?.type === 'ph' || (s?.platform === 'PH' && !s.url && s.viewkey)) {
+      fetch(`/api/ph?viewkey=${encodeURIComponent(s.viewkey)}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.ok && data.hlsUrl) {
+            const resolved = {
+              ...s,
+              type: 'hls',
+              url: data.hlsUrl,
+              title: data.title || s.title,
+              duration: data.duration || 0,
+            };
+            sourceRef.current = resolved;
+            setSource(resolved);
+          }
+        })
+        .catch(() => {});
     }
   };
 
@@ -1354,6 +1372,89 @@ export default function Room() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source?.videoId, source?.type]);
 
+  // HLS stream / direct video stream lifecycle (for PH & direct online streams)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    if (source?.type === 'hls' && source.url) {
+      setFileLoaded(true);
+      fileLoadedRef.current = true;
+      fileIdentityRef.current = source.url;
+      hasLocalFileRef.current = true;
+
+      // Import Hls dynamically or use native Safari HLS
+      import('hls.js').then(({ default: Hls }) => {
+        if (Hls.isSupported()) {
+          const hls = new Hls({
+            enableWorker: true,
+            lowLatencyMode: false,
+          });
+          hls.loadSource(source.url);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (latestStateRef.current.time) {
+              video.currentTime = latestStateRef.current.time;
+            }
+            if (latestStateRef.current.playing) {
+              video.play().catch(() => {});
+            }
+          });
+          hls.on(Hls.Events.ERROR, (event, data) => {
+            if (data.fatal) {
+              switch (data.type) {
+                case Hls.ErrorTypes.NETWORK_ERROR:
+                  hls.startLoad();
+                  break;
+                case Hls.ErrorTypes.MEDIA_ERROR:
+                  hls.recoverMediaError();
+                  break;
+                default:
+                  hls.destroy();
+                  break;
+              }
+            }
+          });
+          hlsRef.current = hls;
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          // Native Safari / iOS
+          video.src = source.url;
+          if (latestStateRef.current.time) {
+            video.currentTime = latestStateRef.current.time;
+          }
+          if (latestStateRef.current.playing) {
+            video.play().catch(() => {});
+          }
+        }
+      });
+      return () => {
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+          hlsRef.current = null;
+        }
+      };
+    }
+
+    if (source?.type === 'direct' && source.url) {
+      setFileLoaded(true);
+      fileLoadedRef.current = true;
+      fileIdentityRef.current = source.url;
+      hasLocalFileRef.current = true;
+      video.src = source.url;
+      if (latestStateRef.current.time) {
+        video.currentTime = latestStateRef.current.time;
+      }
+      if (latestStateRef.current.playing) {
+        video.play().catch(() => {});
+      }
+    }
+  }, [source?.type, source?.url]);
+
   // autoscroll chat on new messages or when switching to chat tab or expanding sidebar
   useEffect(() => {
     if (tab === 'chat' && chatOpen) {
@@ -1614,35 +1715,37 @@ export default function Room() {
 
   const handlePlayYouTube = async (playNow = true, customUrl = null) => {
     const raw = customUrl !== null ? customUrl : ytUrl;
-    const parsed = parseMediaUrl(raw);
-    if (!parsed) { toast("Paste a valid video or embed link"); return; }
+    const resolved = await resolveMediaUrl(raw);
+    if (!resolved) { toast("Paste a valid video or embed link"); return; }
     const socket = getSocket();
     if (!socket.connected) return;
 
-    let title = parsed.title;
-    if (parsed.type === 'youtube') {
-      const info = await fetchYouTubeInfo(parsed.videoId);
+    let title = resolved.title;
+    if (resolved.type === 'youtube') {
+      const info = await fetchYouTubeInfo(resolved.videoId);
       title = info.title;
     }
 
     if (playNow) {
       socket.emit('source', {
-        type: parsed.type,
-        videoId: parsed.videoId,
-        embedUrl: parsed.embedUrl,
-        url: parsed.url,
+        type: resolved.type,
+        videoId: resolved.videoId,
+        embedUrl: resolved.embedUrl,
+        url: resolved.url,
+        viewkey: resolved.viewkey,
         title,
-        platform: parsed.platform,
+        platform: resolved.platform,
         playing: true,
       });
     } else {
       socket.emit('queue-add', {
-        type: parsed.type,
-        videoId: parsed.videoId,
-        embedUrl: parsed.embedUrl,
-        url: parsed.url,
+        type: resolved.type,
+        videoId: resolved.videoId,
+        embedUrl: resolved.embedUrl,
+        url: resolved.url,
+        viewkey: resolved.viewkey,
         title,
-        platform: parsed.platform,
+        platform: resolved.platform,
         playNow: false,
       });
     }
@@ -1651,8 +1754,8 @@ export default function Room() {
   };
 
   const handleQueueAdd = async (playNow = false) => {
-    const parsed = parseMediaUrl(queueInput);
-    if (!parsed) {
+    const resolved = await resolveMediaUrl(queueInput);
+    if (!resolved) {
       toast("Paste a valid YouTube or PH link");
       return;
     }
@@ -1660,19 +1763,20 @@ export default function Room() {
     if (!socket.connected) return;
     setQueueLoading(true);
 
-    let title = parsed.title;
-    if (parsed.type === 'youtube') {
-      const info = await fetchYouTubeInfo(parsed.videoId);
+    let title = resolved.title;
+    if (resolved.type === 'youtube') {
+      const info = await fetchYouTubeInfo(resolved.videoId);
       title = info.title;
     }
 
     socket.emit('queue-add', {
-      type: parsed.type,
-      videoId: parsed.videoId,
-      embedUrl: parsed.embedUrl,
-      url: parsed.url,
+      type: resolved.type,
+      videoId: resolved.videoId,
+      embedUrl: resolved.embedUrl,
+      url: resolved.url,
+      viewkey: resolved.viewkey,
       title,
-      platform: parsed.platform,
+      platform: resolved.platform,
       playNow,
     }, () => {
       setQueueLoading(false);
