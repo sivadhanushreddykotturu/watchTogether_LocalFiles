@@ -133,10 +133,6 @@ export default function Room() {
   const [audioPanelOpen, setAudioPanelOpen] = useState(false);
   const [streamExpiredOpen, setStreamExpiredOpen] = useState(false);
   const [renewStreamUrl, setRenewStreamUrl] = useState('');
-  const [customSplitMode, setCustomSplitMode] = useState(false);
-  const [customVideoUrl, setCustomVideoUrl] = useState('');
-  const [customAudioUrl, setCustomAudioUrl] = useState('');
-  const [customSubtitleUrl, setCustomSubtitleUrl] = useState('');
   const [zoom, setZoom] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zoomUiVisible, setZoomUiVisible] = useState(false);
@@ -1985,45 +1981,6 @@ export default function Room() {
     setQueueLoading(false);
   };
 
-  const handleCustomStreamAdd = async (playNow = false) => {
-    if (!customVideoUrl.trim()) {
-      toast("Please enter a Video Stream URL");
-      return;
-    }
-    const resolved = await resolveMediaUrl({
-      videoUrl: customVideoUrl.trim(),
-      audioUrl: customAudioUrl.trim() || null,
-      subtitleUrl: customSubtitleUrl.trim() || null,
-      title: 'Custom Stream',
-    });
-    if (!resolved) {
-      toast("Invalid stream URL");
-      return;
-    }
-    const socket = getSocket();
-    if (!socket.connected) return;
-    setQueueLoading(true);
-
-    socket.emit('queue-add', {
-      type: resolved.type,
-      videoId: resolved.videoId,
-      embedUrl: resolved.embedUrl,
-      url: resolved.url,
-      audioUrl: resolved.audioUrl,
-      subtitleUrl: resolved.subtitleUrl,
-      viewkey: resolved.viewkey,
-      title: resolved.title,
-      platform: resolved.platform,
-      playNow,
-    }, () => {
-      setQueueLoading(false);
-    });
-    setCustomVideoUrl('');
-    setCustomAudioUrl('');
-    setCustomSubtitleUrl('');
-    setQueueLoading(false);
-  };
-
   const playQueueItem = (itemId) => {
     const socket = getSocket();
     if (socket.connected) socket.emit('queue-play', itemId);
@@ -3496,101 +3453,32 @@ export default function Room() {
                 </div>
               ) : (
                 <div className="queue-add-box">
-                  {!customSplitMode ? (
-                    <>
-                      <input
-                        type="text"
-                        className="queue-input"
-                        placeholder="Paste YouTube, PH, NetMirror, or direct video URL…"
-                        value={queueInput}
-                        onChange={(e) => setQueueInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleQueueAdd(false); }}
-                      />
-                      <div className="queue-add-actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                        <button
-                          type="button"
-                          className="btn ghost xs"
-                          style={{ fontSize: '11px', color: 'var(--dim)', padding: '4px 6px' }}
-                          onClick={() => setCustomSplitMode(true)}
-                        >
-                          ⚡ Split Video / Audio / Subs
-                        </button>
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                          <button
-                            type="button"
-                            className="btn primary sm"
-                            onClick={() => handleQueueAdd(false)}
-                            disabled={queueLoading || !queueInput.trim()}
-                          >
-                            + Queue
-                          </button>
-                          <button
-                            type="button"
-                            className="btn ghost sm"
-                            onClick={() => handleQueueAdd(true)}
-                            disabled={queueLoading || !queueInput.trim()}
-                          >
-                            ▶ Play Now
-                          </button>
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                          Custom Video + Audio + Subs
-                        </span>
-                        <button
-                          type="button"
-                          className="btn ghost xs"
-                          style={{ fontSize: '11px', color: 'var(--dim)', padding: '2px 6px' }}
-                          onClick={() => setCustomSplitMode(false)}
-                        >
-                          ← Simple Mode
-                        </button>
-                      </div>
-                      <input
-                        type="text"
-                        className="queue-input"
-                        placeholder="🎬 Video URL (.m3u8, .mp4, CDN link) *"
-                        value={customVideoUrl}
-                        onChange={(e) => setCustomVideoUrl(e.target.value)}
-                      />
-                      <input
-                        type="text"
-                        className="queue-input"
-                        placeholder="🎧 Audio Track URL (Optional: .m3u8, .aac)"
-                        value={customAudioUrl}
-                        onChange={(e) => setCustomAudioUrl(e.target.value)}
-                      />
-                      <input
-                        type="text"
-                        className="queue-input"
-                        placeholder="💬 Subtitles URL (Optional: .vtt, .srt)"
-                        value={customSubtitleUrl}
-                        onChange={(e) => setCustomSubtitleUrl(e.target.value)}
-                      />
-                      <div className="queue-add-actions" style={{ justifyContent: 'flex-end', gap: '6px' }}>
-                        <button
-                          type="button"
-                          className="btn primary sm"
-                          onClick={() => handleCustomStreamAdd(false)}
-                          disabled={queueLoading || !customVideoUrl.trim()}
-                        >
-                          + Queue
-                        </button>
-                        <button
-                          type="button"
-                          className="btn ghost sm"
-                          onClick={() => handleCustomStreamAdd(true)}
-                          disabled={queueLoading || !customVideoUrl.trim()}
-                        >
-                          ▶ Play Now
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  <input
+                    type="text"
+                    className="queue-input"
+                    placeholder="Paste YouTube, Pornhub, or direct video URL…"
+                    value={queueInput}
+                    onChange={(e) => setQueueInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleQueueAdd(false); }}
+                  />
+                  <div className="queue-add-actions">
+                    <button
+                      type="button"
+                      className="btn primary sm"
+                      onClick={() => handleQueueAdd(false)}
+                      disabled={queueLoading || !queueInput.trim()}
+                    >
+                      + Queue
+                    </button>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      onClick={() => handleQueueAdd(true)}
+                      disabled={queueLoading || !queueInput.trim()}
+                    >
+                      ▶ Play Now
+                    </button>
+                  </div>
                 </div>
               )}
 

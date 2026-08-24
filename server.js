@@ -42,6 +42,8 @@ function handleHlsProxy(req, res, defaultReferer = '') {
   if (!referer) {
     if (targetUrl.includes('pornhub.com') || targetUrl.includes('phncdn.com')) {
       referer = 'https://www.pornhub.com/';
+    } else if (targetUrl.includes('ahcdn.com') || targetUrl.includes('xhamster')) {
+      referer = 'https://xhamster.com/';
     } else if (targetUrl.includes('net52.cc') || targetUrl.includes('makhi4.top') || targetUrl.includes('netmirror') || targetUrl.includes('nm-cdn')) {
       const idMatch = targetUrl.match(/(?:\/files\/|\/hls\/)(\d+)/);
       referer = idMatch ? `https://net52.cc/play.php?id=${idMatch[1]}` : 'https://net52.cc/';
@@ -77,15 +79,26 @@ function handleHlsProxy(req, res, defaultReferer = '') {
       let data = '';
       upstreamRes.on('data', (chunk) => { data += chunk; });
       upstreamRes.on('end', () => {
+        let origin = '';
+        try {
+          const parsedTarget = new URL(targetUrl);
+          origin = parsedTarget.origin;
+        } catch {
+          const m = targetUrl.match(/^(https?:\/\/[^\/]+)/);
+          if (m) origin = m[1];
+        }
         const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
+
         const rewritten = data.split('\n').map((line) => {
           let modifiedLine = line;
 
-          // Rewrite URI="..." in #EXT-X-MEDIA (e.g. multi-track audio playlists)
+          // Rewrite URI="..." in #EXT-X-MEDIA and #EXT-X-MAP (e.g. init-v1-a1.mp4, multi-track audio)
           if (modifiedLine.includes('URI="')) {
             modifiedLine = modifiedLine.replace(/URI="([^"]+)"/g, (match, p1) => {
               let abs = p1;
-              if (!abs.startsWith('http://') && !abs.startsWith('https://')) {
+              if (abs.startsWith('/')) {
+                abs = origin + abs;
+              } else if (!abs.startsWith('http://') && !abs.startsWith('https://')) {
                 abs = baseUrl + abs;
               }
               const proxyUrl = `/api/proxy/hls?url=${encodeURIComponent(abs)}${referer ? '&referer=' + encodeURIComponent(referer) : ''}`;
@@ -97,8 +110,10 @@ function handleHlsProxy(req, res, defaultReferer = '') {
           if (!trimmed || trimmed.startsWith('#')) return modifiedLine;
 
           let absUrl = trimmed;
-          if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-            absUrl = baseUrl + trimmed;
+          if (absUrl.startsWith('/')) {
+            absUrl = origin + absUrl;
+          } else if (!absUrl.startsWith('http://') && !absUrl.startsWith('https://')) {
+            absUrl = baseUrl + absUrl;
           }
           return `/api/proxy/hls?url=${encodeURIComponent(absUrl)}${referer ? '&referer=' + encodeURIComponent(referer) : ''}`;
         }).join('\n');
@@ -113,8 +128,14 @@ function handleHlsProxy(req, res, defaultReferer = '') {
       return;
     }
 
-    // Direct zero-copy pipe for video/audio chunks (disguised by CDNs as .woff2, .jpg, .js, .ts)
-    const mime = (contentType && contentType.includes('mpegurl')) ? 'application/vnd.apple.mpegurl' : 'video/MP2T';
+    // Direct zero-copy pipe for video/audio chunks (supporting .m4s fMP4, .mp4 init headers, .ts, .woff2, .jpg)
+    let mime = 'video/MP2T';
+    if (targetUrl.includes('.m4s') || targetUrl.includes('.mp4') || targetUrl.includes('init-') || contentType.includes('mp4') || contentType.includes('iso.segment')) {
+      mime = 'video/mp4';
+    } else if (contentType && contentType.includes('mpegurl')) {
+      mime = 'application/vnd.apple.mpegurl';
+    }
+
     res.writeHead(upstreamRes.statusCode, {
       'Content-Type': mime,
       'Content-Length': upstreamRes.headers['content-length'] || undefined,
