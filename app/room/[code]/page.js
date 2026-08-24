@@ -734,7 +734,7 @@ export default function Room() {
   function beat() {
     const socket = getSocket();
 
-    // YouTube mode heartbeat: smooth dual-stage drift correction
+    // YouTube mode heartbeat
     if (sourceRef.current?.type === 'youtube') {
       const yt = ytRef.current;
       if (!yt || !yt.getCurrentTime || !socket.connected) return;
@@ -743,18 +743,10 @@ export default function Room() {
         setStateLatest(playing, expected);
         const cur = yt.getCurrentTime();
         const drift = expected - cur;
-        const absDrift = Math.abs(drift);
 
-        if (playing && ytPlayingRef.current && !ytStallRef.current && Date.now() - lastLocalSeekRef.current > 2000) {
-          if (absDrift > 2.5) {
-            guardRef.current.seek++;
-            yt.seekTo(expected, true);
-          } else if (absDrift > 0.6 && typeof yt.setPlaybackRate === 'function') {
-            // Smooth micro-nudge (no jarring seek)
-            try { yt.setPlaybackRate(drift > 0 ? 1.05 : 0.95); } catch {}
-          } else if (typeof yt.setPlaybackRate === 'function') {
-            try { yt.setPlaybackRate(speedRef.current || 1); } catch {}
-          }
+        if (playing && ytPlayingRef.current && !ytStallRef.current && Math.abs(drift) > 2.0 && Date.now() - lastLocalSeekRef.current > 2000) {
+          guardRef.current.seek++;
+          yt.seekTo(expected, true);
         } else if (playing && !ytPlayingRef.current && Date.now() - lastLocalPauseRef.current > 5000) {
           setResumeOpen(true);
         }
@@ -768,26 +760,12 @@ export default function Room() {
       if (typeof expected !== 'number') return;
       setStateLatest(playing, expected);
       const drift = expected - video.currentTime;
-      const absDrift = Math.abs(drift);
-      const baseSpeed = speedRef.current || 1;
 
-      if (playing && !video.paused && Date.now() - lastLocalSeekRef.current > 2000) {
-        if (absDrift > 2.5) {
-          guardRef.current.seek++;
-          video.currentTime = expected;
-          if (extAudioRef.current && extAudioRef.current.src) {
-            extAudioRef.current.currentTime = expected;
-          }
-          video.playbackRate = baseSpeed;
-          if (extAudioRef.current) extAudioRef.current.playbackRate = baseSpeed;
-        } else if (absDrift > 0.5) {
-          // Smooth micro-catchup via playbackRate (imperceptible and zero buffer stall)
-          const nudge = drift > 0 ? 1.04 : 0.96;
-          video.playbackRate = baseSpeed * nudge;
-          if (extAudioRef.current) extAudioRef.current.playbackRate = baseSpeed * nudge;
-        } else if (Math.abs(video.playbackRate - baseSpeed) > 0.01) {
-          video.playbackRate = baseSpeed;
-          if (extAudioRef.current) extAudioRef.current.playbackRate = baseSpeed;
+      if (playing && !video.paused && Math.abs(drift) > 2.0 && Date.now() - lastLocalSeekRef.current > 2000) {
+        guardRef.current.seek++;
+        video.currentTime = expected;
+        if (extAudioRef.current && extAudioRef.current.src) {
+          extAudioRef.current.currentTime = expected;
         }
       } else if (playing && video.paused && Date.now() - lastLocalPauseRef.current > 5000) {
         setResumeOpen(true);
@@ -951,19 +929,11 @@ export default function Room() {
         setAudioTracks(list);
       }
     };
-    const onRateChange = () => {
-      const v = videoRef.current;
-      if (!v) return;
-      const newRate = Number(v.playbackRate);
-      if (!newRate || Math.abs(newRate - speedRef.current) < 0.01) return;
-      changeSpeed(newRate, true);
-    };
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
     video.addEventListener('seeking', onSeeking);
     video.addEventListener('seeked', onSeeked);
     video.addEventListener('ended', onEnded);
-    video.addEventListener('ratechange', onRateChange);
     video.addEventListener('timeupdate', onTime);
     video.addEventListener('loadedmetadata', onLoadedMetadata);
 
@@ -3373,11 +3343,33 @@ export default function Room() {
 
               {queueTabMode === 'search' ? (
                 <div className="queue-search-section">
+                  <div className="sidebar-platform-tabs">
+                    <button
+                      type="button"
+                      className={'sidebar-platform-tab' + (searchPlatform === 'youtube' ? ' active' : '')}
+                      onClick={() => {
+                        setSearchPlatform('youtube');
+                        if (ytSearchQuery) executeSearch(ytSearchQuery, 'youtube');
+                      }}
+                    >
+                      🔴 YouTube
+                    </button>
+                    <button
+                      type="button"
+                      className={'sidebar-platform-tab' + (searchPlatform === 'ph' ? ' active' : '')}
+                      onClick={() => {
+                        setSearchPlatform('ph');
+                        if (ytSearchQuery) executeSearch(ytSearchQuery, 'ph');
+                      }}
+                    >
+                      🔞 Pornhub
+                    </button>
+                  </div>
                   <div className="queue-search-input-wrap">
                     <input
                       type="text"
                       className="queue-input queue-search-input"
-                      placeholder="Search YouTube videos…"
+                      placeholder={searchPlatform === 'ph' ? 'Search Pornhub videos…' : 'Search YouTube videos…'}
                       value={ytSearchQuery}
                       onChange={(e) => handleSearchInputChange(e.target.value)}
                       onKeyDown={(e) => {
@@ -3417,14 +3409,14 @@ export default function Room() {
                       </div>
                       <div className="queue-search-items">
                         {ytSearchResults.slice(0, 10).map((video) => (
-                          <div key={video.id} className="queue-search-item">
+                          <div key={video.id || video.viewkey} className="queue-search-item">
                             <div className="qsi-thumb-wrap">
-                              <img src={video.thumbnail} alt={video.title} className="qsi-thumb" />
+                              <img src={video.thumbnail} alt={video.title} className="qsi-thumb" referrerPolicy="no-referrer" loading="lazy" />
                               {video.duration && <span className="qsi-duration">{video.duration}</span>}
                             </div>
                             <div className="qsi-info">
                               <div className="qsi-title" title={video.title}>{video.title}</div>
-                              <div className="qsi-author">{video.author}</div>
+                              <div className="qsi-author">{video.author || (searchPlatform === 'ph' ? 'Pornhub' : '')}</div>
                             </div>
                             <div className="qsi-actions">
                               <button
@@ -3719,7 +3711,7 @@ export default function Room() {
                   {ytSearchResults.map((video) => (
                     <div key={video.id || video.viewkey} className="yt-card">
                       <div className="yt-card-thumb-wrap">
-                        <img src={video.thumbnail} alt={video.title} className="yt-card-thumb" />
+                        <img src={video.thumbnail} alt={video.title} className="yt-card-thumb" referrerPolicy="no-referrer" loading="lazy" />
                         {video.duration && <span className="yt-card-duration">{video.duration}</span>}
                       </div>
                       <div className="yt-card-info">

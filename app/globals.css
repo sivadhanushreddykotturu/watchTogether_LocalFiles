@@ -2902,6 +2902,36 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   border-bottom-color: var(--accent);
 }
 
+.sidebar-platform-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.sidebar-platform-tab {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dim);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sidebar-platform-tab:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-platform-tab.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 .yt-search-header {
   display: flex;
   align-items: center;

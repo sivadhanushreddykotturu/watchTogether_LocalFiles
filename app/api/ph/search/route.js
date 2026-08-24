@@ -36,8 +36,10 @@ function parsePornhubSearchHtml(html) {
 
     const thumbMatch = snippet.match(/data-src="([^"]+)"/i)
       || snippet.match(/data-thumb_url="([^"]+)"/i)
+      || snippet.match(/data-mediumthumb="([^"]+)"/i)
       || snippet.match(/src="(https:\/\/[^"]*phncdn[^"]+)"/i);
-    const thumbnail = thumbMatch ? thumbMatch[1] : `https://ci.phncdn.com/videos/${vkey}/default.jpg`;
+    const rawThumb = thumbMatch ? thumbMatch[1] : `https://ci.phncdn.com/videos/${vkey}/default.jpg`;
+    const thumbnail = `/api/ph/thumb?url=${encodeURIComponent(rawThumb)}`;
 
     const durationMatch = snippet.match(/<var class="duration">([^<]+)<\/var>/i) || snippet.match(/<var[^>]*>([^<]+)<\/var>/i);
     const duration = durationMatch ? cleanText(durationMatch[1]) : '';
