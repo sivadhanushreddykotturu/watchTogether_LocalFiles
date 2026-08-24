@@ -22,30 +22,47 @@ function parsePornhubSearchHtml(html) {
   for (const vkey of allVkeys) {
     if (seen.has(vkey)) continue;
 
-    const idx = html.indexOf(vkey);
+    const idx = html.indexOf(`viewkey=${vkey}`);
     if (idx === -1) continue;
 
-    const snippet = html.substring(Math.max(0, idx - 300), Math.min(html.length, idx + 900));
+    // Span the entire <li> container (3500 chars)
+    const snippet = html.substring(Math.max(0, idx - 500), Math.min(html.length, idx + 3500));
 
-    const titleMatch = snippet.match(/title="([^"]+)"/i) || snippet.match(/alt="([^"]+)"/i);
+    // 1. Title
+    const titleMatch = snippet.match(/<span class="title"[^>]*>[\s\S]*?<a[^>]*title="([^"]+)"/i)
+      || snippet.match(/title="([^"]+)"/i)
+      || snippet.match(/alt="([^"]+)"/i);
     const rawTitle = titleMatch ? cleanText(titleMatch[1]) : '';
 
     if (!rawTitle || rawTitle.toLowerCase() === 'pornhub' || rawTitle.toLowerCase().includes('upgrade now')) {
       continue;
     }
 
-    // Extract real image CDN URL (ei.phncdn.com, di.phncdn.com, etc.)
-    const thumbUrlMatch = snippet.match(/https?:\/\/[a-zA-Z0-9.-]*phncdn\.com\/[^"'\s<>]+\.(?:jpg|jpeg|webp|png)(?:\?[^"'\s<>]*)?/i);
-    let rawThumb = thumbUrlMatch ? thumbUrlMatch[0] : '';
+    // 2. Thumbnail
+    const thumbUrlMatch = snippet.match(/data-thumb_url="([^"]+)"/i)
+      || snippet.match(/data-src="([^"]+)"/i)
+      || snippet.match(/data-mediumthumb="([^"]+)"/i)
+      || snippet.match(/data-image="([^"]+)"/i)
+      || snippet.match(/https?:\/\/[a-zA-Z0-9.-]*phncdn\.com\/[^"'\s<>]+\.(?:jpg|jpeg|webp|png)(?:\?[^"'\s<>]*)?/i)
+      || snippet.match(/src="([^"]*phncdn[^"]*)"/i);
+
+    let rawThumb = thumbUrlMatch ? (thumbUrlMatch[1] || thumbUrlMatch[0]) : '';
+    if (rawThumb.startsWith('//')) rawThumb = 'https:' + rawThumb;
     if (rawThumb.includes('ci.phncdn.com')) {
       rawThumb = rawThumb.replace('ci.phncdn.com', 'ei.phncdn.com');
     }
     const thumbnail = rawThumb ? `/api/ph/thumb?url=${encodeURIComponent(rawThumb)}` : '';
 
-    const durationMatch = snippet.match(/<var class="duration">([^<]+)<\/var>/i) || snippet.match(/<var[^>]*>([^<]+)<\/var>/i);
+    // 3. Duration
+    const durationMatch = snippet.match(/<var[^>]*class="duration"[^>]*>([^<]+)<\/var>/i)
+      || snippet.match(/class="duration"[^>]*>([^<]+)<\/var>/i)
+      || snippet.match(/<var[^>]*>([^<]+)<\/var>/i);
     const duration = durationMatch ? cleanText(durationMatch[1]) : '';
 
-    const viewsMatch = snippet.match(/<span class="views">[\s\S]*?<var>([^<]+)<\/var>/i);
+    // 4. Views
+    const viewsMatch = snippet.match(/<span class="views"[^>]*>[\s\S]*?<var>([^<]+)<\/var>/i)
+      || snippet.match(/<span class="views"[^>]*>([^<]+)<\/span>/i)
+      || snippet.match(/<var[^>]*>([0-9.]+[KMB]?)<\/var>/i);
     const views = viewsMatch ? cleanText(viewsMatch[1]) : '';
 
     seen.add(vkey);
