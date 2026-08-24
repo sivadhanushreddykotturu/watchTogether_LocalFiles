@@ -45,8 +45,8 @@ export async function GET(request) {
       }
 
       const endpoint = q
-        ? `https://api.redgifs.com/v2/gifs/search?search_text=${encodeURIComponent(q)}&order=best&count=40`
-        : `https://api.redgifs.com/v2/gifs/search?search_text=trending&order=trending&count=40`;
+        ? `https://api.redgifs.com/v2/gifs/search?search_text=${encodeURIComponent(q)}&count=40`
+        : `https://api.redgifs.com/v2/gifs/search?search_text=trending&count=40`;
 
       const res = await fetch(endpoint, {
         headers: {
@@ -57,7 +57,7 @@ export async function GET(request) {
       });
 
       if (!res.ok) {
-        if (res.status === 404) {
+        if (res.status === 404 || res.status === 400) {
           return NextResponse.json({ ok: true, provider: 'REDGIFS', results: [] });
         }
         return NextResponse.json({ ok: false, error: `RedGIFs returned ${res.status}`, results: [] });
