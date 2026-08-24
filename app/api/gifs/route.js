@@ -15,8 +15,8 @@ export async function GET(request) {
   if (klipyKey) {
     try {
       const endpoint = q
-        ? `https://api.klipy.com/api/v1/${klipyKey}/gifs/search?q=${encodeURIComponent(q)}&per_page=24&customer_id=reelsync_user`
-        : `https://api.klipy.com/api/v1/${klipyKey}/gifs/trending?per_page=24&customer_id=reelsync_user`;
+        ? `https://api.klipy.com/api/v1/${klipyKey}/gifs/search?q=${encodeURIComponent(q)}&per_page=24&customer_id=reelsync_user&content_filter=off`
+        : `https://api.klipy.com/api/v1/${klipyKey}/gifs/trending?per_page=24&customer_id=reelsync_user&content_filter=off`;
 
       const res = await fetch(endpoint, {
         headers: { 'Accept': 'application/json' },
