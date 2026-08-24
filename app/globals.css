@@ -3380,15 +3380,17 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--surface-1);
-  border: 1px solid var(--border-mid);
-  border-radius: 20px;
-  padding: 5px 12px;
-  transition: border-color 0.15s ease;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 6px 12px;
+  transition: all 0.18s ease;
 }
 
 .tgp-search-wrap:focus-within {
   border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .tgp-search-icon {
@@ -3396,29 +3398,43 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   flex-shrink: 0;
 }
 
-.tgp-search-input {
+.tgp-search-input,
+.tgp-search-input:focus,
+.tgp-search-input:active,
+.tgp-search-input:hover {
   flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
   font-size: 13px;
   color: var(--ink);
   min-width: 0;
+  padding: 0 !important;
+  margin: 0 !important;
 }
 
-.tgp-clear-btn, .tgp-close-btn {
-  background: transparent;
-  border: none;
+.tgp-close-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
   color: var(--dim);
   cursor: pointer;
-  padding: 2px 4px;
-  font-size: 12px;
-  border-radius: 4px;
-  transition: color 0.15s ease;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
 }
 
-.tgp-clear-btn:hover, .tgp-close-btn:hover {
+.tgp-close-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
   color: var(--ink);
+  transform: scale(1.05);
 }
 
 .tgp-categories-bar {

@@ -67,20 +67,18 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
             onChange={handleSearchChange}
             autoFocus
           />
-          {query && (
-            <button
-              type="button"
-              className="tgp-clear-btn"
-              onClick={() => {
-                setQuery('');
-                fetchGifs('');
-              }}
-              title="Clear search"
-            >
-              ✕
-            </button>
-          )}
         </div>
+        {onClose && (
+          <button
+            type="button"
+            className="tgp-close-btn"
+            onClick={onClose}
+            title="Close GIF picker"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        )}
       </div>
 
       <div className="tgp-grid-container">
