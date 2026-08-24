@@ -133,6 +133,10 @@ export default function Room() {
   const [audioPanelOpen, setAudioPanelOpen] = useState(false);
   const [streamExpiredOpen, setStreamExpiredOpen] = useState(false);
   const [renewStreamUrl, setRenewStreamUrl] = useState('');
+  const [customSplitMode, setCustomSplitMode] = useState(false);
+  const [customVideoUrl, setCustomVideoUrl] = useState('');
+  const [customAudioUrl, setCustomAudioUrl] = useState('');
+  const [customSubtitleUrl, setCustomSubtitleUrl] = useState('');
   const [zoom, setZoom] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zoomUiVisible, setZoomUiVisible] = useState(false);
@@ -1545,6 +1549,46 @@ export default function Room() {
           video.play().catch(() => {});
         }
       }
+
+      if (source.audioUrl) {
+        if (extAudioRef.current) {
+          extAudioRef.current.src = source.audioUrl;
+          extAudioRef.current.load();
+          extAudioRef.current.muted = false;
+          extAudioRef.current.volume = volume;
+          if (latestStateRef.current.time) {
+            extAudioRef.current.currentTime = latestStateRef.current.time;
+          }
+          if (latestStateRef.current.playing) {
+            extAudioRef.current.play().catch(() => {});
+          }
+        }
+        video.muted = true;
+      } else {
+        video.muted = false;
+        if (extAudioRef.current) {
+          extAudioRef.current.pause();
+          extAudioRef.current.removeAttribute('src');
+          extAudioRef.current.load();
+        }
+      }
+
+      if (source.subtitleUrl) {
+        fetch(source.subtitleUrl)
+          .then(res => res.text())
+          .then(txt => {
+            if (txt) {
+              const cues = parseVttOrSrt(txt);
+              if (cues && cues.length > 0) {
+                setSubtitleCues(cues);
+                setSubsOn(true);
+                toast('External Subtitle Loaded');
+              }
+            }
+          })
+          .catch(e => console.warn('Could not load remote subtitle:', e));
+      }
+
       return () => {
         if (hlsRef.current) {
           hlsRef.current.destroy();
@@ -1563,8 +1607,46 @@ export default function Room() {
       if (latestStateRef.current.playing) {
         video.play().catch(() => {});
       }
+      if (source.audioUrl) {
+        if (extAudioRef.current) {
+          extAudioRef.current.src = source.audioUrl;
+          extAudioRef.current.load();
+          extAudioRef.current.muted = false;
+          extAudioRef.current.volume = volume;
+          if (latestStateRef.current.time) {
+            extAudioRef.current.currentTime = latestStateRef.current.time;
+          }
+          if (latestStateRef.current.playing) {
+            extAudioRef.current.play().catch(() => {});
+          }
+        }
+        video.muted = true;
+      } else {
+        video.muted = false;
+        if (extAudioRef.current) {
+          extAudioRef.current.pause();
+          extAudioRef.current.removeAttribute('src');
+          extAudioRef.current.load();
+        }
+      }
+
+      if (source.subtitleUrl) {
+        fetch(source.subtitleUrl)
+          .then(res => res.text())
+          .then(txt => {
+            if (txt) {
+              const cues = parseVttOrSrt(txt);
+              if (cues && cues.length > 0) {
+                setSubtitleCues(cues);
+                setSubsOn(true);
+                toast('External Subtitle Loaded');
+              }
+            }
+          })
+          .catch(e => console.warn('Could not load remote subtitle:', e));
+      }
     }
-  }, [source?.type, source?.url]);
+  }, [source?.type, source?.url, source?.audioUrl, source?.subtitleUrl]);
 
   // autoscroll chat on new messages or when switching to chat tab or expanding sidebar
   useEffect(() => {
@@ -1872,7 +1954,7 @@ export default function Room() {
   const handleQueueAdd = async (playNow = false) => {
     const resolved = await resolveMediaUrl(queueInput);
     if (!resolved) {
-      toast("Paste a valid YouTube or PH link");
+      toast("Paste a valid video or embed link");
       return;
     }
     const socket = getSocket();
@@ -1890,6 +1972,8 @@ export default function Room() {
       videoId: resolved.videoId,
       embedUrl: resolved.embedUrl,
       url: resolved.url,
+      audioUrl: resolved.audioUrl,
+      subtitleUrl: resolved.subtitleUrl,
       viewkey: resolved.viewkey,
       title,
       platform: resolved.platform,
@@ -1898,6 +1982,45 @@ export default function Room() {
       setQueueLoading(false);
     });
     setQueueInput('');
+    setQueueLoading(false);
+  };
+
+  const handleCustomStreamAdd = async (playNow = false) => {
+    if (!customVideoUrl.trim()) {
+      toast("Please enter a Video Stream URL");
+      return;
+    }
+    const resolved = await resolveMediaUrl({
+      videoUrl: customVideoUrl.trim(),
+      audioUrl: customAudioUrl.trim() || null,
+      subtitleUrl: customSubtitleUrl.trim() || null,
+      title: 'Custom Stream',
+    });
+    if (!resolved) {
+      toast("Invalid stream URL");
+      return;
+    }
+    const socket = getSocket();
+    if (!socket.connected) return;
+    setQueueLoading(true);
+
+    socket.emit('queue-add', {
+      type: resolved.type,
+      videoId: resolved.videoId,
+      embedUrl: resolved.embedUrl,
+      url: resolved.url,
+      audioUrl: resolved.audioUrl,
+      subtitleUrl: resolved.subtitleUrl,
+      viewkey: resolved.viewkey,
+      title: resolved.title,
+      platform: resolved.platform,
+      playNow,
+    }, () => {
+      setQueueLoading(false);
+    });
+    setCustomVideoUrl('');
+    setCustomAudioUrl('');
+    setCustomSubtitleUrl('');
     setQueueLoading(false);
   };
 
@@ -3373,32 +3496,101 @@ export default function Room() {
                 </div>
               ) : (
                 <div className="queue-add-box">
-                  <input
-                    type="text"
-                    className="queue-input"
-                    placeholder="Paste YouTube or PH link…"
-                    value={queueInput}
-                    onChange={(e) => setQueueInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleQueueAdd(false); }}
-                  />
-                  <div className="queue-add-actions">
-                    <button
-                      type="button"
-                      className="btn primary sm"
-                      onClick={() => handleQueueAdd(false)}
-                      disabled={queueLoading || !queueInput.trim()}
-                    >
-                      + Queue
-                    </button>
-                    <button
-                      type="button"
-                      className="btn ghost sm"
-                      onClick={() => handleQueueAdd(true)}
-                      disabled={queueLoading || !queueInput.trim()}
-                    >
-                      ▶ Play Now
-                    </button>
-                  </div>
+                  {!customSplitMode ? (
+                    <>
+                      <input
+                        type="text"
+                        className="queue-input"
+                        placeholder="Paste YouTube, PH, NetMirror, or direct video URL…"
+                        value={queueInput}
+                        onChange={(e) => setQueueInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleQueueAdd(false); }}
+                      />
+                      <div className="queue-add-actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          className="btn ghost xs"
+                          style={{ fontSize: '11px', color: 'var(--dim)', padding: '4px 6px' }}
+                          onClick={() => setCustomSplitMode(true)}
+                        >
+                          ⚡ Split Video / Audio / Subs
+                        </button>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button
+                            type="button"
+                            className="btn primary sm"
+                            onClick={() => handleQueueAdd(false)}
+                            disabled={queueLoading || !queueInput.trim()}
+                          >
+                            + Queue
+                          </button>
+                          <button
+                            type="button"
+                            className="btn ghost sm"
+                            onClick={() => handleQueueAdd(true)}
+                            disabled={queueLoading || !queueInput.trim()}
+                          >
+                            ▶ Play Now
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                          Custom Video + Audio + Subs
+                        </span>
+                        <button
+                          type="button"
+                          className="btn ghost xs"
+                          style={{ fontSize: '11px', color: 'var(--dim)', padding: '2px 6px' }}
+                          onClick={() => setCustomSplitMode(false)}
+                        >
+                          ← Simple Mode
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        className="queue-input"
+                        placeholder="🎬 Video URL (.m3u8, .mp4, CDN link) *"
+                        value={customVideoUrl}
+                        onChange={(e) => setCustomVideoUrl(e.target.value)}
+                      />
+                      <input
+                        type="text"
+                        className="queue-input"
+                        placeholder="🎧 Audio Track URL (Optional: .m3u8, .aac)"
+                        value={customAudioUrl}
+                        onChange={(e) => setCustomAudioUrl(e.target.value)}
+                      />
+                      <input
+                        type="text"
+                        className="queue-input"
+                        placeholder="💬 Subtitles URL (Optional: .vtt, .srt)"
+                        value={customSubtitleUrl}
+                        onChange={(e) => setCustomSubtitleUrl(e.target.value)}
+                      />
+                      <div className="queue-add-actions" style={{ justifyContent: 'flex-end', gap: '6px' }}>
+                        <button
+                          type="button"
+                          className="btn primary sm"
+                          onClick={() => handleCustomStreamAdd(false)}
+                          disabled={queueLoading || !customVideoUrl.trim()}
+                        >
+                          + Queue
+                        </button>
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          onClick={() => handleCustomStreamAdd(true)}
+                          disabled={queueLoading || !customVideoUrl.trim()}
+                        >
+                          ▶ Play Now
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
