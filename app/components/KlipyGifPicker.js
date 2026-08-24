@@ -81,11 +81,6 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
             </button>
           )}
         </div>
-        {onClose && (
-          <button type="button" className="tgp-close-btn" onClick={onClose} title="Close GIF picker">
-            ✕
-          </button>
-        )}
       </div>
 
       <div className="tgp-grid-container">

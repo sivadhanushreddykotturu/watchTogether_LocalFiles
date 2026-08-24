@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import AppleEmojiPicker from '../../components/AppleEmojiPicker';
-import TenorGifPicker from '../../components/TenorGifPicker';
+import KlipyGifPicker from '../../components/KlipyGifPicker';
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
@@ -3064,7 +3064,7 @@ export default function Room() {
 
               {gifPickerOpen && (
                 <div className="gif-picker-popover" ref={gifPickerRef}>
-                  <TenorGifPicker
+                  <KlipyGifPicker
                     onSelectGif={handleSendGif}
                     onClose={() => setGifPickerOpen(false)}
                   />
