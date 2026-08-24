@@ -18,18 +18,31 @@ const urlModule = require('url');
 
 function handleHlsProxy(req, res, defaultReferer = '') {
   const parsed = urlModule.parse(req.url, true);
-  const targetUrl = parsed.query.url;
+  let targetUrl = parsed.query.url;
   if (!targetUrl) {
     res.writeHead(400, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
     res.end('Missing url parameter');
     return;
   }
 
+  // Re-attach any sub-query parameters that were parsed separately (e.g. &in=..., &q=...)
+  const nonTargetKeys = ['url', 'referer'];
+  const extraParams = [];
+  for (const [k, v] of Object.entries(parsed.query)) {
+    if (!nonTargetKeys.includes(k) && typeof v === 'string') {
+      extraParams.push(`${k}=${v}`);
+    }
+  }
+  if (extraParams.length > 0) {
+    const sep = targetUrl.includes('?') ? '&' : '?';
+    targetUrl += sep + extraParams.join('&');
+  }
+
   let referer = parsed.query.referer || defaultReferer;
   if (!referer) {
     if (targetUrl.includes('pornhub.com') || targetUrl.includes('phncdn.com')) {
       referer = 'https://www.pornhub.com/';
-    } else if (targetUrl.includes('net52.cc') || targetUrl.includes('makhi4.top') || targetUrl.includes('netmirror')) {
+    } else if (targetUrl.includes('net52.cc') || targetUrl.includes('makhi4.top') || targetUrl.includes('netmirror') || targetUrl.includes('nm-cdn')) {
       referer = 'https://net52.cc/';
     }
   }
