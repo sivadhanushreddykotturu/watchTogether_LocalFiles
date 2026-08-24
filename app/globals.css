@@ -2871,11 +2871,42 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   }
 }
 
+.search-platform-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px 0;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.search-platform-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dim);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.search-platform-tab:hover {
+  color: var(--ink);
+}
+
+.search-platform-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
 .yt-search-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px 20px;
+  padding: 14px 20px 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.02);
 }

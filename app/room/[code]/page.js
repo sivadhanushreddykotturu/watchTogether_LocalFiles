@@ -8,7 +8,7 @@ import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
-import { parseMediaUrl, resolveMediaUrl } from '../../../lib/mediaEmbeds';
+import { parseMediaUrl, resolveMediaUrl, searchPornhub } from '../../../lib/mediaEmbeds';
 import { VoiceSession } from '../../../lib/voice';
 import Hls from 'hls.js';
 
@@ -72,6 +72,7 @@ export default function Room() {
   const [ytPanelOpen, setYtPanelOpen] = useState(false);
   const [ytUrl, setYtUrl] = useState('');
   const [ytSearchModalOpen, setYtSearchModalOpen] = useState(false);
+  const [searchPlatform, setSearchPlatform] = useState('youtube'); // 'youtube' | 'ph'
   const [ytSearchQuery, setYtSearchQuery] = useState('');
   const [ytSearchResults, setYtSearchResults] = useState([]);
   const [ytSearching, setYtSearching] = useState(false);
@@ -2001,8 +2002,9 @@ export default function Room() {
     setYtPanelOpen(false);
   };
 
-  const executeSearch = async (queryText) => {
+  const executeSearch = async (queryText, platformOverride) => {
     const q = String(queryText || '').trim();
+    const platform = platformOverride || searchPlatform;
     if (!q) {
       setYtSearchResults([]);
       setYtSearching(false);
@@ -2016,7 +2018,12 @@ export default function Room() {
     setYtSearching(true);
     setYtSearchError('');
     try {
-      const results = await searchYouTube(q, ctrl.signal);
+      let results = [];
+      if (platform === 'ph') {
+        results = await searchPornhub(q, ctrl.signal);
+      } else {
+        results = await searchYouTube(q, ctrl.signal);
+      }
       if (!ctrl.signal.aborted) {
         setYtSearchResults(results);
         setYtSearching(false);
@@ -2042,10 +2049,36 @@ export default function Room() {
     }, 450);
   };
 
-  const handleSelectSearchResult = (item, playNow = true) => {
-    if (!item || !item.id) return;
+  const handleSelectSearchResult = async (item, playNow = true) => {
+    if (!item || (!item.id && !item.viewkey)) return;
     const socket = getSocket();
     if (!socket.connected) return;
+
+    if (searchPlatform === 'ph' || item.platform === 'PH' || item.viewkey) {
+      const phKey = item.viewkey || item.id;
+      const targetUrl = item.url || item.embedUrl || `https://www.pornhub.com/view_video.php?viewkey=${phKey}`;
+      const resolved = await resolveMediaUrl(targetUrl);
+      const payload = resolved || {
+        type: 'ph',
+        viewkey: phKey,
+        embedUrl: `https://www.pornhub.org/embed/${phKey}`,
+        title: item.title,
+        poster: item.thumbnail,
+        platform: 'PH',
+      };
+
+      if (playNow) {
+        socket.emit('source', { ...payload, playing: true });
+        toast(`Playing "${item.title}"`);
+        setYtSearchModalOpen(false);
+        setYtPanelOpen(false);
+      } else {
+        socket.emit('queue-add', { ...payload, playNow: false });
+        toast(`Added "${item.title}" to queue`);
+      }
+      return;
+    }
+
     if (playNow) {
       socket.emit('source', { type: 'youtube', videoId: item.id, title: item.title, playing: true });
       toast(`Playing "${item.title}"`);
@@ -2787,7 +2820,7 @@ export default function Room() {
                       }}
                     >
                       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-                      Search YouTube Videos
+                      Search Videos (YouTube / PH)
                     </button>
                   </div>
                   <div className="sub-row">
@@ -3326,7 +3359,7 @@ export default function Room() {
                   onClick={() => setQueueTabMode('search')}
                 >
                   <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-                  Search YouTube
+                  Search Videos
                 </button>
                 <button
                   type="button"
@@ -3591,6 +3624,29 @@ export default function Room() {
       {ytSearchModalOpen && (
         <div className="yt-search-modal-backdrop" onClick={() => setYtSearchModalOpen(false)}>
           <div className="yt-search-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="search-platform-tabs">
+              <button
+                type="button"
+                className={'search-platform-tab' + (searchPlatform === 'youtube' ? ' active' : '')}
+                onClick={() => {
+                  setSearchPlatform('youtube');
+                  if (ytSearchQuery) executeSearch(ytSearchQuery, 'youtube');
+                }}
+              >
+                <span className="tab-icon">🔴</span> YouTube
+              </button>
+              <button
+                type="button"
+                className={'search-platform-tab' + (searchPlatform === 'ph' ? ' active' : '')}
+                onClick={() => {
+                  setSearchPlatform('ph');
+                  if (ytSearchQuery) executeSearch(ytSearchQuery, 'ph');
+                }}
+              >
+                <span className="tab-icon">🔞</span> Pornhub
+              </button>
+            </div>
+
             <div className="yt-search-header">
               <div className="yt-search-input-wrap">
                 <svg className="yt-search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
@@ -3600,7 +3656,7 @@ export default function Room() {
                 <input
                   type="text"
                   className="yt-search-input"
-                  placeholder="Search YouTube videos (e.g. songs, trailers, podcasts)..."
+                  placeholder={searchPlatform === 'ph' ? 'Search Pornhub videos by title or tags…' : 'Search YouTube videos (e.g. songs, trailers, podcasts)…'}
                   value={ytSearchQuery}
                   autoFocus
                   onChange={(e) => handleSearchInputChange(e.target.value)}
@@ -3628,7 +3684,10 @@ export default function Room() {
             {!ytSearchQuery && (
               <div className="yt-search-suggestions">
                 <span className="yt-sug-label">Popular topics:</span>
-                {['Lofi Hip Hop', 'Synthwave', 'Movie Trailers', 'Chill Beats', 'Podcasts', 'Gaming', 'Top Music Hits'].map((tag) => (
+                {(searchPlatform === 'ph'
+                  ? ['Trending', 'Popular With Women', 'Japanese', 'Anime', 'VR', '4K', 'Cosplay']
+                  : ['Lofi Hip Hop', 'Synthwave', 'Movie Trailers', 'Chill Beats', 'Podcasts', 'Gaming', 'Top Music Hits']
+                ).map((tag) => (
                   <button
                     key={tag}
                     type="button"
@@ -3648,7 +3707,7 @@ export default function Room() {
               {ytSearching && ytSearchResults.length === 0 ? (
                 <div className="yt-search-loading-state">
                   <div className="yt-search-spinner-lg" />
-                  <p>Searching YouTube...</p>
+                  <p>{searchPlatform === 'ph' ? 'Searching Pornhub...' : 'Searching YouTube...'}</p>
                 </div>
               ) : ytSearchError ? (
                 <div className="yt-search-error-state">
@@ -3658,7 +3717,7 @@ export default function Room() {
               ) : ytSearchResults.length > 0 ? (
                 <div className="yt-search-grid">
                   {ytSearchResults.map((video) => (
-                    <div key={video.id} className="yt-card">
+                    <div key={video.id || video.viewkey} className="yt-card">
                       <div className="yt-card-thumb-wrap">
                         <img src={video.thumbnail} alt={video.title} className="yt-card-thumb" />
                         {video.duration && <span className="yt-card-duration">{video.duration}</span>}
@@ -3666,8 +3725,8 @@ export default function Room() {
                       <div className="yt-card-info">
                         <div className="yt-card-title" title={video.title}>{video.title}</div>
                         <div className="yt-card-meta">
-                          <span className="yt-card-author">{video.author}</span>
-                          {video.views && <span className="yt-card-views"> · {video.views}</span>}
+                          {video.author && <span className="yt-card-author">{video.author}</span>}
+                          {video.views && <span className="yt-card-views">{video.author ? ' · ' : ''}{video.views}</span>}
                         </div>
                         <div className="yt-card-actions">
                           <button
@@ -3698,14 +3757,14 @@ export default function Room() {
                     <path d="M21 21l-4.35-4.35" />
                   </svg>
                   <p>No results found for &ldquo;{ytSearchQuery}&rdquo;</p>
-                  <span>Try another search query or paste a direct YouTube link in the URL tab.</span>
+                  <span>Try another search query or paste a direct video link in the URL box.</span>
                 </div>
               ) : (
                 <div className="yt-search-placeholder-state">
                   <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor">
                     <path d="M22 12s0-3.3-.42-4.8a2.5 2.5 0 0 0-1.76-1.77C18.25 5 12 5 12 5s-6.25 0-7.82.43A2.5 2.5 0 0 0 2.42 7.2C2 8.7 2 12 2 12s0 3.3.42 4.8c.23.86.9 1.53 1.76 1.77C5.75 19 12 19 12 19s6.25 0 7.82-.43a2.5 2.5 0 0 0 1.76-1.77C22 15.3 22 12 22 12zM10 15.5v-7l6 3.5-6 3.5z" />
                   </svg>
-                  <p>Search YouTube to watch videos together</p>
+                  <p>Search {searchPlatform === 'ph' ? 'Pornhub' : 'YouTube'} to watch videos together</p>
                   <span>Type a search query above or pick one of the popular topics to get started.</span>
                 </div>
               )}
