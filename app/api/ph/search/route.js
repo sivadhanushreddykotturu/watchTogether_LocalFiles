@@ -34,12 +34,13 @@ function parsePornhubSearchHtml(html) {
       continue;
     }
 
-    const thumbMatch = snippet.match(/data-src="([^"]+)"/i)
-      || snippet.match(/data-thumb_url="([^"]+)"/i)
-      || snippet.match(/data-mediumthumb="([^"]+)"/i)
-      || snippet.match(/src="(https:\/\/[^"]*phncdn[^"]+)"/i);
-    const rawThumb = thumbMatch ? thumbMatch[1] : `https://ci.phncdn.com/videos/${vkey}/default.jpg`;
-    const thumbnail = `/api/ph/thumb?url=${encodeURIComponent(rawThumb)}`;
+    // Extract real image CDN URL (ei.phncdn.com, di.phncdn.com, etc.)
+    const thumbUrlMatch = snippet.match(/https?:\/\/[a-zA-Z0-9.-]*phncdn\.com\/[^"'\s<>]+\.(?:jpg|jpeg|webp|png)(?:\?[^"'\s<>]*)?/i);
+    let rawThumb = thumbUrlMatch ? thumbUrlMatch[0] : '';
+    if (rawThumb.includes('ci.phncdn.com')) {
+      rawThumb = rawThumb.replace('ci.phncdn.com', 'ei.phncdn.com');
+    }
+    const thumbnail = rawThumb ? `/api/ph/thumb?url=${encodeURIComponent(rawThumb)}` : '';
 
     const durationMatch = snippet.match(/<var class="duration">([^<]+)<\/var>/i) || snippet.match(/<var[^>]*>([^<]+)<\/var>/i);
     const duration = durationMatch ? cleanText(durationMatch[1]) : '';
