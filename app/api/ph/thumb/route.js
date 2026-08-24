@@ -14,19 +14,18 @@ export async function GET(request) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': 'https://www.pornhub.com/',
         'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-        'Cookie': 'accessAgeDisclaimerPH=1; platform=pc;'
-      },
-      next: { revalidate: 86400 } // Cache images for 24 hours
+      }
     });
 
     if (!res.ok) {
-      return new Response('Failed to load image', { status: res.status });
+      return new Response(`Failed to load image: upstream status ${res.status}`, { status: res.status });
     }
 
     const contentType = res.headers.get('content-type') || 'image/jpeg';
     const buffer = await res.arrayBuffer();
 
     return new Response(buffer, {
+      status: 200,
       headers: {
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',
@@ -35,6 +34,6 @@ export async function GET(request) {
     });
   } catch (err) {
     console.error('Thumbnail proxy error:', err);
-    return new Response('Thumbnail proxy error', { status: 500 });
+    return new Response(`Thumbnail error: ${err.message}`, { status: 500 });
   }
 }

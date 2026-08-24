@@ -61,7 +61,7 @@ function handleHlsProxy(req, res, defaultReferer = '') {
     upstreamHeaders['CF-Connecting-IP'] = clientIp;
   }
   if (referer) upstreamHeaders['Referer'] = referer;
-  if (referer && referer.includes('pornhub')) {
+  if (referer && referer.includes('pornhub') && !targetUrl.includes('phncdn.com')) {
     upstreamHeaders['Cookie'] = 'accessAgeDisclaimerPH=1; age_verified=1;';
   }
 
