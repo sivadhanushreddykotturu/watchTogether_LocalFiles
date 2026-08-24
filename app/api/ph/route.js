@@ -60,10 +60,10 @@ export async function GET(request) {
       viewkey,
       title,
       duration,
-      hlsUrl: bestStream.videoUrl,
+      hlsUrl: `/api/ph/stream?url=${encodeURIComponent(bestStream.videoUrl)}`,
       qualities: hlsItems.map((m) => ({
         quality: String(m.quality || m.height || 'Auto'),
-        url: m.videoUrl,
+        url: `/api/ph/stream?url=${encodeURIComponent(m.videoUrl)}`,
       })),
       platform: 'PH',
     });
