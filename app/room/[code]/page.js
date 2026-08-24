@@ -1406,6 +1406,11 @@ export default function Room() {
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
+          startLevel: -1,
+          capLevelToPlayerSize: true,
+          maxBufferLength: 20,
+          maxMaxBufferLength: 40,
+          maxBufferSize: 30 * 1000 * 1000,
         });
         hls.loadSource(source.url);
         hls.attachMedia(video);
