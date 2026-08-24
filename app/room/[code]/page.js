@@ -1401,8 +1401,6 @@ export default function Room() {
     if (source?.type === 'hls' && source.url) {
       setPlayDisabled(false);
       fileLoadedRef.current = true;
-      fileIdentityRef.current = source.url;
-      hasLocalFileRef.current = true;
 
       if (typeof window !== 'undefined' && Hls && Hls.isSupported()) {
         const hls = new Hls({
@@ -1466,8 +1464,6 @@ export default function Room() {
     if (source?.type === 'direct' && source.url) {
       setPlayDisabled(false);
       fileLoadedRef.current = true;
-      fileIdentityRef.current = source.url;
-      hasLocalFileRef.current = true;
       video.src = source.url;
       if (latestStateRef.current.time) {
         video.currentTime = latestStateRef.current.time;
