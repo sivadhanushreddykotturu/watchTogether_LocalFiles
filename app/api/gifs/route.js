@@ -45,14 +45,14 @@ export async function GET(request) {
       }
 
       const searchTerm = q || 'trending';
-      const endpoint = `https://api.redgifs.com/v2/gifs/search?search_text=${encodeURIComponent(searchTerm)}&count=30&order=trending`;
+      const endpoint = `https://api.redgifs.com/v2/gifs/search?search_text=${encodeURIComponent(searchTerm)}&count=30`;
 
       const res = await fetch(endpoint, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         },
-        next: { revalidate: 60 }
+        cache: 'no-store'
       });
 
       if (!res.ok) {

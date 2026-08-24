@@ -11,8 +11,13 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
   const [needsKey, setNeedsKey] = useState(false);
   const searchTimeoutRef = useRef(null);
   const containerRef = useRef(null);
+  const providerRef = useRef(provider);
 
-  const fetchGifs = async (searchQuery, activeProvider = provider) => {
+  useEffect(() => {
+    providerRef.current = provider;
+  }, [provider]);
+
+  const fetchGifs = async (searchQuery, activeProvider = providerRef.current) => {
     setLoading(true);
     setError('');
     try {
@@ -46,6 +51,7 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
   const handleProviderSwitch = (p) => {
     if (p === provider) return;
     setProvider(p);
+    providerRef.current = p;
     setGifs([]);
     setError('');
     fetchGifs(query, p);
@@ -56,8 +62,14 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
     setQuery(val);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {
-      fetchGifs(val, provider);
-    }, 350);
+      fetchGifs(val, providerRef.current);
+    }, 280);
+  };
+
+  const handleSearchSubmit = (e) => {
+    e.preventDefault();
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    fetchGifs(query, providerRef.current);
   };
 
   return (
@@ -80,7 +92,7 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
       </div>
 
       <div className="tgp-head">
-        <div className="tgp-search-wrap">
+        <form className="tgp-search-wrap" onSubmit={handleSearchSubmit}>
           <svg className="tgp-search-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2">
             <circle cx="11" cy="11" r="8" />
             <path d="M21 21l-4.35-4.35" strokeLinecap="round" />
@@ -93,7 +105,30 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
             onChange={handleSearchChange}
             autoFocus
           />
-        </div>
+          {query && (
+            <button
+              type="button"
+              className="tgp-clear-search-btn"
+              onClick={() => {
+                setQuery('');
+                fetchGifs('', providerRef.current);
+              }}
+              title="Clear search"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--dim)',
+                cursor: 'pointer',
+                fontSize: '12px',
+                padding: '0 4px',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+            >
+              ✕
+            </button>
+          )}
+        </form>
         {onClose && (
           <button
             type="button"
