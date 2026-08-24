@@ -131,8 +131,6 @@ export default function Room() {
   const [hlsAudioTracks, setHlsAudioTracks] = useState([]);
   const [currentAudioTrack, setCurrentAudioTrack] = useState(-1);
   const [audioPanelOpen, setAudioPanelOpen] = useState(false);
-  const [streamExpiredOpen, setStreamExpiredOpen] = useState(false);
-  const [renewStreamUrl, setRenewStreamUrl] = useState('');
   const [zoom, setZoom] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zoomUiVisible, setZoomUiVisible] = useState(false);
@@ -428,27 +426,6 @@ export default function Room() {
     const track = hlsAudioTracks.find((t) => t.id === trackId);
     toast(`Audio Language: ${track?.name || track?.lang || 'Track ' + (trackId + 1)}`);
     setAudioPanelOpen(false);
-  };
-
-  // ---------- stream renewal on token expiry ----------
-  const handleRenewStream = async (e) => {
-    if (e) e.preventDefault();
-    if (!renewStreamUrl.trim()) return;
-    const resolved = await resolveMediaUrl(renewStreamUrl.trim());
-    if (resolved) {
-      const currentTime = currentTimeAny();
-      setStreamExpiredOpen(false);
-      setRenewStreamUrl('');
-      const socket = getSocket();
-      socket.emit('source', resolved);
-      toast('Stream renewed!');
-      setTimeout(() => {
-        socket.emit('playback', { action: 'seek', time: currentTime });
-        if (latestStateRef.current.playing) {
-          socket.emit('playback', { action: 'play', time: currentTime });
-        }
-      }, 600);
-    }
   };
 
   // ---------- live emoji reactions ----------
@@ -1511,11 +1488,6 @@ export default function Room() {
           setCurrentAudioTrack(data.id);
         });
         hls.on(Hls.Events.ERROR, (event, data) => {
-          if (data.response && (data.response.code === 403 || data.response.code === 401)) {
-            console.warn('Stream token expired (403):', data);
-            setStreamExpiredOpen(true);
-            return;
-          }
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
@@ -1529,7 +1501,7 @@ export default function Room() {
               default:
                 console.warn('HLS Fatal error:', data);
                 hls.destroy();
-                setStreamExpiredOpen(true);
+                toast('Could not load stream');
                 break;
             }
           }
@@ -2886,31 +2858,6 @@ export default function Room() {
               </>
             )}
 
-            {streamExpiredOpen && (
-              <div className="stream-expired-modal-overlay">
-                <div className="stream-expired-card">
-                  <div className="sec-icon">⚠️</div>
-                  <h3 style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: '700' }}>Stream Link Expired</h3>
-                  <p style={{ margin: '0 0 16px', fontSize: '13px', color: 'var(--dim)', lineHeight: '1.4' }}>
-                    The temporary CDN token for this stream ended. Paste the updated link below to resume watching at the exact same second.
-                  </p>
-                  <form onSubmit={handleRenewStream} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <input
-                      type="text"
-                      className="yt-url"
-                      placeholder="Paste refreshed stream link…"
-                      value={renewStreamUrl}
-                      onChange={(e) => setRenewStreamUrl(e.target.value)}
-                      autoFocus
-                    />
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                      <button type="button" className="btn ghost sm" onClick={() => setStreamExpiredOpen(false)}>Dismiss</button>
-                      <button type="submit" className="btn primary sm" disabled={!renewStreamUrl.trim()}>Resume Playback</button>
-                    </div>
-                  </form>
-                </div>
-              </div>
-            )}
             <div className="transport">
               <button className="t-btn" onClick={togglePlay} disabled={playDisabled && source?.type !== 'youtube' && source?.type !== 'hls' && source?.type !== 'direct'} title="Play / pause (space)">
                 {playing ? (
