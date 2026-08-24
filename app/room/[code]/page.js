@@ -3116,7 +3116,7 @@ export default function Room() {
                     setGifPickerOpen((v) => !v);
                     setEmojiPickerOpen(false);
                   }}
-                  title="Search & Send GIFs (Google Tenor)"
+                  title="Search & Send GIFs (KLIPY)"
                   style={{ fontWeight: '800', fontSize: '11px', letterSpacing: '0.04em' }}
                 >
                   GIF
