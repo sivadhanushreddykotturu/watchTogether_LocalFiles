@@ -1458,7 +1458,6 @@ export default function Room() {
     setCurrentHlsQuality(-1);
     setHlsAudioTracks([]);
     setCurrentAudioTrack(-1);
-    setStreamExpiredOpen(false);
 
     if (source?.type === 'hls' && source.url) {
       setPlayDisabled(false);
