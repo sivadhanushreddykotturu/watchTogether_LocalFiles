@@ -1517,18 +1517,17 @@ export default function Room() {
             return;
           }
           if (data.fatal) {
-            if (data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR || data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT) {
-              setStreamExpiredOpen(true);
-              return;
-            }
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
+                console.warn('HLS Network error, attempting recovery...', data);
                 hls.startLoad();
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
+                console.warn('HLS Media error, attempting recovery...', data);
                 hls.recoverMediaError();
                 break;
               default:
+                console.warn('HLS Fatal error:', data);
                 hls.destroy();
                 setStreamExpiredOpen(true);
                 break;
