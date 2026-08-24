@@ -452,11 +452,14 @@ export default function Room() {
     addReactionBubble(emoji);
   };
 
-  // ---------- timestamp jump in chat ----------
   const seekToSeconds = (seconds) => {
     const v = videoRef.current;
     if (!v || !fileLoadedRef.current) return;
-    v.currentTime = Math.min(v.duration || seconds, Math.max(0, seconds));
+    const target = Math.min(v.duration || seconds, Math.max(0, seconds));
+    lastLocalSeekRef.current = Date.now();
+    latestStateRef.current.time = target;
+    v.currentTime = target;
+    if (hlsRef.current) { try { hlsRef.current.startLoad(target); } catch {} }
     emitPlayback('seek');
     toast(`Jumped to ${fmt(seconds)}`);
   };
@@ -744,7 +747,7 @@ export default function Room() {
         const cur = yt.getCurrentTime();
         const drift = expected - cur;
 
-        if (playing && ytPlayingRef.current && !ytStallRef.current && Math.abs(drift) > 2.0 && Date.now() - lastLocalSeekRef.current > 2000) {
+        if (playing && ytPlayingRef.current && !ytStallRef.current && Math.abs(drift) > 2.0 && Date.now() - lastLocalSeekRef.current > 4000) {
           guardRef.current.seek++;
           yt.seekTo(expected, true);
         } else if (playing && !ytPlayingRef.current && Date.now() - lastLocalPauseRef.current > 5000) {
@@ -756,12 +759,14 @@ export default function Room() {
 
     const video = videoRef.current;
     if ((!fileLoadedRef.current && !sourceRef.current?.url) || !video || !socket.connected) return;
+    if (video.seeking) return; // Do not drift correct while hardware/network seek is in progress
+
     socket.emit('time-update', video.currentTime, ({ expected, playing } = {}) => {
       if (typeof expected !== 'number') return;
       setStateLatest(playing, expected);
       const drift = expected - video.currentTime;
 
-      if (playing && !video.paused && Math.abs(drift) > 2.0 && Date.now() - lastLocalSeekRef.current > 2000) {
+      if (playing && !video.paused && !video.seeking && Math.abs(drift) > 2.0 && Date.now() - lastLocalSeekRef.current > 4000) {
         guardRef.current.seek++;
         video.currentTime = expected;
         if (extAudioRef.current && extAudioRef.current.src) {
@@ -1230,21 +1235,29 @@ export default function Room() {
       }
       if (e.code === 'ArrowRight') {
         userIntentRef.current = true;
+        lastLocalSeekRef.current = Date.now();
         const target = Math.min(v.duration || 0, v.currentTime + 5);
+        latestStateRef.current.time = target;
         v.currentTime = target;
+        if (hlsRef.current) { try { hlsRef.current.startLoad(target); } catch {} }
         if (extAudioRef.current && extAudioRef.current.src) {
           extAudioRef.current.currentTime = target;
           if (!v.paused) extAudioRef.current.play().catch(() => {});
         }
+        emitPlayback('seek');
       }
       if (e.code === 'ArrowLeft') {
         userIntentRef.current = true;
+        lastLocalSeekRef.current = Date.now();
         const target = Math.max(0, v.currentTime - 5);
+        latestStateRef.current.time = target;
         v.currentTime = target;
+        if (hlsRef.current) { try { hlsRef.current.startLoad(target); } catch {} }
         if (extAudioRef.current && extAudioRef.current.src) {
           extAudioRef.current.currentTime = target;
           if (!v.paused) extAudioRef.current.play().catch(() => {});
         }
+        emitPlayback('seek');
       }
       const subStep = e.shiftKey ? 500 : 50; // VLC: G/H nudge subtitle delay
       if (e.code === 'KeyG') nudgeSubtitles(-subStep);
@@ -1440,9 +1453,15 @@ export default function Room() {
           lowLatencyMode: false,
           startLevel: -1,
           capLevelToPlayerSize: true,
-          maxBufferLength: 20,
-          maxMaxBufferLength: 40,
-          maxBufferSize: 30 * 1000 * 1000,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+          maxBufferSize: 60 * 1000 * 1000,
+          maxBufferHole: 0.5,
+          maxFragLookUpTolerance: 0.3,
+          nudgeOffset: 0.2,
+          nudgeMaxRetry: 10,
+          autoStartLoad: true,
+          startFragPrefetch: true,
         });
         hls.loadSource(source.url);
         hls.attachMedia(video);
@@ -1859,15 +1878,22 @@ export default function Room() {
     headRef.current.style.left = ratio * 100 + '%';
     curRef.current.textContent = fmt(t);
     if (commit) {
+      lastLocalSeekRef.current = Date.now();
+      latestStateRef.current.time = t;
       if (ytMode()) {
-        ytRef.current.seekTo(t, true); // poll detects the jump -> broadcast
+        ytRef.current.seekTo(t, true);
+        emitPlayback('seek');
       } else {
         const v = videoRef.current;
-        v.currentTime = t; // fires 'seeked' once -> broadcast
+        v.currentTime = t;
+        if (hlsRef.current) {
+          try { hlsRef.current.startLoad(t); } catch {}
+        }
         if (extAudioRef.current && extAudioRef.current.src) {
           extAudioRef.current.currentTime = t;
           if (!v.paused) extAudioRef.current.play().catch(() => {});
         }
+        emitPlayback('seek');
       }
     }
   };
