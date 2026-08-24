@@ -3691,23 +3691,23 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 .chat-gif-wrap {
   margin-top: 4px;
   width: fit-content;
-  max-width: 140px !important;
-  max-height: 95px !important;
-  border-radius: 8px;
+  max-width: 220px;
+  max-height: 175px;
+  border-radius: 10px;
   overflow: hidden;
   background: var(--surface-2);
   border: 1px solid var(--border-subtle);
-  display: flex;
+  display: inline-flex;
 }
 
 .chat-gif-img {
   display: block;
-  width: 140px !important;
-  max-width: 140px !important;
-  height: 95px !important;
-  max-height: 95px !important;
-  object-fit: cover;
-  border-radius: 8px;
+  max-width: 220px;
+  max-height: 175px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 10px;
 }
 
 /* Stream Expired Modal Overlay */

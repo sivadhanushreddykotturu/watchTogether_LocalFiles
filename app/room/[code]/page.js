@@ -484,7 +484,7 @@ export default function Room() {
       const isMp4 = trimmed.includes('.mp4') || trimmed.includes('redgifs') || trimmed.includes('/api/proxy/hls');
       if (isMp4) {
         return (
-          <div className="chat-gif-wrap" style={{ maxWidth: '140px', maxHeight: '95px', borderRadius: '8px', overflow: 'hidden', display: 'flex', marginTop: '4px' }}>
+          <div className="chat-gif-wrap" style={{ maxWidth: '220px', maxHeight: '175px', borderRadius: '10px', overflow: 'hidden', display: 'inline-flex', marginTop: '4px' }}>
             <video
               src={trimmed}
               autoPlay
@@ -492,13 +492,13 @@ export default function Room() {
               muted
               playsInline
               className="chat-gif-img"
-              style={{ width: '140px', height: '95px', objectFit: 'cover', borderRadius: '8px', display: 'block' }}
+              style={{ maxWidth: '220px', maxHeight: '175px', width: 'auto', height: 'auto', objectFit: 'contain', borderRadius: '10px', display: 'block' }}
             />
           </div>
         );
       }
       return (
-        <div className="chat-gif-wrap" style={{ maxWidth: '140px', maxHeight: '95px', borderRadius: '8px', overflow: 'hidden', display: 'flex', marginTop: '4px' }}>
+        <div className="chat-gif-wrap" style={{ maxWidth: '220px', maxHeight: '175px', borderRadius: '10px', overflow: 'hidden', display: 'inline-flex', marginTop: '4px' }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={trimmed}
@@ -506,7 +506,7 @@ export default function Room() {
             className="chat-gif-img"
             referrerPolicy="no-referrer"
             loading="lazy"
-            style={{ width: '140px', height: '95px', objectFit: 'cover', borderRadius: '8px', display: 'block' }}
+            style={{ maxWidth: '220px', maxHeight: '175px', width: 'auto', height: 'auto', objectFit: 'contain', borderRadius: '10px', display: 'block' }}
           />
         </div>
       );
