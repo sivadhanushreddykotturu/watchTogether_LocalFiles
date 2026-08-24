@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import AppleEmojiPicker from '../../components/AppleEmojiPicker';
+import TenorGifPicker from '../../components/TenorGifPicker';
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
@@ -107,6 +108,8 @@ export default function Room() {
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [emojiTarget, setEmojiTarget] = useState('react'); // 'react' | 'chat'
   const emojiPickerRef = useRef(null);
+  const [gifPickerOpen, setGifPickerOpen] = useState(false);
+  const gifPickerRef = useRef(null);
   const [speed, setSpeed] = useState(1);
   const [volume, setVolume] = useState(1);
   const [danmakuEnabled, setDanmakuEnabled] = useState(false);
@@ -444,10 +447,30 @@ export default function Room() {
     toast(`Jumped to ${fmt(seconds)}`);
   };
 
-  const renderChatText = (text) => {
+  const isGifUrl = (str) => {
+    if (typeof str !== 'string') return false;
+    const s = str.trim();
+    return (
+      (s.startsWith('http://') || s.startsWith('https://')) &&
+      (s.includes('tenor.com') || s.includes('giphy.com') || s.includes('klipy') || /\.(gif|webp)(\?|$)/i.test(s))
+    );
+  };
+
+  const renderChatText = (text, isSnippet = false) => {
     if (!text) return '';
 
     const trimmed = text.trim();
+    if (isGifUrl(trimmed)) {
+      if (isSnippet) {
+        return <span style={{ fontStyle: 'italic', opacity: 0.9 }}>🎬 [GIF]</span>;
+      }
+      return (
+        <div className="chat-gif-wrap">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={trimmed} alt="GIF" className="chat-gif-img" loading="lazy" />
+        </div>
+      );
+    }
     // Check if message is exclusively emojis (1 to 5 emojis)
     const emojiMatchArr = trimmed.match(/(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)/gu) || [];
     const textWithoutEmojis = trimmed.replace(/(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)/gu, '').replace(/\s+/g, '');
@@ -1509,12 +1532,17 @@ export default function Room() {
           setEmojiPickerOpen(false);
         }
       }
+      if (gifPickerRef.current && !gifPickerRef.current.contains(e.target)) {
+        if (!e.target.closest('.chat-gif-toggle')) {
+          setGifPickerOpen(false);
+        }
+      }
     }
-    if (emojiPickerOpen) {
+    if (emojiPickerOpen || gifPickerOpen) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [emojiPickerOpen]);
+  }, [emojiPickerOpen, gifPickerOpen]);
 
   // unread count in the tab title
   useEffect(() => {
@@ -2072,6 +2100,30 @@ export default function Room() {
     chatInputRef.current.value = '';
     setReplyingTo(null);
     chatInputRef.current.focus();
+  };
+
+  const handleSendGif = (gif) => {
+    if (!gif || !gif.url) return;
+    const socket = getSocket();
+    if (socket.connected) {
+      socket.emit('chat', {
+        text: gif.url,
+        gif: true,
+        title: gif.title,
+        replyTo: replyingTo ? {
+          id: replyingTo.id,
+          name: replyingTo.name,
+          color: replyingTo.color,
+          text: replyingTo.text,
+        } : null,
+      });
+      if (isTypingLocalRef.current) {
+        socket.emit('typing', false);
+        isTypingLocalRef.current = false;
+      }
+    }
+    setReplyingTo(null);
+    setGifPickerOpen(false);
   };
 
   const fullscreen = () => {
@@ -2898,7 +2950,7 @@ export default function Room() {
                                 <span className="mr-author" style={{ color: m.replyTo.color || 'var(--accent-glow)' }}>
                                   {m.replyTo.name}
                                 </span>
-                                <span className="mr-snippet">{renderChatText(m.replyTo.text)}</span>
+                                <span className="mr-snippet">{renderChatText(m.replyTo.text, true)}</span>
                               </div>
                             )}
                             <div className="m-bubble">
@@ -3010,6 +3062,15 @@ export default function Room() {
                 </div>
               )}
 
+              {gifPickerOpen && (
+                <div className="gif-picker-popover" ref={gifPickerRef}>
+                  <TenorGifPicker
+                    onSelectGif={handleSendGif}
+                    onClose={() => setGifPickerOpen(false)}
+                  />
+                </div>
+              )}
+
               {replyingTo && (
                 <div className="chat-reply-banner">
                   <div className="crb-bar" style={{ background: replyingTo.color || 'var(--accent-glow)' }} />
@@ -3017,7 +3078,7 @@ export default function Room() {
                     <div className="crb-header">
                       <span>Replying to <b style={{ color: replyingTo.color || 'var(--accent-glow)' }}>{replyingTo.name}</b></span>
                     </div>
-                    <div className="crb-snippet">{renderChatText(replyingTo.text)}</div>
+                    <div className="crb-snippet">{renderChatText(replyingTo.text, true)}</div>
                   </div>
                   <button
                     type="button"
@@ -3037,6 +3098,7 @@ export default function Room() {
                   onClick={() => {
                     setEmojiTarget('chat');
                     setEmojiPickerOpen((v) => !v);
+                    setGifPickerOpen(false);
                   }}
                   title="Add emoji to chat"
                 >
@@ -3046,6 +3108,18 @@ export default function Room() {
                     <line x1="9" y1="9" x2="9.01" y2="9" strokeWidth="3" />
                     <line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="3" />
                   </svg>
+                </button>
+                <button
+                  type="button"
+                  className={'chat-emoji-toggle chat-gif-toggle' + (gifPickerOpen ? ' active' : '')}
+                  onClick={() => {
+                    setGifPickerOpen((v) => !v);
+                    setEmojiPickerOpen(false);
+                  }}
+                  title="Search & Send GIFs (Google Tenor)"
+                  style={{ fontWeight: '800', fontSize: '11px', letterSpacing: '0.04em' }}
+                >
+                  GIF
                 </button>
                 <input
                   ref={chatInputRef}
