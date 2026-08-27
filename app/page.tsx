@@ -99,7 +99,7 @@ export default function LandingPage(): React.JSX.Element {
 
   if (isLoaded && isSignedIn) {
     return (
-      <main className="minimal-landing" style={{ justifyContent: 'center' }}>
+      <main className="minimal-landing">
         <div className="min-empty-rooms" style={{ maxWidth: '360px', margin: '0 auto' }}>
           <div className="tgp-spinner" style={{ margin: '0 auto 16px' }} />
           <p style={{ margin: 0, fontWeight: 500 }}>Opening your dashboard…</p>
@@ -110,136 +110,138 @@ export default function LandingPage(): React.JSX.Element {
 
   return (
     <main className="minimal-landing">
-      {/* Top Header */}
-      <header className="minimal-header">
-        <div className="minimal-brand">
-          <span className="mb-icon">✦</span>
-          <span>REELSYNC</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <ThemeToggle />
-          <SignInButton mode="modal">
-            <button type="button" className="min-btn ghost" style={{ fontSize: '13px', padding: '6px 14px' }}>
-              Sign in
-            </button>
-          </SignInButton>
-        </div>
-      </header>
+      <div className="minimal-container" style={{ maxWidth: '520px' }}>
+        {/* Top Header */}
+        <header className="minimal-header">
+          <div className="minimal-brand">
+            <span className="mb-icon">✦</span>
+            <span>REELSYNC</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <ThemeToggle />
+            <SignInButton mode="modal">
+              <button type="button" className="min-btn ghost" style={{ fontSize: '13px', padding: '6px 14px' }}>
+                Sign in
+              </button>
+            </SignInButton>
+          </div>
+        </header>
 
-      {/* Main Landing Hero Card */}
-      <div className="minimal-card" style={{ maxWidth: '520px' }}>
-        <div className="minimal-hero">
-          <div style={{ display: 'inline-flex', marginBottom: '12px' }}>
-            <span className="tab-pill" style={{ letterSpacing: '0.12em', color: 'var(--accent)', borderColor: 'var(--accent-soft)', background: 'var(--accent-soft)' }}>
-              ✦ SYNCED STREAMING
+        {/* Main Landing Hero Card */}
+        <div className="minimal-card">
+          <div className="minimal-hero">
+            <div style={{ display: 'inline-flex', marginBottom: '12px' }}>
+              <span className="tab-pill" style={{ letterSpacing: '0.12em', color: 'var(--accent)', borderColor: 'var(--accent-soft)', background: 'var(--accent-soft)' }}>
+                ✦ SYNCED STREAMING
+              </span>
+            </div>
+            <h1 className="minimal-title">Watch Together in Lockstep</h1>
+            <p className="minimal-desc">
+              Watch local video files, YouTube, and streams with friends in millisecond sync with voice chat and live reactions.
+            </p>
+          </div>
+
+          {/* Primary Action: Sign in to Dashboard */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '22px' }}>
+            <SignInButton mode="modal">
+              <button type="button" className="min-btn primary" style={{ padding: '14px', fontSize: '15px' }}>
+                Sign in to Dashboard →
+              </button>
+            </SignInButton>
+            <span style={{ fontSize: '12px', color: 'var(--theme-text-dim)', textAlign: 'center' }}>
+              Persistent rooms, host controls, and history
             </span>
           </div>
-          <h1 className="minimal-title">Watch Together in Lockstep</h1>
-          <p className="minimal-desc">
-            Watch local video files, YouTube, and streams with friends in millisecond sync with voice chat and live reactions.
-          </p>
-        </div>
 
-        {/* Primary Action: Sign in to Dashboard */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '22px' }}>
-          <SignInButton mode="modal">
-            <button type="button" className="min-btn primary" style={{ padding: '14px', fontSize: '15px' }}>
-              Sign in to Dashboard →
-            </button>
-          </SignInButton>
-          <span style={{ fontSize: '12px', color: 'var(--theme-text-dim)', textAlign: 'center' }}>
-            Persistent rooms, host controls, and history
-          </span>
-        </div>
-
-        {/* Subtle Divider */}
-        <div className="divider" style={{ margin: '14px 0 18px' }}>
-          <span>or join as guest</span>
-        </div>
-
-        {/* Guest Action Switcher */}
-        {!showInstantJoin ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-            <button
-              type="button"
-              className="min-btn ghost"
-              style={{ fontSize: '13px' }}
-              onClick={() => setShowInstantJoin(true)}
-            >
-              ⚡ Instant Party
-            </button>
-            <button
-              type="button"
-              className="min-btn ghost"
-              style={{ fontSize: '13px' }}
-              onClick={() => setShowInstantJoin(true)}
-            >
-              🔑 Enter Code
-            </button>
+          {/* Subtle Divider */}
+          <div className="divider" style={{ margin: '14px 0 18px' }}>
+            <span>or join as guest</span>
           </div>
-        ) : (
-          <div className="minimal-form">
-            <div className="min-field">
-              <label className="min-label">Your Name</label>
-              <input
-                ref={nameInputRef}
-                type="text"
-                maxLength={24}
-                placeholder="e.g. Nani"
-                autoComplete="off"
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  setError('');
-                }}
-                className="min-input"
-              />
-            </div>
 
-            <div className="min-field">
-              <label className="min-label">Room Code (Leave blank for new party)</label>
-              <input
-                type="text"
-                maxLength={5}
-                placeholder="5-letter code"
-                autoComplete="off"
-                spellCheck={false}
-                value={code}
-                onChange={(e) => {
-                  setCode(e.target.value.toUpperCase());
-                  setError('');
-                }}
-                className="min-input code-input"
-              />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '6px' }}>
+          {/* Guest Action Switcher */}
+          {!showInstantJoin ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
               <button
                 type="button"
                 className="min-btn ghost"
-                onClick={startInstantParty}
-                disabled={loading !== ''}
+                style={{ fontSize: '13px' }}
+                onClick={() => setShowInstantJoin(true)}
               >
-                {loading === 'instant' ? 'Starting…' : '⚡ Instant Party'}
+                ⚡ Instant Party
               </button>
               <button
                 type="button"
-                className="min-btn primary"
-                onClick={joinParty}
-                disabled={loading !== '' || !code.trim()}
+                className="min-btn ghost"
+                style={{ fontSize: '13px' }}
+                onClick={() => setShowInstantJoin(true)}
               >
-                {loading === 'join' ? 'Joining…' : 'Join Room →'}
+                🔑 Enter Code
               </button>
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="minimal-form">
+              <div className="min-field">
+                <label className="min-label">Your Name</label>
+                <input
+                  ref={nameInputRef}
+                  type="text"
+                  maxLength={24}
+                  placeholder="e.g. Nani"
+                  autoComplete="off"
+                  value={name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    setError('');
+                  }}
+                  className="min-input"
+                />
+              </div>
 
-        {error && <div className="min-error" role="alert">{error}</div>}
+              <div className="min-field">
+                <label className="min-label">Room Code (Leave blank for new party)</label>
+                <input
+                  type="text"
+                  maxLength={5}
+                  placeholder="5-letter code"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={code}
+                  onChange={(e) => {
+                    setCode(e.target.value.toUpperCase());
+                    setError('');
+                  }}
+                  className="min-input code-input"
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '6px' }}>
+                <button
+                  type="button"
+                  className="min-btn ghost"
+                  onClick={startInstantParty}
+                  disabled={loading !== ''}
+                >
+                  {loading === 'instant' ? 'Starting…' : '⚡ Instant Party'}
+                </button>
+                <button
+                  type="button"
+                  className="min-btn primary"
+                  onClick={joinParty}
+                  disabled={loading !== '' || !code.trim()}
+                >
+                  {loading === 'join' ? 'Joining…' : 'Join Room →'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {error && <div className="min-error" role="alert">{error}</div>}
+        </div>
+
+        <footer className="minimal-footer">
+          Peer-synchronized streaming. Local video files remain on your device.
+        </footer>
       </div>
-
-      <footer className="minimal-footer">
-        Peer-synchronized streaming. Local video files remain on your device.
-      </footer>
     </main>
   );
 }
