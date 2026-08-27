@@ -1,33 +1,36 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useUser, SignInButton } from '@clerk/nextjs';
+import { useUser } from '@clerk/nextjs';
 import { getSocket } from '../lib/socket';
 import AuthButton from './components/AuthButton';
+import { UserRoom } from '../types/realtime';
 
-export default function Home() {
+export default function Home(): React.JSX.Element {
   const router = useRouter();
   const { user, isLoaded, isSignedIn } = useUser();
-  const [activeTab, setActiveTab] = useState('discover'); // 'discover' | 'my-rooms' | 'create'
-  const [name, setName] = useState('');
-  const [code, setCode] = useState('');
-  const [partyTitle, setPartyTitle] = useState('');
-  const [isPrivateMode, setIsPrivateMode] = useState(false);
-  const [myRooms, setMyRooms] = useState([]);
-  const [loadingRooms, setLoadingRooms] = useState(false);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState('');
-  const nameInputRef = useRef(null);
+  const [activeTab, setActiveTab] = useState<'discover' | 'my-rooms' | 'create'>('discover');
+  const [name, setName] = useState<string>('');
+  const [code, setCode] = useState<string>('');
+  const [partyTitle, setPartyTitle] = useState<string>('');
+  const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
+  const [myRooms, setMyRooms] = useState<UserRoom[]>([]);
+  const [loadingRooms, setLoadingRooms] = useState<boolean>(false);
+  const [error, setError] = useState<string>('');
+  const [loading, setLoading] = useState<string>('');
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     // Pre-warm websocket connection immediately
     try {
       getSocket();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     if (user && (user.firstName || user.username)) {
-      const displayName = user.firstName || user.username;
+      const displayName = user.firstName || user.username || '';
       setName(displayName);
       sessionStorage.setItem('reelsync:name', displayName);
     } else {
@@ -45,15 +48,21 @@ export default function Home() {
   useEffect(() => {
     const fetchRooms = () => {
       const socket = getSocket();
-      const ownerId = (user && user.id) || (typeof window !== 'undefined' && localStorage.getItem('reelsync:sessionId'));
-      if (!ownerId || !socket) return;
+      const ownerId =
+        (user && user.id) ||
+        (typeof window !== 'undefined' && localStorage.getItem('reelsync:sessionId'));
+      if (!ownerId || !socket || !socket.connected) return;
       setLoadingRooms(true);
-      socket.emit('get-my-rooms', { userId: user?.id, sessionId: ownerId }, (res) => {
-        setLoadingRooms(false);
-        if (res && Array.isArray(res.rooms)) {
-          setMyRooms(res.rooms);
+      socket.emit(
+        'get-my-rooms',
+        { userId: user?.id, sessionId: ownerId },
+        (res: { rooms?: UserRoom[] }) => {
+          setLoadingRooms(false);
+          if (res && Array.isArray(res.rooms)) {
+            setMyRooms(res.rooms);
+          }
         }
-      });
+      );
     };
 
     if (socketReady()) {
@@ -64,44 +73,55 @@ export default function Home() {
     }
   }, [user, isSignedIn]);
 
-  function socketReady() {
+  function socketReady(): boolean {
     try {
-      return getSocket().connected;
+      return !!getSocket().connected;
     } catch {
       return false;
     }
   }
 
-  function enter(res) {
+  function enter(res: { error?: string; self?: { name: string }; code?: string }): void {
     setLoading('');
     if (!res || res.error) {
       setError((res && res.error) || 'Something went wrong.');
       return;
     }
-    sessionStorage.setItem('reelsync:name', res.self.name);
+    if (res.self?.name) {
+      sessionStorage.setItem('reelsync:name', res.self.name);
+    }
     router.push(`/room/${res.code}`);
   }
 
   const createParty = (customTitle = '', lockMode = false) => {
     setError('');
-    const trimmedName = name.trim() || (user && (user.firstName || user.username)) || 'Host';
+    const trimmedName =
+      name.trim() || (user && (user.firstName || user.username)) || 'Host';
     setLoading('create');
     sessionStorage.setItem('reelsync:name', trimmedName);
-    const ownerId = user?.id || (typeof window !== 'undefined' && localStorage.getItem('reelsync:sessionId'));
-    
-    getSocket().emit('create-room', {
-      name: trimmedName,
-      title: customTitle || partyTitle || `${trimmedName}'s Watch Party`,
-      ownerId,
-      controlLock: lockMode || isPrivateMode,
-      sessionId: typeof window !== 'undefined' ? localStorage.getItem('reelsync:sessionId') : null,
-    }, enter);
+    const ownerId =
+      user?.id ||
+      (typeof window !== 'undefined' && localStorage.getItem('reelsync:sessionId'));
+
+    getSocket().emit(
+      'create-room',
+      {
+        name: trimmedName,
+        title: customTitle || partyTitle || `${trimmedName}'s Watch Party`,
+        ownerId,
+        controlLock: lockMode || isPrivateMode,
+        sessionId:
+          typeof window !== 'undefined' ? localStorage.getItem('reelsync:sessionId') : null,
+      },
+      enter
+    );
   };
 
   const joinParty = (targetCode = '') => {
     setError('');
     const joinCode = (targetCode || code).trim().toUpperCase();
-    const trimmedName = name.trim() || (user && (user.firstName || user.username)) || 'Guest';
+    const trimmedName =
+      name.trim() || (user && (user.firstName || user.username)) || 'Guest';
 
     if (!trimmedName) {
       setError('Please enter your name first.');
@@ -114,11 +134,16 @@ export default function Home() {
     }
     setLoading('join');
     sessionStorage.setItem('reelsync:name', trimmedName);
-    getSocket().emit('join-room', {
-      code: joinCode,
-      name: trimmedName,
-      sessionId: typeof window !== 'undefined' ? localStorage.getItem('reelsync:sessionId') : null,
-    }, enter);
+    getSocket().emit(
+      'join-room',
+      {
+        code: joinCode,
+        name: trimmedName,
+        sessionId:
+          typeof window !== 'undefined' ? localStorage.getItem('reelsync:sessionId') : null,
+      },
+      enter
+    );
   };
 
   return (
@@ -128,7 +153,9 @@ export default function Home() {
         <div className="dash-nav-left">
           <span className="dash-logo">
             <span className="dash-logo-icon">🎬</span>
-            <span className="dash-logo-text">REEL<span className="brand-accent">SYNC</span></span>
+            <span className="dash-logo-text">
+              REEL<span className="brand-accent">SYNC</span>
+            </span>
           </span>
           <nav className="dash-nav-links">
             <button
@@ -344,7 +371,9 @@ export default function Home() {
               </button>
             </div>
 
-            <div className="divider"><span>or enter code</span></div>
+            <div className="divider">
+              <span>or enter code</span>
+            </div>
 
             <div className="join-row">
               <input

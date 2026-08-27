@@ -1,8 +1,9 @@
 'use client';
 
+import React from 'react';
 import { useUser, SignInButton, UserButton } from '@clerk/nextjs';
 
-export default function AuthButton() {
+export default function AuthButton(): React.JSX.Element | null {
   const { isSignedIn, user, isLoaded } = useUser();
 
   if (!isLoaded) return null;
@@ -10,7 +11,7 @@ export default function AuthButton() {
   if (isSignedIn) {
     return (
       <div className="auth-btn-wrap" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <UserButton afterSignOutUrl="/" />
+        <UserButton />
         <span className="auth-name" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--ink)' }}>
           {user.firstName || user.username || 'Member'}
         </span>
@@ -20,7 +21,11 @@ export default function AuthButton() {
 
   return (
     <SignInButton mode="modal">
-      <button className="btn ghost" style={{ fontSize: '12px', padding: '6px 14px', borderRadius: '8px' }}>
+      <button
+        type="button"
+        className="btn ghost"
+        style={{ fontSize: '12px', padding: '6px 14px', borderRadius: '8px' }}
+      >
         Sign in
       </button>
     </SignInButton>

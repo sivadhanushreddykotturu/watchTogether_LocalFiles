@@ -2,15 +2,35 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 
-export default function KlipyGifPicker({ onSelectGif, onClose, adultMode = false }) {
-  const [provider, setProvider] = useState('klipy');
+export interface GifItem {
+  id: string;
+  url: string;
+  previewUrl: string;
+  title: string;
+  width?: number;
+  height?: number;
+  isVideo?: boolean;
+}
+
+interface KlipyGifPickerProps {
+  onSelectGif: (gif: GifItem) => void;
+  onClose: () => void;
+  adultMode?: boolean;
+}
+
+export default function KlipyGifPicker({
+  onSelectGif,
+  onClose,
+  adultMode = false,
+}: KlipyGifPickerProps): React.JSX.Element {
+  const [provider, setProvider] = useState<'klipy' | 'redgifs'>('klipy');
   const [query, setQuery] = useState('');
-  const [gifs, setGifs] = useState([]);
+  const [gifs, setGifs] = useState<GifItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [needsKey, setNeedsKey] = useState(false);
-  const searchTimeoutRef = useRef(null);
-  const containerRef = useRef(null);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const providerRef = useRef(provider);
 
   useEffect(() => {
@@ -23,7 +43,7 @@ export default function KlipyGifPicker({ onSelectGif, onClose, adultMode = false
     }
   }, [adultMode]);
 
-  const fetchGifs = async (searchQuery, activeProvider = providerRef.current) => {
+  const fetchGifs = async (searchQuery: string, activeProvider = providerRef.current) => {
     setLoading(true);
     setError('');
     try {
@@ -41,9 +61,9 @@ export default function KlipyGifPicker({ onSelectGif, onClose, adultMode = false
         setGifs([]);
         setError(data.error || 'Failed to load GIFs');
       }
-    } catch (err) {
+    } catch (err: any) {
       setGifs([]);
-      setError(err.message || 'Error connecting to GIF service');
+      setError(err?.message || 'Error connecting to GIF service');
     } finally {
       setLoading(false);
     }
@@ -54,7 +74,7 @@ export default function KlipyGifPicker({ onSelectGif, onClose, adultMode = false
     fetchGifs('', provider);
   }, []);
 
-  const handleProviderSwitch = (p) => {
+  const handleProviderSwitch = (p: 'klipy' | 'redgifs') => {
     if (p === provider) return;
     setProvider(p);
     providerRef.current = p;
@@ -63,7 +83,7 @@ export default function KlipyGifPicker({ onSelectGif, onClose, adultMode = false
     fetchGifs(query, p);
   };
 
-  const handleSearchChange = (e) => {
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setQuery(val);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -72,7 +92,7 @@ export default function KlipyGifPicker({ onSelectGif, onClose, adultMode = false
     }, 280);
   };
 
-  const handleSearchSubmit = (e) => {
+  const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     fetchGifs(query, providerRef.current);
@@ -99,16 +119,16 @@ export default function KlipyGifPicker({ onSelectGif, onClose, adultMode = false
         )}
       </div>
 
-      <div className="tgp-head">
-        <form className="tgp-search-wrap" onSubmit={handleSearchSubmit}>
-          <svg className="tgp-search-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2">
-            <circle cx="11" cy="11" r="8" />
-            <path d="M21 21l-4.35-4.35" strokeLinecap="round" />
-          </svg>
+      <div className="tgp-header">
+        <form onSubmit={handleSearchSubmit} className="tgp-search-form">
           <input
             type="text"
             className="tgp-search-input"
-            placeholder={provider === 'redgifs' ? 'Search RedGIFs…' : 'Search KLIPY…'}
+            placeholder={
+              provider === 'redgifs'
+                ? 'Search RedGIFs loops (e.g. anime, dance)…'
+                : 'Search GIFs via KLIPY (e.g. popcorn, laugh)…'
+            }
             value={query}
             onChange={handleSearchChange}
             autoFocus
@@ -116,103 +136,86 @@ export default function KlipyGifPicker({ onSelectGif, onClose, adultMode = false
           {query && (
             <button
               type="button"
-              className="tgp-clear-search-btn"
+              className="tgp-search-clear"
               onClick={() => {
                 setQuery('');
                 fetchGifs('', providerRef.current);
-              }}
-              title="Clear search"
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--dim)',
-                cursor: 'pointer',
-                fontSize: '12px',
-                padding: '0 4px',
-                display: 'flex',
-                alignItems: 'center'
               }}
             >
               ✕
             </button>
           )}
         </form>
-        {onClose && (
-          <button
-            type="button"
-            className="tgp-close-btn"
-            onClick={onClose}
-            title="Close GIF picker"
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        )}
+        <button type="button" className="tgp-close" onClick={onClose} title="Close GIF picker">
+          ✕
+        </button>
       </div>
 
-      <div className="tgp-grid-container">
+      <div className="tgp-grid">
         {loading && gifs.length === 0 && (
-          <div className="tgp-loading-wrap">
+          <div className="tgp-empty">
             <div className="tgp-spinner" />
-            <span>Finding the best GIFs...</span>
+            <p>Loading GIFs…</p>
           </div>
         )}
 
-        {!loading && error && gifs.length === 0 && (
-          <div className="tgp-error-wrap">
-            <span className="tgp-error-icon">⚠️</span>
-            <p className="tgp-error-text">{error}</p>
+        {error && gifs.length === 0 && !loading && (
+          <div className="tgp-empty tgp-error">
+            <p>⚠️ {error}</p>
             {needsKey && (
-              <p className="tgp-error-hint">
-                Get a free key from <a href="https://partner.klipy.com" target="_blank" rel="noopener noreferrer">KLIPY Partner Dashboard</a> and add it as <code>KLIPY_API_KEY</code>.
-              </p>
+              <a
+                href="https://partner.klipy.com"
+                target="_blank"
+                rel="noreferrer"
+                className="tgp-key-link"
+              >
+                Get free KLIPY API key →
+              </a>
             )}
           </div>
         )}
 
         {!loading && !error && gifs.length === 0 && (
-          <div className="tgp-empty-wrap">
-            <span>No GIFs found for &quot;{query}&quot;</span>
+          <div className="tgp-empty">
+            <p>No GIFs found for &ldquo;{query}&rdquo;</p>
           </div>
         )}
 
-        <div className="tgp-grid">
-          {gifs.map((gif) => (
-            <div
+        {gifs.map((gif) => {
+          const isVideo = gif.isVideo || gif.url?.endsWith('.mp4') || gif.previewUrl?.endsWith('.mp4');
+          return (
+            <button
               key={gif.id}
+              type="button"
               className="tgp-item"
-              onClick={() => onSelectGif && onSelectGif(gif)}
-              title={gif.title}
+              onClick={() => onSelectGif(gif)}
+              title={gif.title || 'Send GIF'}
             >
-              {gif.previewUrl?.includes('.mp4') || gif.isVideo ? (
+              {isVideo ? (
                 <video
-                  src={gif.previewUrl}
+                  src={gif.previewUrl || gif.url}
                   autoPlay
                   loop
                   muted
                   playsInline
                   className="tgp-img"
+                  style={{ objectFit: 'cover', width: '100%', height: '100%' }}
                 />
               ) : (
-                /* eslint-disable-next-line @next/next/no-img-element */
                 <img
-                  src={gif.previewUrl}
-                  alt={gif.title}
+                  src={gif.previewUrl || gif.url}
+                  alt={gif.title || 'GIF'}
                   loading="lazy"
-                  referrerPolicy="no-referrer"
                   className="tgp-img"
                 />
               )}
-              <div className="tgp-item-overlay">
-                <span className="tgp-send-label">Send</span>
-              </div>
-            </div>
-          ))}
-        </div>
+            </button>
+          );
+        })}
       </div>
 
       <div className="tgp-footer">
-        <span className="tgp-powered">Powered by {provider === 'redgifs' ? 'RedGIFs' : 'KLIPY'}</span>
+        <span>Powered by {provider === 'redgifs' ? 'RedGIFs' : 'KLIPY'}</span>
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+import React from 'react';
 import { Bebas_Neue, Instrument_Sans, JetBrains_Mono } from 'next/font/google';
 import { ClerkProvider } from '@clerk/nextjs';
 import './globals.css';
@@ -11,7 +12,11 @@ export const metadata = {
   description: 'Everyone opens their own copy of the file. ReelSync keeps every screen in lockstep.',
 };
 
-export default function RootLayout({ children }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}): React.JSX.Element {
   return (
     <ClerkProvider>
       <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
