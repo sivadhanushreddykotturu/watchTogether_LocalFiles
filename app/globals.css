@@ -3822,15 +3822,15 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   border-bottom: 1px solid var(--border-mid);
   z-index: 49;
   flex-shrink: 0;
-  animation: slideDown 0.2s ease;
+  animation: knock-slide-down 0.2s ease;
 }
 
-@keyframes slideDown {
-  0% {
+@keyframes knock-slide-down {
+  from {
     transform: translateY(-100%);
     opacity: 0;
   }
-  100% {
+  to {
     transform: translateY(0);
     opacity: 1;
   }
@@ -3879,10 +3879,10 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   font-size: 10px;
   color: var(--dim);
   margin-left: 4px;
-  animation: pendingPulse 1.5s ease-in-out infinite;
+  animation: pending-pulse 1.5s ease-in-out infinite;
 }
 
-@keyframes pendingPulse {
+@keyframes pending-pulse {
   0%, 100% {
     opacity: 1;
   }
