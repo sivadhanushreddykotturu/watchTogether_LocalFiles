@@ -1,6 +1,17 @@
 // Custom server: Next.js handles pages, Socket.IO handles realtime, one process.
 // Render runs this as a long-lived service — that's what keeps WebSockets possible.
 
+// Node 22 kills the process on unhandled rejections/exceptions by default.
+// For a long-lived realtime server, a single bad async call (Clerk verify,
+// Mongo blip, upstream proxy hiccup) must never take the whole service down —
+// log it loudly (visible in Render logs) and keep serving.
+process.on('unhandledRejection', (err) => {
+  console.error('[reelsync] unhandledRejection:', err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[reelsync] uncaughtException:', err);
+});
+
 const http = require('http');
 const next = require('next');
 const { Server } = require('socket.io');

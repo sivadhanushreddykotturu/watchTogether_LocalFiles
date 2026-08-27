@@ -11,7 +11,12 @@ const { verifyToken } = require('@clerk/backend');
 async function verifiedUserId(token) {
   if (!token || !process.env.CLERK_SECRET_KEY) return null;
   try {
-    const payload = await verifyToken(String(token), { secretKey: process.env.CLERK_SECRET_KEY });
+    // Clerk verification does a network call (JWKS fetch). Guard it with a
+    // timeout so a slow/unreachable Clerk API can never wedge a socket handler.
+    const payload = await Promise.race([
+      verifyToken(String(token), { secretKey: process.env.CLERK_SECRET_KEY }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('clerk verify timeout')), 8000)),
+    ]);
     return payload && payload.sub ? String(payload.sub) : null;
   } catch {
     return null;
