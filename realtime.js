@@ -3,6 +3,20 @@
 
 const db = require('./db');
 const { AccessToken } = require('livekit-server-sdk');
+const { verifyToken } = require('@clerk/backend');
+
+// Verify a Clerk session JWT sent by the client; returns the Clerk user id or
+// null. Ownership must be proven with a token — a client-claimed id is never
+// trusted for anything that reads or deletes other people's data.
+async function verifiedUserId(token) {
+  if (!token || !process.env.CLERK_SECRET_KEY) return null;
+  try {
+    const payload = await verifyToken(String(token), { secretKey: process.env.CLERK_SECRET_KEY });
+    return payload && payload.sub ? String(payload.sub) : null;
+  } catch {
+    return null;
+  }
+}
 
 // How long to wait before announcing "X left" — mobile lock/unlock blips
 // reconnect within this window and never spam the chat.
@@ -87,6 +101,14 @@ function leaveCurrentRoom(io, socket) {
     return;
   }
 
+  // Host migration: the crown passes to the longest-present remaining member,
+  // so host-only controls (adult mode, control lock, knocks) never end up
+  // owned by a socket that's gone.
+  if (room.host === socket.id) {
+    room.host = room.users.keys().next().value || null;
+    if (room.host) io.to(code).emit('host-change', { newHostId: room.host });
+  }
+
   if (user) {
     const timer = setTimeout(() => {
       room.recentlyLeft.delete(user.name);
@@ -127,6 +149,15 @@ function joinRoom(io, socket, code, name, { rejoin = false, history } = {}, cb) 
 
   const user = { name: cleanName(name), color: USER_COLORS[room.users.size % USER_COLORS.length] };
   room.users.set(socket.id, user);
+
+  // Host recovery: a room rehydrated from Mongo (or one whose host vanished
+  // without a handoff) has no host — the person entering right now takes over
+  // so the room is never left leaderless.
+  if (!room.host || !room.users.has(room.host)) {
+    room.host = socket.id;
+    socket.to(code).emit('host-change', { newHostId: room.host });
+  }
+
   socket.data.room = code;
   socket.join(code);
 
@@ -161,6 +192,18 @@ function joinRoom(io, socket, code, name, { rejoin = false, history } = {}, cb) 
   }
 }
 
+// Chat history never blocks a join — the member enters instantly from memory
+// and the persisted history streams in right after (deduped client-side).
+function streamHistory(socket, code) {
+  db.getHistory(code)
+    .then((history) => {
+      if (history && history.length && socket.connected && socket.data.room === code) {
+        socket.emit('chat-history', history);
+      }
+    })
+    .catch(() => {});
+}
+
 function attach(io) {
   io.on('connection', (socket) => {
     // --- create a room, returns its join code ---
@@ -170,19 +213,30 @@ function attach(io) {
       let ownerId = null;
       let controlLock = false;
       let sessionId = null;
+      let authToken = null;
 
       if (typeof payload === 'string') {
         name = payload;
       } else if (payload && typeof payload === 'object') {
         name = payload.name;
         title = payload.title;
-        ownerId = payload.ownerId || payload.userId || null;
+        authToken = payload.authToken || null;
         controlLock = Boolean(payload.controlLock);
         sessionId = payload.sessionId || null;
       }
 
       if (sessionId) {
         socket.data.sessionId = String(sessionId).slice(0, 64);
+      }
+
+      // Ownership is proven, not claimed: a persistent room's owner id comes
+      // from a verified Clerk session token. Anything else is a guest room.
+      if (authToken) {
+        ownerId = await verifiedUserId(authToken);
+        if (!ownerId) {
+          if (typeof cb === 'function') cb({ error: 'Session expired — please sign in again.' });
+          return;
+        }
       }
 
       const code = await makeCode();
@@ -198,9 +252,11 @@ function attach(io) {
     });
 
     // --- get user's persistent / recent rooms ---
-    socket.on('get-my-rooms', async ({ userId, sessionId } = {}, cb) => {
+    socket.on('get-my-rooms', async ({ authToken, sessionId } = {}, cb) => {
       if (typeof cb !== 'function') return;
-      const id = userId || sessionId;
+      // Verified Clerk id when signed in; guests fall back to their local
+      // session id (which only ever maps to rooms they created here).
+      const id = (await verifiedUserId(authToken)) || (sessionId ? String(sessionId).slice(0, 64) : null);
       if (!id) {
         cb({ rooms: [] });
         return;
@@ -218,14 +274,22 @@ function attach(io) {
     });
 
     // --- delete a persistent room ---
-    socket.on('delete-room', async ({ code, ownerId } = {}, cb) => {
+    socket.on('delete-room', async ({ code, authToken } = {}, cb) => {
       code = String(code || '').trim().toUpperCase();
       if (!code) {
         if (typeof cb === 'function') cb({ error: 'Code required' });
         return;
       }
+      // Only the verified owner may delete — and the live room is only evicted
+      // when the delete actually happened (previously anyone who knew a room
+      // code could kick everyone by wiping the in-memory room).
+      const ownerId = await verifiedUserId(authToken);
+      if (!ownerId) {
+        if (typeof cb === 'function') cb({ error: 'Sign in to delete this room.' });
+        return;
+      }
       const success = await db.deleteRoom(code, ownerId);
-      rooms.delete(code);
+      if (success) rooms.delete(code);
       if (typeof cb === 'function') cb({ success });
     });
 
@@ -237,6 +301,8 @@ function attach(io) {
       let room = rooms.get(code);
 
       if (!room) {
+        // Rehydration is the only join path that still waits on Mongo: a single
+        // existence check (instant when there is no persistence configured).
         const saved = await db.getRoom(code);
         if (!saved) {
           if (typeof cb === 'function') cb({ error: 'No room with that code. Check it and try again.' });
@@ -246,8 +312,9 @@ function attach(io) {
         rooms.set(code, room);
       }
 
-      const history = await db.getHistory(code);
-      joinRoom(io, socket, code, name, { rejoin, history }, cb);
+      // Join instantly from memory; history streams in after.
+      joinRoom(io, socket, code, name, { rejoin, history: [] }, cb);
+      streamHistory(socket, code);
     });
 
     // --- playback control: anyone in the room can drive ---
@@ -618,10 +685,9 @@ function attach(io) {
           socket.emit('knock-rejected', { code, reason: 'Room not found.' });
           return;
         }
-        // Treat as a normal join
-        db.getHistory(code).then((history) => {
-          joinRoom(io, socket, code, name, { history }, (res) => socket.emit('join-room-ack', res));
-        });
+        // Treat as a normal join — instant, with history streaming after.
+        joinRoom(io, socket, code, name, { history: [] }, (res) => socket.emit('join-room-ack', res));
+        streamHistory(socket, code);
         return;
       }
 
@@ -652,11 +718,10 @@ function attach(io) {
       if (!knock) return;
       clearTimeout(knock.timer);
       pendingKnocks.delete(knockId);
-      db.getHistory(knock.code).then((history) => {
-        joinRoom(io, knock.socket, knock.code, knock.name, { history }, (res) =>
-          knock.socket.emit('join-room-ack', res)
-        );
-      });
+      joinRoom(io, knock.socket, knock.code, knock.name, { history: [] }, (res) =>
+        knock.socket.emit('join-room-ack', res)
+      );
+      streamHistory(knock.socket, knock.code);
     });
 
     // --- Host: reject a pending knock ---

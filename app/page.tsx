@@ -8,12 +8,11 @@ import { ThemeToggle } from './components/ThemeToggle';
 
 export default function LandingPage(): React.JSX.Element {
   const router = useRouter();
-  const { user, isLoaded, isSignedIn } = useUser();
+  const { isLoaded, isSignedIn } = useUser();
   const [name, setName] = useState<string>('');
   const [code, setCode] = useState<string>('');
   const [loading, setLoading] = useState<string>('');
   const [error, setError] = useState<string>('');
-  const [showInstantJoin, setShowInstantJoin] = useState<boolean>(false);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -36,7 +35,7 @@ export default function LandingPage(): React.JSX.Element {
     const urlCode = new URLSearchParams(window.location.search).get('room');
     if (urlCode) {
       setCode(urlCode.toUpperCase().slice(0, 5));
-      setShowInstantJoin(true);
+      nameInputRef.current?.focus();
     }
   }, []);
 
@@ -129,113 +128,97 @@ export default function LandingPage(): React.JSX.Element {
 
         {/* Main Landing Hero Card */}
         <div className="minimal-card">
-          <div className="minimal-hero">
-            <div style={{ display: 'inline-flex', marginBottom: '12px' }}>
+          <div className="minimal-hero" style={{ textAlign: 'left' }}>
+            <div style={{ display: 'inline-flex', marginBottom: '14px' }}>
               <span className="tab-pill" style={{ letterSpacing: '0.12em', color: 'var(--accent)', borderColor: 'var(--accent-soft)', background: 'var(--accent-soft)' }}>
                 ✦ SYNCED STREAMING
               </span>
             </div>
-            <h1 className="minimal-title">Watch Together in Lockstep</h1>
-            <p className="minimal-desc">
-              Watch local video files, YouTube, and streams with friends in millisecond sync with voice chat and live reactions.
+            <h1 className="hero-title">
+              Watch Together<br />
+              in <span className="hero-accent">Lockstep</span>
+            </h1>
+            <p className="minimal-desc" style={{ maxWidth: '400px' }}>
+              Everyone opens the same video — ReelSync keeps play, pause and seek in perfect sync. Local files never leave your device.
             </p>
           </div>
 
-          {/* Primary Action: Sign in to Dashboard */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '22px' }}>
-            <SignInButton mode="modal">
-              <button type="button" className="min-btn primary" style={{ padding: '14px', fontSize: '15px' }}>
-                Sign in to Dashboard →
-              </button>
-            </SignInButton>
-            <span style={{ fontSize: '12px', color: 'var(--theme-text-dim)', textAlign: 'center' }}>
-              Persistent rooms, host controls, and history
-            </span>
-          </div>
+          {/* Guest-first: one name field powers both actions */}
+          <div className="minimal-form">
+            <div className="min-field">
+              <label className="min-label" htmlFor="guest-name">Your name</label>
+              <input
+                ref={nameInputRef}
+                id="guest-name"
+                type="text"
+                maxLength={24}
+                placeholder="e.g. Nani"
+                autoComplete="off"
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setError('');
+                }}
+                className="min-input"
+              />
+            </div>
 
-          {/* Subtle Divider */}
-          <div className="divider" style={{ margin: '14px 0 18px' }}>
-            <span>or join as guest</span>
-          </div>
+            <button
+              type="button"
+              className="min-btn primary"
+              style={{ padding: '14px', fontSize: '15px' }}
+              onClick={startInstantParty}
+              disabled={loading !== ''}
+            >
+              {loading === 'instant' ? 'Starting…' : '⚡ Start Instant Party'}
+            </button>
 
-          {/* Guest Action Switcher */}
-          {!showInstantJoin ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <div className="divider" style={{ margin: '4px 0' }}>
+              <span>or join a friend&apos;s room</span>
+            </div>
+
+            <div className="join-row">
+              <input
+                type="text"
+                maxLength={5}
+                placeholder="CODE"
+                autoComplete="off"
+                spellCheck={false}
+                aria-label="5-letter room code"
+                value={code}
+                onChange={(e) => {
+                  setCode(e.target.value.toUpperCase());
+                  setError('');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') joinParty(e);
+                }}
+                className="min-input code-input"
+                style={{ flex: 1 }}
+              />
               <button
                 type="button"
                 className="min-btn ghost"
-                style={{ fontSize: '13px' }}
-                onClick={() => setShowInstantJoin(true)}
+                style={{ minWidth: '112px' }}
+                onClick={joinParty}
+                disabled={loading !== '' || !code.trim()}
               >
-                ⚡ Instant Party
-              </button>
-              <button
-                type="button"
-                className="min-btn ghost"
-                style={{ fontSize: '13px' }}
-                onClick={() => setShowInstantJoin(true)}
-              >
-                🔑 Enter Code
+                {loading === 'join' ? 'Joining…' : 'Join →'}
               </button>
             </div>
-          ) : (
-            <div className="minimal-form">
-              <div className="min-field">
-                <label className="min-label">Your Name</label>
-                <input
-                  ref={nameInputRef}
-                  type="text"
-                  maxLength={24}
-                  placeholder="e.g. Nani"
-                  autoComplete="off"
-                  value={name}
-                  onChange={(e) => {
-                    setName(e.target.value);
-                    setError('');
-                  }}
-                  className="min-input"
-                />
-              </div>
-
-              <div className="min-field">
-                <label className="min-label">Room Code (Leave blank for new party)</label>
-                <input
-                  type="text"
-                  maxLength={5}
-                  placeholder="5-letter code"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={code}
-                  onChange={(e) => {
-                    setCode(e.target.value.toUpperCase());
-                    setError('');
-                  }}
-                  className="min-input code-input"
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '6px' }}>
-                <button
-                  type="button"
-                  className="min-btn ghost"
-                  onClick={startInstantParty}
-                  disabled={loading !== ''}
-                >
-                  {loading === 'instant' ? 'Starting…' : '⚡ Instant Party'}
-                </button>
-                <button
-                  type="button"
-                  className="min-btn primary"
-                  onClick={joinParty}
-                  disabled={loading !== '' || !code.trim()}
-                >
-                  {loading === 'join' ? 'Joining…' : 'Join Room →'}
-                </button>
-              </div>
-            </div>
-          )}
+          </div>
 
           {error && <div className="min-error" role="alert">{error}</div>}
+
+          {/* Account path — secondary */}
+          <div className="divider" style={{ margin: '24px 0 14px' }}>
+            <span>with an account</span>
+          </div>
+          <SignInButton mode="modal">
+            <button type="button" className="min-btn ghost" style={{ width: '100%', fontSize: '13px' }}>
+              Sign in for saved rooms &amp; host controls →
+            </button>
+          </SignInButton>
         </div>
 
         <footer className="minimal-footer">

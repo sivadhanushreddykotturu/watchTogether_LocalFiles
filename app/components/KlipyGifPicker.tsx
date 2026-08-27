@@ -119,8 +119,12 @@ export default function KlipyGifPicker({
         )}
       </div>
 
-      <div className="tgp-header">
-        <form onSubmit={handleSearchSubmit} className="tgp-search-form">
+      <div className="tgp-head">
+        <form onSubmit={handleSearchSubmit} className="tgp-search-wrap">
+          <svg className="tgp-search-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <circle cx="11" cy="11" r="7" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
           <input
             type="text"
             className="tgp-search-input"
@@ -146,72 +150,75 @@ export default function KlipyGifPicker({
             </button>
           )}
         </form>
-        <button type="button" className="tgp-close" onClick={onClose} title="Close GIF picker">
+        <button type="button" className="tgp-close-btn" onClick={onClose} title="Close GIF picker">
           ✕
         </button>
       </div>
 
-      <div className="tgp-grid">
+      <div className="tgp-grid-container">
         {loading && gifs.length === 0 && (
-          <div className="tgp-empty">
+          <div className="tgp-empty-wrap">
             <div className="tgp-spinner" />
             <p>Loading GIFs…</p>
           </div>
         )}
 
         {error && gifs.length === 0 && !loading && (
-          <div className="tgp-empty tgp-error">
+          <div className="tgp-error-wrap">
             <p>⚠️ {error}</p>
             {needsKey && (
-              <a
-                href="https://partner.klipy.com"
-                target="_blank"
-                rel="noreferrer"
-                className="tgp-key-link"
-              >
-                Get free KLIPY API key →
-              </a>
+              <p className="tgp-error-hint">
+                <a
+                  href="https://partner.klipy.com"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Get free KLIPY API key →
+                </a>
+              </p>
             )}
           </div>
         )}
 
         {!loading && !error && gifs.length === 0 && (
-          <div className="tgp-empty">
+          <div className="tgp-empty-wrap">
             <p>No GIFs found for &ldquo;{query}&rdquo;</p>
           </div>
         )}
 
-        {gifs.map((gif) => {
-          const isVideo = gif.isVideo || gif.url?.endsWith('.mp4') || gif.previewUrl?.endsWith('.mp4');
-          return (
-            <button
-              key={gif.id}
-              type="button"
-              className="tgp-item"
-              onClick={() => onSelectGif(gif)}
-              title={gif.title || 'Send GIF'}
-            >
-              {isVideo ? (
-                <video
-                  src={gif.previewUrl || gif.url}
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  className="tgp-img"
-                  style={{ objectFit: 'cover', width: '100%', height: '100%' }}
-                />
-              ) : (
-                <img
-                  src={gif.previewUrl || gif.url}
-                  alt={gif.title || 'GIF'}
-                  loading="lazy"
-                  className="tgp-img"
-                />
-              )}
-            </button>
-          );
-        })}
+        <div className="tgp-grid">
+          {gifs.map((gif) => {
+            const isVideo = gif.isVideo || gif.url?.endsWith('.mp4') || gif.previewUrl?.endsWith('.mp4');
+            return (
+              <button
+                key={gif.id}
+                type="button"
+                className="tgp-item"
+                onClick={() => onSelectGif(gif)}
+                title={gif.title || 'Send GIF'}
+              >
+                {isVideo ? (
+                  <video
+                    src={gif.previewUrl || gif.url}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    className="tgp-img"
+                    style={{ objectFit: 'cover', width: '100%', height: '100%' }}
+                  />
+                ) : (
+                  <img
+                    src={gif.previewUrl || gif.url}
+                    alt={gif.title || 'GIF'}
+                    loading="lazy"
+                    className="tgp-img"
+                  />
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="tgp-footer">

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useUser, UserButton } from '@clerk/nextjs';
+import { useUser, useAuth, UserButton } from '@clerk/nextjs';
 import { getSocket } from '../../lib/socket';
 import { UserRoom } from '../../types/realtime';
 import { ThemeToggle } from '../components/ThemeToggle';
@@ -10,6 +10,7 @@ import { ThemeToggle } from '../components/ThemeToggle';
 export default function DashboardPage(): React.JSX.Element {
   const router = useRouter();
   const { user, isLoaded, isSignedIn } = useUser();
+  const { getToken } = useAuth();
   const [partyTitle, setPartyTitle] = useState<string>('');
   const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
   const [myRooms, setMyRooms] = useState<UserRoom[]>([]);
@@ -25,11 +26,13 @@ export default function DashboardPage(): React.JSX.Element {
     }
   }, [isLoaded, isSignedIn, router]);
 
-  const fetchRooms = () => {
+  const fetchRooms = async () => {
     if (!user?.id) return;
     const socket = getSocket();
     setLoadingRooms(true);
-    socket.emit('get-my-rooms', { userId: user.id }, (res: { rooms?: UserRoom[] }) => {
+    // Ownership is proven with a session token, never a claimed id.
+    const authToken = await getToken();
+    socket.emit('get-my-rooms', { authToken }, (res: { rooms?: UserRoom[] }) => {
       setLoadingRooms(false);
       if (res && Array.isArray(res.rooms)) {
         setMyRooms(res.rooms);
@@ -56,7 +59,7 @@ export default function DashboardPage(): React.JSX.Element {
     router.push(`/room/${res.code}`);
   }
 
-  const createPersistentRoom = (e: React.FormEvent) => {
+  const createPersistentRoom = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     const displayName = user?.firstName || user?.username || 'Host';
@@ -70,7 +73,7 @@ export default function DashboardPage(): React.JSX.Element {
       {
         name: displayName,
         title,
-        ownerId: user?.id,
+        authToken: await getToken(),
         controlLock: isPrivateMode,
         sessionId: typeof window !== 'undefined' ? localStorage.getItem('reelsync:sessionId') : null,
       },
@@ -102,13 +105,16 @@ export default function DashboardPage(): React.JSX.Element {
     );
   };
 
-  const deleteRoom = (code: string) => {
+  const deleteRoom = async (code: string) => {
     if (!user?.id) return;
     if (!confirm(`Are you sure you want to delete room ${code}?`)) return;
 
-    getSocket().emit('delete-room', { code, ownerId: user.id }, (res: { success?: boolean }) => {
+    const authToken = await getToken();
+    getSocket().emit('delete-room', { code, authToken }, (res: { success?: boolean; error?: string }) => {
       if (res?.success) {
         setMyRooms((prev) => prev.filter((r) => r.code !== code));
+      } else if (res?.error) {
+        setError(res.error);
       }
     });
   };
@@ -267,7 +273,7 @@ export default function DashboardPage(): React.JSX.Element {
                       style={{ background: 'var(--accent)', color: '#FFFFFF', borderColor: 'transparent' }}
                       onClick={() => joinExistingRoom(undefined, r.code)}
                     >
-                      Join Room →
+                      Join →
                     </button>
                     <button
                       type="button"
@@ -320,7 +326,7 @@ export default function DashboardPage(): React.JSX.Element {
               disabled={loading !== '' || !joinCode.trim()}
               style={{ width: 'auto', minWidth: '120px' }}
             >
-              {loading === 'join' ? 'Joining…' : 'Join Party'}
+              {loading === 'join' ? 'Joining…' : 'Join →'}
             </button>
           </form>
 

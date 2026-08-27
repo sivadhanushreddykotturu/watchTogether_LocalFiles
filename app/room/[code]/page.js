@@ -64,12 +64,6 @@ export default function Room() {
   const [meId, setMeId] = useState(null);
   const [mySessionId, setMySessionId] = useState(null);
   const [adultMode, setAdultMode] = useState(false);
-
-  useEffect(() => {
-    if (!adultMode && searchPlatform === 'ph') {
-      setSearchPlatform('youtube');
-    }
-  }, [adultMode, searchPlatform]);
   const [isHost, setIsHost] = useState(false);
   const [controlLock, setControlLock] = useState(false);
   const [knockRequests, setKnockRequests] = useState([]); // [{knockId, name, socketId}]
@@ -103,6 +97,12 @@ export default function Room() {
   const searchDebounceRef = useRef(null);
   const [adBreak, setAdBreak] = useState(false);
   const [ytError, setYtError] = useState('');
+
+  useEffect(() => {
+    if (!adultMode && searchPlatform === 'ph') {
+      setSearchPlatform('youtube');
+    }
+  }, [adultMode, searchPlatform]);
   const [micOn, setMicOn] = useState(false);
   const [peerVoice, setPeerVoice] = useState({}); // socketId -> true while their mic is live
   const [speakers, setSpeakers] = useState({});  // socketId -> true while speaking
@@ -155,6 +155,8 @@ export default function Room() {
   const [audioPanelOpen, setAudioPanelOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [pipOn, setPipOn] = useState(false);
+  const [pipSupported, setPipSupported] = useState(false);
   const [zoomUiVisible, setZoomUiVisible] = useState(false);
   const zoomUiTimerRef = useRef(null);
 
@@ -883,7 +885,7 @@ export default function Room() {
       joinedRef.current = true;
       meRef.current = res.self;
       setMeId(res.self.id);
-      if (res.host === res.self.id) setIsHost(true);
+      setIsHost(res.host === res.self.id);
       if (typeof res.controlLock === 'boolean') setControlLock(res.controlLock);
       if (typeof res.adultMode === 'boolean') {
         setAdultMode(res.adultMode);
@@ -1108,6 +1110,18 @@ export default function Room() {
       if (!chatVisible()) bumpUnread();
     };
 
+    // Persisted history streams in right after join — merge anything new ahead
+    // of the live messages (deduped by id so reconnects never double-print).
+    const onChatHistory = (history) => {
+      if (!Array.isArray(history) || history.length === 0) return;
+      setMessages((prev) => {
+        const seen = new Set(prev.map((m) => m.id));
+        const fresh = history.filter((m) => m && m.id && !seen.has(m.id));
+        if (fresh.length === 0) return prev;
+        return [...fresh, ...prev].slice(-500);
+      });
+    };
+
     const onPlaybackSpeed = ({ speed: spd, name: actor }) => {
       const s = Number(spd) || 1;
       setSpeed(s);
@@ -1142,7 +1156,7 @@ export default function Room() {
         if (!res || res.error) { router.replace('/'); return; }
         meRef.current = res.self;
         setMeId(res.self.id);
-        if (res.host === res.self.id) setIsHost(true);
+        setIsHost(res.host === res.self.id);
         if (typeof res.controlLock === 'boolean') setControlLock(res.controlLock);
         if (typeof res.adultMode === 'boolean') {
           setAdultMode(res.adultMode);
@@ -1255,6 +1269,7 @@ export default function Room() {
     socket.on('playback', onPlayback);
     socket.on('users', onUsers);
     socket.on('chat', onChat);
+    socket.on('chat-history', onChatHistory);
     socket.on('playback-speed', onPlaybackSpeed);
     socket.on('reaction', onReaction);
     socket.on('peer-file-meta', onPeerFileMeta);
@@ -1345,6 +1360,13 @@ export default function Room() {
       if (!document.fullscreenElement) setZoomUiVisible(false);
     };
     document.addEventListener('fullscreenchange', onFsChange);
+
+    // --- Picture-in-Picture: track support + window state (events bubble to document) ---
+    setPipSupported(Boolean(document.pictureInPictureEnabled));
+    const onPipEnter = () => setPipOn(true);
+    const onPipLeave = () => setPipOn(false);
+    document.addEventListener('enterpictureinpicture', onPipEnter);
+    document.addEventListener('leavepictureinpicture', onPipLeave);
     const screenEl = screenRef.current;
     if (screenEl) {
       screenEl.addEventListener('mousemove', pokeZoomUi);
@@ -1424,6 +1446,7 @@ export default function Room() {
       socket.off('playback', onPlayback);
       socket.off('users', onUsers);
       socket.off('chat', onChat);
+      socket.off('chat-history', onChatHistory);
       socket.off('peer-time', onPeerTime);
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
@@ -1447,6 +1470,8 @@ export default function Room() {
       window.removeEventListener('resize', onResize);
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('fullscreenchange', onFsChange);
+      document.removeEventListener('enterpictureinpicture', onPipEnter);
+      document.removeEventListener('leavepictureinpicture', onPipLeave);
       if (screenEl) {
         screenEl.removeEventListener('mousemove', pokeZoomUi);
         screenEl.removeEventListener('pointerdown', pokeZoomUi);
@@ -2523,7 +2548,18 @@ export default function Room() {
   const fullscreen = () => {
     if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
     if (screenRef.current.requestFullscreen) screenRef.current.requestFullscreen().catch(() => {});
-    else if (videoRef.current.webkitEnterFullscreen) videoRef.current.webkitEnterFullscreen(); // iPhone Safari
+  };
+
+  const togglePip = async () => {
+    const v = videoRef.current;
+    if (!v || !document.pictureInPictureEnabled) return;
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else {
+        await v.requestPictureInPicture();
+      }
+    } catch { /* video has no source yet, or the gesture was consumed elsewhere */ }
   };
 
   const nowPosition = nowInfo.playing
@@ -3367,6 +3403,26 @@ export default function Room() {
               >
                 CC
                 {(source?.type === 'youtube' ? ytCcOn : subsOn) && <span className="cc-dot" />}
+              </button>
+
+              <button
+                className={'t-btn pip-btn' + (pipOn ? ' active' : '')}
+                onClick={togglePip}
+                disabled={!pipSupported || source?.type === 'youtube' || source?.type === 'embed'}
+                title={
+                  !pipSupported
+                    ? 'Picture-in-Picture is not supported in this browser'
+                    : source?.type === 'youtube' || source?.type === 'embed'
+                      ? 'Picture-in-Picture is only available for local files & streams'
+                      : pipOn
+                        ? 'Exit Picture-in-Picture'
+                        : 'Picture-in-Picture'
+                }
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <rect x="11" y="12" width="8" height="5" rx="1" fill="currentColor" stroke="none" />
+                </svg>
               </button>
 
               <button className="t-btn" onClick={fullscreen} title="Fullscreen">
