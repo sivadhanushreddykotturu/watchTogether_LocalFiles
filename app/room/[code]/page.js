@@ -130,6 +130,7 @@ export default function Room() {
   const [danmakuList, setDanmakuList] = useState([]);
   const [fileMatch, setFileMatch] = useState(null);
   const [joinError, setJoinError] = useState('');
+  const [knockWaiting, setKnockWaiting] = useState(false); // waiting on host approval (private party)
   const [subTracks, setSubTracks] = useState([{ id: 'off', label: 'Off / Disabled', cues: [] }]);
   const [activeTrackId, setActiveTrackId] = useState('off');
   const [audioTracks, setAudioTracks] = useState([{ id: 'default', index: 0, label: 'Default Audio' }]);
@@ -869,11 +870,7 @@ export default function Room() {
     getFFmpeg().catch((e) => console.log('FFmpeg pre-warming:', e));
 
     // --- join ---
-    socket.emit('join-room', { code, name, sessionId }, (res) => {
-      if (!res || res.error) {
-        setJoinError((res && res.error) || 'Could not join that room.');
-        return;
-      }
+    const applyJoinResponse = (res) => {
       joinedRef.current = true;
       meRef.current = res.self;
       setMeId(res.self.id);
@@ -907,6 +904,21 @@ export default function Room() {
       if (res.state.playing) {
         setPickerHint(`The room is already watching — at ${fmt(res.state.time)} and rolling.`);
       }
+    };
+
+    // Private party: the server said the room is locked — knock and wait.
+    const startKnock = () => {
+      setKnockWaiting(true);
+      socket.emit('knock-room', { code, name, sessionId });
+    };
+
+    socket.emit('join-room', { code, name, sessionId }, (res) => {
+      if (res && res.locked) { startKnock(); return; }
+      if (!res || res.error) {
+        setJoinError((res && res.error) || 'Could not join that room.');
+        return;
+      }
+      applyJoinResponse(res);
     });
 
     // --- video element events ---
@@ -1145,6 +1157,11 @@ export default function Room() {
     const onConnect = () => {
       if (!joinedRef.current) return; // initial join handles first connect
       socket.emit('join-room', { ...sessionRef.current, sessionId: mySessionIdRef.current, rejoin: true }, (res) => {
+        if (res && res.locked) {
+          setKnockWaiting(true);
+          socket.emit('knock-room', { ...sessionRef.current, sessionId: mySessionIdRef.current });
+          return;
+        }
         if (!res || res.error) { router.replace('/'); return; }
         meRef.current = res.self;
         setMeId(res.self.id);
@@ -1257,6 +1274,20 @@ export default function Room() {
         setKnockRequests((prev) => prev.filter((r) => r.knockId !== knockId));
       }, 60000);
     };
+    const onKnockPending = () => setKnockWaiting(true);
+    const onKnockRejected = ({ reason } = {}) => {
+      setKnockWaiting(false);
+      setJoinError(reason || 'The host declined your request.');
+    };
+    const onJoinRoomAck = (res) => {
+      if (!res || res.error) {
+        setKnockWaiting(false);
+        setJoinError((res && res.error) || 'Could not join that room.');
+        return;
+      }
+      setKnockWaiting(false);
+      applyJoinResponse(res);
+    };
 
     socket.on('playback', onPlayback);
     socket.on('users', onUsers);
@@ -1277,6 +1308,9 @@ export default function Room() {
     socket.on('adult-mode-change', onAdultModeChange);
     socket.on('control-lock-change', onControlLockChange);
     socket.on('knock-request', onKnockRequest);
+    socket.on('knock-pending', onKnockPending);
+    socket.on('knock-rejected', onKnockRejected);
+    socket.on('join-room-ack', onJoinRoomAck);
 
     // --- NTP Millisecond Sync ---
     const doNtpSync = () => {
@@ -1451,6 +1485,9 @@ export default function Room() {
       socket.off('adult-mode-change', onAdultModeChange);
       socket.off('control-lock-change', onControlLockChange);
       socket.off('knock-request', onKnockRequest);
+      socket.off('knock-pending', onKnockPending);
+      socket.off('knock-rejected', onKnockRejected);
+      socket.off('join-room-ack', onJoinRoomAck);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('seeked', onSeeked);
@@ -2566,6 +2603,23 @@ export default function Room() {
           <h1 className="wordmark"><span className="stroke">REEL</span><span className="fill-word">SYNC</span></h1>
           <p className="error" role="alert">{joinError}</p>
           <button className="btn primary big" onClick={() => router.push('/')}>Back to start</button>
+        </div>
+      </main>
+    );
+  }
+
+  // Private party lobby: knocked, waiting on the host
+  if (knockWaiting) {
+    return (
+      <main className="landing">
+        <div className="landing-card" style={{ textAlign: 'center' }}>
+          <h1 className="wordmark"><span className="stroke">REEL</span><span className="fill-word">SYNC</span></h1>
+          <div className="tgp-spinner" style={{ margin: '0 auto 16px' }} />
+          <p style={{ margin: '0 0 6px', fontWeight: 600, color: 'var(--ink)', fontSize: '15px' }}>Knocking…</p>
+          <p style={{ margin: '0 0 20px', color: 'var(--dim)', fontSize: '14px', lineHeight: 1.55 }}>
+            This is a private party. The host has been asked to let you in — hang tight.
+          </p>
+          <button className="btn ghost big" onClick={() => router.push('/')}>Cancel</button>
         </div>
       </main>
     );

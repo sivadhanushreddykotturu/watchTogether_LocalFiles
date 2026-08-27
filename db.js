@@ -56,6 +56,7 @@ function saveRoom(code, state, meta = {}) {
   if (meta.title) updateData.title = meta.title;
   if (meta.ownerId) updateData.ownerId = meta.ownerId;
   if (meta.ownerName) updateData.ownerName = meta.ownerName;
+  if (meta.controlLock !== undefined) updateData.controlLock = Boolean(meta.controlLock);
 
   db.collection('rooms').updateOne(
     { code },

@@ -30,6 +30,10 @@ const LEAVE_GRACE_MS = Number(process.env.LEAVE_GRACE_MS || 45000);
 // ---------------------------------------------------------------------------
 const rooms = new Map();
 const sessionToSocket = new Map(); // sessionId -> socketId
+// Pending lobby knocks: knockId -> { socket, timer, code, name, sessionId }.
+// MUST live at module scope — knocks are stored on the guest's connection but
+// answered on the host's, so a per-connection map can never see them.
+const pendingKnocks = new Map();
 
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no easily-confused chars
 const USER_COLORS = ['#8B5CF6', '#E4572E', '#4ECDC4', '#F2A33C', '#6A8EAE', '#C5D86D', '#EF767A', '#5EB1EF'];
@@ -64,8 +68,9 @@ function freshRoom(code, state) {
     recentlyLeft: new Map(),
     voice: new Map(), // socketId -> true while their mic is live
     sessionIds: new Map(), // socketId -> sessionId
+    approved: new Set(), // sessionIds the host has let in through knock
     host: null, // socketId of room creator
-    controlLock: false, // only host can control video
+    controlLock: false, // only host can control video + guests must knock to join
     adultMode: false, // enables adult content
     state: state || { playing: false, time: 0, updatedAt: Date.now(), subOffset: 0, source: null },
   };
@@ -246,7 +251,7 @@ function attach(io) {
       room.ownerId = ownerId;
       rooms.set(code, room);
 
-      db.saveRoom(code, room.state, { title: room.title, ownerId, ownerName: cleanName(name) });
+      db.saveRoom(code, room.state, { title: room.title, ownerId, ownerName: cleanName(name), controlLock: room.controlLock });
       joinRoom(io, socket, code, name, { history: [] }, cb);
       room.host = socket.id;
     });
@@ -309,7 +314,18 @@ function attach(io) {
           return;
         }
         room = freshRoom(code, saved.state ? { subOffset: 0, source: null, queue: [], ...saved.state } : undefined);
+        room.controlLock = Boolean(saved.controlLock);
         rooms.set(code, room);
+      }
+
+      // Locked rooms (knock-to-join): only the host and session ids the host
+      // has already approved may enter directly — everyone else must knock.
+      if (room.controlLock && room.host !== socket.id) {
+        const sid = socket.data.sessionId;
+        if (!sid || !room.approved.has(sid)) {
+          if (typeof cb === 'function') cb({ locked: true, code });
+          return;
+        }
       }
 
       // Join instantly from memory; history streams in after.
@@ -675,9 +691,6 @@ function attach(io) {
     });
 
     // --- Room Lobby: knock to join for locked rooms ---
-    // pendingKnocks: Map<knockId, { socket, timer, code, name }>  (module-scoped per connection)
-    const pendingKnocks = new Map(); // local to this connection closure
-
     socket.on('knock-room', ({ code, name, sessionId } = {}) => {
       code = String(code || '').trim().toUpperCase();
       socket.data.sessionId = String(sessionId || '').slice(0, 64) || null;
@@ -709,7 +722,7 @@ function attach(io) {
         }
       }, 60000);
 
-      pendingKnocks.set(knockId, { socket, timer, code, name });
+      pendingKnocks.set(knockId, { socket, timer, code, name, sessionId: socket.data.sessionId || null });
       io.to(room.host).emit('knock-request', { knockId, name: cleanName(name), socketId: socket.id });
       socket.emit('knock-pending', { knockId });
     });
@@ -722,6 +735,10 @@ function attach(io) {
       if (!knock) return;
       clearTimeout(knock.timer);
       pendingKnocks.delete(knockId);
+      if (!knock.socket.connected) return; // guest bailed while waiting — don't ghost them in
+      // Remember the approval so this guest can rejoin (mobile blips, refresh)
+      // without knocking again while the room lives.
+      if (knock.sessionId) room.approved.add(knock.sessionId);
       joinRoom(io, knock.socket, knock.code, knock.name, { history: [] }, (res) =>
         knock.socket.emit('join-room-ack', res)
       );
@@ -745,6 +762,7 @@ function attach(io) {
       if (!room || room.host !== socket.id) return; // host only
       room.controlLock = !!locked;
       io.to(room.code).emit('control-lock-change', { controlLock: room.controlLock });
+      db.saveRoom(room.code, room.state, { controlLock: room.controlLock }); // persist so the lock survives restarts
     });
 
     // --- Host controls: adult mode toggle ---
@@ -771,7 +789,16 @@ function attach(io) {
     });
 
     socket.on('leave-room', () => leaveCurrentRoom(io, socket));
-    socket.on('disconnect', () => leaveCurrentRoom(io, socket));
+    socket.on('disconnect', () => {
+      // Clean up any lobby knocks this socket was waiting on
+      for (const [kid, k] of pendingKnocks) {
+        if (k.socket === socket) {
+          clearTimeout(k.timer);
+          pendingKnocks.delete(kid);
+        }
+      }
+      leaveCurrentRoom(io, socket);
+    });
   });
 }
 
