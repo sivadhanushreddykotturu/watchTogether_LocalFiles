@@ -2,8 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
+import { v4 as uuidv4 } from 'uuid';
 import AppleEmojiPicker from '../../components/AppleEmojiPicker';
 import KlipyGifPicker from '../../components/KlipyGifPicker';
+import AuthButton from '../../components/AuthButton';
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
@@ -54,9 +57,20 @@ export default function Room() {
   const params = useParams();
   const router = useRouter();
   const code = String(params.code || '').toUpperCase();
+  const { user: clerkUser } = useUser();
 
   // ---------- render state ----------
   const [meId, setMeId] = useState(null);
+  const [mySessionId, setMySessionId] = useState(null);
+  const [adultMode, setAdultMode] = useState(false);
+  const [isHost, setIsHost] = useState(false);
+  const [controlLock, setControlLock] = useState(false);
+  const [knockRequests, setKnockRequests] = useState([]); // [{knockId, name, socketId}]
+  const [pingMs, setPingMs] = useState(null); // live ping latency
+  const [outboxMessages, setOutboxMessages] = useState([]); // pending offline messages
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const [users, setUsers] = useState([]);
   const [messages, setMessages] = useState([]);
   const [toasts, setToasts] = useState([]);
@@ -170,6 +184,10 @@ export default function Room() {
 
   // ---------- logic refs (mutable, survive renders; no stale closures) ----------
   const sessionRef = useRef(null);   // { code, name }
+  const mySessionIdRef = useRef(null);
+  const adultModeRef = useRef(false);
+  const ntpOffsetRef = useRef(0); // server clock offset in ms
+  const outboxRef = useRef([]); // offline message outbox
   const joinedRef = useRef(false);
   const userIntentRef = useRef(false);
   const meRef = useRef(null);
@@ -576,7 +594,31 @@ export default function Room() {
       parts.push(text.substring(lastIndex));
     }
 
-    return parts.length > 0 ? parts : text;
+    // Wrap @mentions in highlight spans
+    const parsedWithMentions = (parts.length > 0 ? parts : [text]).flatMap((p, pIdx) => {
+      if (typeof p !== 'string') return p;
+      const mentionRegex = /(@[\w\d_-]+)/g;
+      const subParts = [];
+      let subLast = 0;
+      let mMatch;
+      while ((mMatch = mentionRegex.exec(p)) !== null) {
+        if (mMatch.index > subLast) {
+          subParts.push(p.substring(subLast, mMatch.index));
+        }
+        subParts.push(
+          <span key={`mention-${pIdx}-${mMatch.index}`} className="mention-highlight">
+            {mMatch[0]}
+          </span>
+        );
+        subLast = mentionRegex.lastIndex;
+      }
+      if (subLast < p.length) {
+        subParts.push(p.substring(subLast));
+      }
+      return subParts.length > 0 ? subParts : p;
+    });
+
+    return parsedWithMentions;
   };
 
   // ---------- smart file match detection ----------
@@ -803,11 +845,21 @@ export default function Room() {
 
   // ---------- main effect: join, wire everything, clean up on leave ----------
   useEffect(() => {
-    const name = sessionStorage.getItem('reelsync:name');
+    const name = (clerkUser && (clerkUser.firstName || clerkUser.username)) || sessionStorage.getItem('reelsync:name');
     if (!name) {
       router.replace(`/?room=${code}`);
       return;
     }
+
+    // Init persistent sessionId
+    let sessionId = localStorage.getItem('reelsync:sessionId');
+    if (!sessionId) {
+      sessionId = uuidv4();
+      localStorage.setItem('reelsync:sessionId', sessionId);
+    }
+    mySessionIdRef.current = sessionId;
+    setMySessionId(sessionId);
+
     const socket = getSocket();
     sessionRef.current = { code, name };
     setTab(window.innerWidth < 640 ? 'chat' : 'watch');
@@ -816,7 +868,7 @@ export default function Room() {
     getFFmpeg().catch((e) => console.log('FFmpeg pre-warming:', e));
 
     // --- join ---
-    socket.emit('join-room', { code, name }, (res) => {
+    socket.emit('join-room', { code, name, sessionId }, (res) => {
       if (!res || res.error) {
         setJoinError((res && res.error) || 'Could not join that room.');
         return;
@@ -824,6 +876,12 @@ export default function Room() {
       joinedRef.current = true;
       meRef.current = res.self;
       setMeId(res.self.id);
+      if (res.host === res.self.id) setIsHost(true);
+      if (typeof res.controlLock === 'boolean') setControlLock(res.controlLock);
+      if (typeof res.adultMode === 'boolean') {
+        setAdultMode(res.adultMode);
+        adultModeRef.current = res.adultMode;
+      }
       setStateLatest(res.state.playing, res.state.time);
       offsetRef.current = res.state.subOffset || 0;
       setSubOffset(offsetRef.current);
@@ -1014,7 +1072,15 @@ export default function Room() {
           return next;
         });
       }
-      setMessages((prev) => [...prev.slice(-499), msg]);
+      // Reconcile optimistic message
+      if (msg.clientId) {
+        setMessages((prev) => {
+          const withoutOpt = prev.filter((m) => m.id !== msg.clientId);
+          return [...withoutOpt.slice(-499), { ...msg, pending: false }];
+        });
+      } else {
+        setMessages((prev) => [...prev.slice(-499), msg]);
+      }
       if (!msg.system && danmakuEnabledRef.current) {
         const dId = Date.now() + Math.random();
         const topPct = 8 + Math.floor(Math.random() * 42);
@@ -1065,10 +1131,16 @@ export default function Room() {
     };
     const onConnect = () => {
       if (!joinedRef.current) return; // initial join handles first connect
-      socket.emit('join-room', { ...sessionRef.current, rejoin: true }, (res) => {
+      socket.emit('join-room', { ...sessionRef.current, sessionId: mySessionIdRef.current, rejoin: true }, (res) => {
         if (!res || res.error) { router.replace('/'); return; }
         meRef.current = res.self;
         setMeId(res.self.id);
+        if (res.host === res.self.id) setIsHost(true);
+        if (typeof res.controlLock === 'boolean') setControlLock(res.controlLock);
+        if (typeof res.adultMode === 'boolean') {
+          setAdultMode(res.adultMode);
+          adultModeRef.current = res.adultMode;
+        }
         setStateLatest(res.state.playing, res.state.time);
         setUsers(res.users);
         if (Array.isArray(res.state.queue)) {
@@ -1083,6 +1155,15 @@ export default function Room() {
             size: fileLoadedRef.current ? fileLoadedRef.current.size : 0,
             name: fileLoadedRef.current ? fileLoadedRef.current.name : '',
           });
+        }
+        // Drain outbox on reconnect
+        if (outboxRef.current.length > 0) {
+          const pending = [...outboxRef.current];
+          outboxRef.current = [];
+          setOutboxMessages([]);
+          for (const msg of pending) {
+            socket.emit('chat', msg);
+          }
         }
         toast('Reconnected');
       });
@@ -1146,6 +1227,24 @@ export default function Room() {
         toast(`Now playing: ${item.title || 'Next video'}`);
       }
     };
+
+    const onHostChange = ({ newHostId }) => {
+      setIsHost(newHostId === (meRef.current?.id));
+    };
+    const onAdultModeChange = ({ adultMode: am }) => {
+      setAdultMode(am);
+      adultModeRef.current = am;
+    };
+    const onControlLockChange = (locked) => {
+      setControlLock(locked);
+    };
+    const onKnockRequest = ({ knockId, name: knockerName, socketId: knockerSocketId }) => {
+      setKnockRequests((prev) => [...prev, { knockId, name: knockerName, socketId: knockerSocketId }]);
+      setTimeout(() => {
+        setKnockRequests((prev) => prev.filter((r) => r.knockId !== knockId));
+      }, 60000);
+    };
+
     socket.on('playback', onPlayback);
     socket.on('users', onUsers);
     socket.on('chat', onChat);
@@ -1160,6 +1259,24 @@ export default function Room() {
     socket.on('peer-voice', onPeerVoice);
     socket.on('queue-update', onQueueUpdate);
     socket.on('user-typing', onUserTyping);
+    socket.on('host-change', onHostChange);
+    socket.on('adult-mode-change', onAdultModeChange);
+    socket.on('control-lock-change', onControlLockChange);
+    socket.on('knock-request', onKnockRequest);
+
+    // --- NTP Millisecond Sync ---
+    const doNtpSync = () => {
+      const t0 = Date.now();
+      socket.emit('ntp-sync', t0, ({ t1, t2 } = {}) => {
+        if (!t1 || !t2) return;
+        const t3 = Date.now();
+        const rtt = Math.max(1, t3 - t0);
+        ntpOffsetRef.current = Math.round((t2 - t0 - t3 + t2) / 2);
+        setPingMs(rtt);
+      });
+    };
+    doNtpSync();
+    const ntpInterval = setInterval(doNtpSync, 8000);
 
     // --- heartbeat + now-strip + subtitle ticker + typing expiry ---
     heartbeatRef.current = setInterval(beat, 2000);
@@ -1308,6 +1425,10 @@ export default function Room() {
       socket.off('peer-voice', onPeerVoice);
       socket.off('queue-update', onQueueUpdate);
       socket.off('user-typing', onUserTyping);
+      socket.off('host-change', onHostChange);
+      socket.off('adult-mode-change', onAdultModeChange);
+      socket.off('control-lock-change', onControlLockChange);
+      socket.off('knock-request', onKnockRequest);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('seeked', onSeeked);
@@ -1329,6 +1450,7 @@ export default function Room() {
       clearInterval(subTimerRef.current);
       clearInterval(ytTickRef.current);
       clearInterval(typingExpireInterval);
+      clearInterval(ntpInterval);
       if (voiceRef.current) voiceRef.current.leave();
       releaseWakeLock();
       if (video.src) { URL.revokeObjectURL(video.src); }
@@ -2242,6 +2364,16 @@ export default function Room() {
 
   const handleChatInputChange = (e) => {
     const val = e.target.value;
+    const atMatch = val.match(/@(\w*)$/);
+    if (atMatch) {
+      setMentionQuery(atMatch[1].toLowerCase());
+      setMentionOpen(true);
+      setMentionIndex(0);
+    } else {
+      setMentionOpen(false);
+      setMentionQuery('');
+    }
+
     const socket = getSocket();
     if (!socket.connected) return;
 
@@ -2267,50 +2399,107 @@ export default function Room() {
   };
 
   const sendChat = (e) => {
-    e.preventDefault();
-    const text = chatInputRef.current.value.trim();
+    if (e && e.preventDefault) e.preventDefault();
+    const text = chatInputRef.current ? chatInputRef.current.value.trim() : '';
     if (!text) return;
     const socket = getSocket();
+    const optimisticId = 'opt_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    const optimisticMsg = {
+      id: optimisticId,
+      system: false,
+      sender: meRef.current?.id || meId || 'me',
+      senderSessionId: mySessionIdRef.current,
+      name: sessionRef.current?.name || (clerkUser && (clerkUser.firstName || clerkUser.username)) || 'You',
+      color: meRef.current?.color || '#8A93A6',
+      text,
+      replyTo: replyingTo ? {
+        id: replyingTo.id,
+        name: replyingTo.name,
+        color: replyingTo.color,
+        text: replyingTo.text,
+      } : null,
+      at: Date.now(),
+      pending: !socket.connected, // greyed out if offline
+    };
+
+    // 0ms instant optimistic render
+    setMessages((prev) => [...prev.slice(-499), optimisticMsg]);
+
+    const payload = {
+      text,
+      clientId: optimisticId,
+      replyTo: replyingTo ? {
+        id: replyingTo.id,
+        name: replyingTo.name,
+        color: replyingTo.color,
+        text: replyingTo.text,
+      } : null,
+    };
+
     if (socket.connected) {
-      socket.emit('chat', {
-        text,
-        replyTo: replyingTo ? {
-          id: replyingTo.id,
-          name: replyingTo.name,
-          color: replyingTo.color,
-          text: replyingTo.text,
-        } : null,
-      });
+      socket.emit('chat', payload);
       if (isTypingLocalRef.current) {
         socket.emit('typing', false);
         isTypingLocalRef.current = false;
       }
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    } else {
+      outboxRef.current = [...outboxRef.current, payload];
+      setOutboxMessages([...outboxRef.current]);
     }
-    chatInputRef.current.value = '';
+
+    if (chatInputRef.current) chatInputRef.current.value = '';
     setReplyingTo(null);
-    chatInputRef.current.focus();
+    setMentionOpen(false);
+    if (chatInputRef.current) chatInputRef.current.focus();
   };
 
   const handleSendGif = (gif) => {
     if (!gif || !gif.url) return;
     const socket = getSocket();
+    const optimisticId = 'opt_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    const optimisticMsg = {
+      id: optimisticId,
+      system: false,
+      sender: meRef.current?.id || meId || 'me',
+      senderSessionId: mySessionIdRef.current,
+      name: sessionRef.current?.name || (clerkUser && (clerkUser.firstName || clerkUser.username)) || 'You',
+      color: meRef.current?.color || '#8A93A6',
+      text: gif.url,
+      replyTo: replyingTo ? {
+        id: replyingTo.id,
+        name: replyingTo.name,
+        color: replyingTo.color,
+        text: replyingTo.text,
+      } : null,
+      at: Date.now(),
+      pending: !socket.connected,
+    };
+
+    setMessages((prev) => [...prev.slice(-499), optimisticMsg]);
+
+    const payload = {
+      text: gif.url,
+      clientId: optimisticId,
+      gif: true,
+      title: gif.title,
+      replyTo: replyingTo ? {
+        id: replyingTo.id,
+        name: replyingTo.name,
+        color: replyingTo.color,
+        text: replyingTo.text,
+      } : null,
+    };
+
     if (socket.connected) {
-      socket.emit('chat', {
-        text: gif.url,
-        gif: true,
-        title: gif.title,
-        replyTo: replyingTo ? {
-          id: replyingTo.id,
-          name: replyingTo.name,
-          color: replyingTo.color,
-          text: replyingTo.text,
-        } : null,
-      });
+      socket.emit('chat', payload);
       if (isTypingLocalRef.current) {
         socket.emit('typing', false);
         isTypingLocalRef.current = false;
       }
+    } else {
+      outboxRef.current = [...outboxRef.current, payload];
+      setOutboxMessages([...outboxRef.current]);
     }
     setReplyingTo(null);
     setGifPickerOpen(false);
@@ -2347,14 +2536,74 @@ export default function Room() {
           <span className="slate-label">ROOM</span>
           <span className="slate-code">{code}</span>
         </button>
+        {isHost && (
+          <span className="host-badge" title="You are the room host" style={{ background: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.3)', color: '#F59E0B', fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            👑 HOST
+          </span>
+        )}
+        {pingMs !== null && (
+          <span className={`ping-pill ${pingMs < 80 ? 'green' : pingMs < 200 ? 'yellow' : 'red'}`} title={`Latency: ${pingMs}ms`}>
+            {pingMs < 80 ? '🟢' : pingMs < 200 ? '🟡' : '🔴'} {pingMs}ms
+          </span>
+        )}
         {fileMatch && (
           <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')} title={fileMatch.match ? 'Exact file match across participants' : `Duration differs by ${fileMatch.delta}s`}>
             {fileMatch.match ? '✓ Same File' : `⚠️ ${fileMatch.delta}s diff`}
           </span>
         )}
+        {isHost && (
+          <button
+            type="button"
+            className={`btn ghost adult-mode-btn ${adultMode ? 'adult-on' : ''}`}
+            onClick={() => {
+              const next = !adultMode;
+              setAdultMode(next);
+              adultModeRef.current = next;
+              getSocket().emit('set-adult-mode', next);
+            }}
+            title={adultMode ? 'Adult Mode ON (Pornhub & RedGIFs enabled)' : 'Adult Mode OFF (Safe mode)'}
+            style={{ fontSize: '11px', padding: '4px 8px', borderRadius: '6px' }}
+          >
+            {adultMode ? '🔞 Adult Mode ON' : '🔞 Adult Mode OFF'}
+          </button>
+        )}
         <span className="spacer"></span>
+        <AuthButton />
         <button className="btn ghost" onClick={leave}>Leave</button>
       </header>
+
+      {/* Host knock approval banner */}
+      {isHost && knockRequests.length > 0 && (
+        <div className="knock-banner">
+          {knockRequests.map((req) => (
+            <div key={req.knockId} className="knock-item">
+              <span className="knock-name">👋 <strong>{req.name}</strong> requested to join</span>
+              <button
+                type="button"
+                className="btn primary"
+                style={{ padding: '4px 12px', fontSize: '12px', borderRadius: '6px' }}
+                onClick={() => {
+                  getSocket().emit('approve-join', { knockId: req.knockId, code });
+                  setKnockRequests((prev) => prev.filter((r) => r.knockId !== req.knockId));
+                }}
+              >
+                Accept
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                style={{ padding: '4px 12px', fontSize: '12px', borderRadius: '6px', color: 'var(--error)' }}
+                onClick={() => {
+                  getSocket().emit('reject-join', { knockId: req.knockId });
+                  setKnockRequests((prev) => prev.filter((r) => r.knockId !== req.knockId));
+                }}
+              >
+                Reject
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* phone-only quick action bar */}
       <div className="mobile-actions-bar">
@@ -3147,11 +3396,13 @@ export default function Room() {
                           </div>
                         );
                       }
-                      const isOwn = m.sender === meId;
+                      const isOwn = m.senderSessionId
+                        ? m.senderSessionId === mySessionId
+                        : (m.sender === meId || (m.name && m.name === sessionRef.current?.name));
                       const prev = arr[i - 1];
                     const isGrouped = prev && !prev.system && prev.sender === m.sender && (m.at - prev.at < 90000);
                     return (
-                      <div key={i} id={`msg-${m.id || m.at}`} className={'msg' + (isOwn ? ' own' : '') + (isGrouped ? ' grouped' : '')}>
+                      <div key={m.id || i} id={`msg-${m.id || m.at}`} className={'msg' + (isOwn ? ' own' : '') + (isGrouped ? ' grouped' : '') + (m.pending ? ' chat-msg-pending' : '')}>
                         {!isGrouped ? (
                           <div className="m-avatar" style={{ background: m.color }}>
                             {m.name ? m.name[0].toUpperCase() : '?'}
@@ -3166,7 +3417,10 @@ export default function Room() {
                                 {m.name}
                                 {isOwn && <span className="you-badge">YOU</span>}
                               </span>
-                              <span className="when">{clockFmt(m.at)}</span>
+                              <span className="when">
+                                {clockFmt(m.at)}
+                                {m.pending && <span className="pending-clock" title="Sending...">⏳</span>}
+                              </span>
                             </div>
                           )}
                           <div className="m-bubble-wrap">
@@ -3295,6 +3549,7 @@ export default function Room() {
               {gifPickerOpen && (
                 <div className="gif-picker-popover" ref={gifPickerRef}>
                   <KlipyGifPicker
+                    adultMode={adultMode}
                     onSelectGif={handleSendGif}
                     onClose={() => setGifPickerOpen(false)}
                   />
@@ -3321,7 +3576,31 @@ export default function Room() {
                 </div>
               )}
 
-              <form className="chat-form" onSubmit={sendChat}>
+              <form className="chat-form" onSubmit={sendChat} style={{ position: 'relative' }}>
+                {mentionOpen && (
+                  <div className="mention-dropdown">
+                    {users
+                      .filter((u) => u.name.toLowerCase().startsWith(mentionQuery) && u.id !== meId)
+                      .slice(0, 5)
+                      .map((u, idx) => (
+                        <div
+                          key={u.id}
+                          className={'mention-item' + (idx === mentionIndex ? ' active' : '')}
+                          onClick={() => {
+                            if (chatInputRef.current) {
+                              const cur = chatInputRef.current.value;
+                              chatInputRef.current.value = cur.replace(/@\w*$/, `@${u.name} `);
+                              setMentionOpen(false);
+                              chatInputRef.current.focus();
+                            }
+                          }}
+                        >
+                          <span className="mention-dot" style={{ background: u.color }} />
+                          <span>{u.name}</span>
+                        </div>
+                      ))}
+                  </div>
+                )}
                 <button
                   type="button"
                   className={'chat-emoji-toggle' + (emojiPickerOpen && emojiTarget === 'chat' ? ' active' : '')}
@@ -3346,7 +3625,7 @@ export default function Room() {
                     setGifPickerOpen((v) => !v);
                     setEmojiPickerOpen(false);
                   }}
-                  title="Search & Send GIFs (KLIPY)"
+                  title="Search & Send GIFs"
                   style={{ fontWeight: '800', fontSize: '11px', letterSpacing: '0.04em' }}
                 >
                   GIF
@@ -3354,7 +3633,7 @@ export default function Room() {
                 <input
                   ref={chatInputRef}
                   type="text"
-                  placeholder={replyingTo ? `Replying to ${replyingTo.name}…` : "Say something…"}
+                  placeholder={replyingTo ? `Replying to ${replyingTo.name}…` : "Say something (use @ to tag)…"}
                   maxLength={500}
                   autoComplete="off"
                   onChange={handleChatInputChange}
@@ -3403,16 +3682,18 @@ export default function Room() {
                     >
                       🔴 YouTube
                     </button>
-                    <button
-                      type="button"
-                      className={'sidebar-platform-tab' + (searchPlatform === 'ph' ? ' active' : '')}
-                      onClick={() => {
-                        setSearchPlatform('ph');
-                        if (ytSearchQuery) executeSearch(ytSearchQuery, 'ph');
-                      }}
-                    >
-                      🔞 Pornhub
-                    </button>
+                    {adultMode && (
+                      <button
+                        type="button"
+                        className={'sidebar-platform-tab' + (searchPlatform === 'ph' ? ' active' : '')}
+                        onClick={() => {
+                          setSearchPlatform('ph');
+                          if (ytSearchQuery) executeSearch(ytSearchQuery, 'ph');
+                        }}
+                      >
+                        🔞 Pornhub
+                      </button>
+                    )}
                   </div>
                   <div className="queue-search-input-wrap">
                     <input
@@ -3676,16 +3957,18 @@ export default function Room() {
               >
                 <span className="tab-icon">🔴</span> YouTube
               </button>
-              <button
-                type="button"
-                className={'search-platform-tab' + (searchPlatform === 'ph' ? ' active' : '')}
-                onClick={() => {
-                  setSearchPlatform('ph');
-                  if (ytSearchQuery) executeSearch(ytSearchQuery, 'ph');
-                }}
-              >
-                <span className="tab-icon">🔞</span> Pornhub
-              </button>
+              {adultMode && (
+                <button
+                  type="button"
+                  className={'search-platform-tab' + (searchPlatform === 'ph' ? ' active' : '')}
+                  onClick={() => {
+                    setSearchPlatform('ph');
+                    if (ytSearchQuery) executeSearch(ytSearchQuery, 'ph');
+                  }}
+                >
+                  <span className="tab-icon">🔞</span> Pornhub
+                </button>
+              )}
             </div>
 
             <div className="yt-search-header">

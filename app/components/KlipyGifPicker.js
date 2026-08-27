@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 
-export default function KlipyGifPicker({ onSelectGif, onClose }) {
+export default function KlipyGifPicker({ onSelectGif, onClose, adultMode = false }) {
   const [provider, setProvider] = useState('klipy');
   const [query, setQuery] = useState('');
   const [gifs, setGifs] = useState([]);
@@ -16,6 +16,12 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
   useEffect(() => {
     providerRef.current = provider;
   }, [provider]);
+
+  useEffect(() => {
+    if (!adultMode && provider === 'redgifs') {
+      handleProviderSwitch('klipy');
+    }
+  }, [adultMode]);
 
   const fetchGifs = async (searchQuery, activeProvider = providerRef.current) => {
     setLoading(true);
@@ -82,13 +88,15 @@ export default function KlipyGifPicker({ onSelectGif, onClose }) {
         >
           🎭 KLIPY
         </button>
-        <button
-          type="button"
-          className={'tgp-tab' + (provider === 'redgifs' ? ' active' : '')}
-          onClick={() => handleProviderSwitch('redgifs')}
-        >
-          🔞 RedGIFs
-        </button>
+        {adultMode && (
+          <button
+            type="button"
+            className={'tgp-tab' + (provider === 'redgifs' ? ' active' : '')}
+            onClick={() => handleProviderSwitch('redgifs')}
+          >
+            🔞 RedGIFs
+          </button>
+        )}
       </div>
 
       <div className="tgp-head">

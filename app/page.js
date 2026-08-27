@@ -2,10 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
 import { getSocket } from '../lib/socket';
+import AuthButton from './components/AuthButton';
 
 export default function Landing() {
   const router = useRouter();
+  const { user, isLoaded } = useUser();
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
@@ -18,8 +21,12 @@ export default function Landing() {
       getSocket();
     } catch { /* ignore */ }
 
-    const saved = sessionStorage.getItem('reelsync:name');
-    if (saved) setName(saved);
+    if (user && (user.firstName || user.username)) {
+      setName(user.firstName || user.username);
+    } else {
+      const saved = sessionStorage.getItem('reelsync:name');
+      if (saved) setName(saved);
+    }
     const urlCode = new URLSearchParams(window.location.search).get('room');
     if (urlCode) {
       setCode(urlCode.toUpperCase().slice(0, 5));
@@ -27,7 +34,7 @@ export default function Landing() {
     if (nameInputRef.current) {
       nameInputRef.current.focus();
     }
-  }, []);
+  }, [user]);
 
   function enter(res) {
     setLoading('');
@@ -79,9 +86,17 @@ export default function Landing() {
   return (
     <main className="landing">
       <div className="landing-card">
-        <p className="eyebrow">Synced local cinema</p>
-        <h1 className="wordmark"><span className="stroke">REEL</span><span className="fill-word">SYNC</span></h1>
-        <p className="tagline">Everyone opens their own copy of the file. ReelSync keeps every screen in lockstep — play, pause, rewind — with chat on the side.</p>
+        {/* Auth button — top right */}
+        <div className="landing-top-bar">
+          <span className="landing-brand">REEL<span className="brand-accent">SYNC</span></span>
+          <AuthButton />
+        </div>
+
+        <div className="landing-hero">
+          <p className="eyebrow">Synced local cinema</p>
+          <h1 className="wordmark"><span className="stroke">REEL</span><span className="fill-word">SYNC</span></h1>
+          <p className="tagline">Watch movies together — everyone opens their own copy. ReelSync keeps every screen in lockstep.</p>
+        </div>
 
         {code && (
           <div className="invite-banner">
@@ -89,59 +104,48 @@ export default function Landing() {
           </div>
         )}
 
-        <label className="field">
-          <span className="field-label">Your name</span>
-          <input
-            ref={nameInputRef}
-            type="text"
-            maxLength={24}
-            placeholder="e.g. Dhanush"
-            autoComplete="off"
-            value={name}
-            onChange={(e) => {
-              setName(e.target.value);
-              setError('');
-            }}
-            onKeyDown={onEnterKey}
-          />
-        </label>
+        <div className="landing-form">
+          <label className="field">
+            <span className="field-label">Your name</span>
+            <input
+              ref={nameInputRef}
+              type="text"
+              maxLength={24}
+              placeholder="e.g. Dhanush"
+              autoComplete="off"
+              value={name}
+              onChange={(e) => { setName(e.target.value); setError(''); }}
+              onKeyDown={onEnterKey}
+            />
+          </label>
 
-        <button
-          className="btn primary big"
-          onClick={create}
-          disabled={loading !== ''}
-        >
-          {loading === 'create' ? 'Starting screening…' : 'Start a screening'}
-        </button>
-
-        <div className="divider"><span>or join one</span></div>
-
-        <div className="join-row">
-          <input
-            type="text"
-            maxLength={5}
-            placeholder="CODE"
-            autoComplete="off"
-            spellCheck={false}
-            value={code}
-            onChange={(e) => {
-              setCode(e.target.value.toUpperCase());
-              setError('');
-            }}
-            onKeyDown={onEnterKey}
-          />
-          <button
-            className="btn primary"
-            onClick={join}
-            disabled={loading !== ''}
-          >
-            {loading === 'join' ? 'Joining…' : 'Join room'}
+          <button className="btn primary big" onClick={create} disabled={loading !== ''}>
+            {loading === 'create' ? 'Starting screening…' : '✦ Start a screening'}
           </button>
+
+          <div className="divider"><span>or join one</span></div>
+
+          <div className="join-row">
+            <input
+              type="text"
+              maxLength={5}
+              placeholder="CODE"
+              autoComplete="off"
+              spellCheck={false}
+              value={code}
+              onChange={(e) => { setCode(e.target.value.toUpperCase()); setError(''); }}
+              onKeyDown={onEnterKey}
+            />
+            <button className="btn primary" onClick={join} disabled={loading !== ''}>
+              {loading === 'join' ? 'Joining…' : 'Join'}
+            </button>
+          </div>
+
+          {error && <p className="error" role="alert">{error}</p>}
         </div>
 
-        {error && <p className="error" role="alert">{error}</p>}
+        <footer className="landing-foot">Nothing is uploaded — files stay on each machine.</footer>
       </div>
-      <footer className="landing-foot">Nothing is uploaded — files stay on each machine.</footer>
     </main>
   );
 }

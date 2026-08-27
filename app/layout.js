@@ -1,4 +1,5 @@
 import { Bebas_Neue, Instrument_Sans, JetBrains_Mono } from 'next/font/google';
+import { ClerkProvider } from '@clerk/nextjs';
 import './globals.css';
 
 const display = Bebas_Neue({ weight: '400', subsets: ['latin'], variable: '--font-display' });
@@ -12,8 +13,10 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
-      <body>{children}</body>
-    </html>
+    <ClerkProvider>
+      <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
+        <body>{children}</body>
+      </html>
+    </ClerkProvider>
   );
 }

@@ -182,11 +182,23 @@ app.prepare().then(() => {
       }));
       return;
     }
+    // NTP clock-sync: client uses this to calculate round-trip offset.
+    if (req.url === '/api/ping-ntp') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ t: Date.now() }));
+      return;
+    }
+
     handle(req, res);
   });
 
   // Same-origin only: the pages and the sockets come from this one service.
-  const io = new Server(server);
+  const io = new Server(server, {
+    transports: ['websocket', 'polling'],
+    pingInterval: 10000,
+    pingTimeout: 5000,
+    upgradeTimeout: 10000,
+  });
   realtime.attach(io);
 
   db.connect().then(() => {
