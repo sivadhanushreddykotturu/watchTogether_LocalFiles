@@ -217,6 +217,18 @@ function attach(io) {
       cb({ rooms: enriched });
     });
 
+    // --- delete a persistent room ---
+    socket.on('delete-room', async ({ code, ownerId } = {}, cb) => {
+      code = String(code || '').trim().toUpperCase();
+      if (!code) {
+        if (typeof cb === 'function') cb({ error: 'Code required' });
+        return;
+      }
+      const success = await db.deleteRoom(code, ownerId);
+      rooms.delete(code);
+      if (typeof cb === 'function') cb({ success });
+    });
+
     // --- join an existing room by code (hydrates from Mongo after a restart) ---
     socket.on('join-room', async ({ code, name, rejoin, sessionId } = {}, cb) => {
       code = String(code || '').trim().toUpperCase();

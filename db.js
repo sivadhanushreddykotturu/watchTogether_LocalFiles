@@ -84,6 +84,19 @@ async function getUserRooms(ownerId) {
   }
 }
 
+async function deleteRoom(code, ownerId) {
+  if (!db || !code) return false;
+  try {
+    const query = { code };
+    if (ownerId) query.ownerId = ownerId;
+    await db.collection('rooms').deleteOne(query);
+    await db.collection('messages').deleteMany({ roomCode: code });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---- chat ----
 
 function addMessage(code, { id, sender, name, color, text, replyTo }) {
@@ -123,4 +136,4 @@ async function getHistory(code, limit = 50) {
   } catch { return []; }
 }
 
-module.exports = { connect, isConnected, roomExists, getRoom, saveRoom, getUserRooms, addMessage, getHistory };
+module.exports = { connect, isConnected, roomExists, getRoom, saveRoom, getUserRooms, deleteRoom, addMessage, getHistory };

@@ -57,12 +57,18 @@ export default function Room() {
   const params = useParams();
   const router = useRouter();
   const code = String(params.code || '').toUpperCase();
-  const { user: clerkUser } = useUser();
+  const { user: clerkUser, isSignedIn } = useUser();
 
   // ---------- render state ----------
   const [meId, setMeId] = useState(null);
   const [mySessionId, setMySessionId] = useState(null);
   const [adultMode, setAdultMode] = useState(false);
+
+  useEffect(() => {
+    if (!adultMode && searchPlatform === 'ph') {
+      setSearchPlatform('youtube');
+    }
+  }, [adultMode, searchPlatform]);
   const [isHost, setIsHost] = useState(false);
   const [controlLock, setControlLock] = useState(false);
   const [knockRequests, setKnockRequests] = useState([]); // [{knockId, name, socketId}]
@@ -2328,8 +2334,16 @@ export default function Room() {
   };
 
   const leave = () => {
-    getSocket().emit('leave-room');
-    router.push('/');
+    try {
+      getSocket().emit('leave-room');
+    } catch {
+      /* ignore */
+    }
+    if (isSignedIn) {
+      router.push('/dashboard');
+    } else {
+      router.push('/');
+    }
   };
 
   const resume = () => {
@@ -2534,8 +2548,8 @@ export default function Room() {
         <button
           type="button"
           className="room-back-btn"
-          onClick={() => router.push('/')}
-          title="Back to Dashboard"
+          onClick={leave}
+          title={isSignedIn ? 'Back to Dashboard' : 'Back to Home'}
         >
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
             <polyline points="15 18 9 12 15 6" />
