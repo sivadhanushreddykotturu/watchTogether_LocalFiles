@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser, SignInButton } from '@clerk/nextjs';
 import { getSocket } from '../lib/socket';
+import { ThemeToggle } from './components/ThemeToggle';
 
 export default function LandingPage(): React.JSX.Element {
   const router = useRouter();
@@ -57,7 +58,7 @@ export default function LandingPage(): React.JSX.Element {
     const trimmedName = name.trim() || 'Guest Host';
     setLoading('instant');
     sessionStorage.setItem('reelsync:name', trimmedName);
-    
+
     // Instant meetings have no ownerId (non-persistent)
     getSocket().emit(
       'create-room',
@@ -99,9 +100,9 @@ export default function LandingPage(): React.JSX.Element {
   if (isLoaded && isSignedIn) {
     return (
       <main className="minimal-landing" style={{ justifyContent: 'center' }}>
-        <div className="min-empty-rooms">
+        <div className="min-empty-rooms" style={{ maxWidth: '360px', margin: '0 auto' }}>
           <div className="tgp-spinner" style={{ margin: '0 auto 16px' }} />
-          <p>Opening your dashboard…</p>
+          <p style={{ margin: 0, fontWeight: 500 }}>Opening your dashboard…</p>
         </div>
       </main>
     );
@@ -113,9 +114,10 @@ export default function LandingPage(): React.JSX.Element {
       <header className="minimal-header">
         <div className="minimal-brand">
           <span className="mb-icon">✦</span>
-          <span className="mb-text">REELSYNC</span>
+          <span>REELSYNC</span>
         </div>
-        <div className="minimal-auth">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <ThemeToggle />
           <SignInButton mode="modal">
             <button type="button" className="min-btn ghost" style={{ fontSize: '13px', padding: '6px 14px' }}>
               Sign in
@@ -125,32 +127,37 @@ export default function LandingPage(): React.JSX.Element {
       </header>
 
       {/* Main Landing Hero Card */}
-      <div className="minimal-card">
+      <div className="minimal-card" style={{ maxWidth: '520px' }}>
         <div className="minimal-hero">
-          <h1 className="minimal-title">Synced Cinema</h1>
+          <div style={{ display: 'inline-flex', marginBottom: '12px' }}>
+            <span className="tab-pill" style={{ letterSpacing: '0.12em', color: 'var(--accent)', borderColor: 'var(--accent-soft)', background: 'var(--accent-soft)' }}>
+              ✦ SYNCED STREAMING
+            </span>
+          </div>
+          <h1 className="minimal-title">Watch Together in Lockstep</h1>
           <p className="minimal-desc">
-            Watch local video files, YouTube, and streams together in millisecond lockstep.
+            Watch local video files, YouTube, and streams with friends in millisecond sync with voice chat and live reactions.
           </p>
         </div>
 
         {/* Primary Action: Sign in to Dashboard */}
-        <div className="landing-auth-cta" style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '22px' }}>
           <SignInButton mode="modal">
             <button type="button" className="min-btn primary" style={{ padding: '14px', fontSize: '15px' }}>
               Sign in to Dashboard →
             </button>
           </SignInButton>
-          <span style={{ fontSize: '12px', color: '#71717A', textAlign: 'center' }}>
-            Persistent rooms, host controls & room history
+          <span style={{ fontSize: '12px', color: 'var(--theme-text-dim)', textAlign: 'center' }}>
+            Persistent rooms, host controls, and history
           </span>
         </div>
 
         {/* Subtle Divider */}
-        <div className="divider" style={{ margin: '16px 0 20px' }}>
+        <div className="divider" style={{ margin: '14px 0 18px' }}>
           <span>or join as guest</span>
         </div>
 
-        {/* Guest Action Switcher / Accordion */}
+        {/* Guest Action Switcher */}
         {!showInstantJoin ? (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
             <button
@@ -190,11 +197,11 @@ export default function LandingPage(): React.JSX.Element {
             </div>
 
             <div className="min-field">
-              <label className="min-label">Room Code (Leave empty to start new)</label>
+              <label className="min-label">Room Code (Leave blank for new party)</label>
               <input
                 type="text"
                 maxLength={5}
-                placeholder="Optional 5-letter code"
+                placeholder="5-letter code"
                 autoComplete="off"
                 spellCheck={false}
                 value={code}
@@ -227,11 +234,11 @@ export default function LandingPage(): React.JSX.Element {
           </div>
         )}
 
-        {error && <p className="min-error" role="alert">{error}</p>}
+        {error && <div className="min-error" role="alert">{error}</div>}
       </div>
 
       <footer className="minimal-footer">
-        Peer-synchronized streaming. Local files remain on your device.
+        Peer-synchronized streaming. Local video files remain on your device.
       </footer>
     </main>
   );

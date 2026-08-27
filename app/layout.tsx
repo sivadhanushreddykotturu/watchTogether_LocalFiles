@@ -19,7 +19,14 @@ export default function RootLayout({
 }): React.JSX.Element {
   return (
     <ClerkProvider>
-      <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
+      <html lang="en" suppressHydrationWarning className={`${display.variable} ${body.variable} ${mono.variable}`}>
+        <head>
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `(function(){try{var t=localStorage.getItem('reelsync:theme')||'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`,
+            }}
+          />
+        </head>
         <body>{children}</body>
       </html>
     </ClerkProvider>

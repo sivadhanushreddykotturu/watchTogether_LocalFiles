@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import AppleEmojiPicker from '../../components/AppleEmojiPicker';
 import KlipyGifPicker from '../../components/KlipyGifPicker';
 import AuthButton from '../../components/AuthButton';
+import ThemeToggle from '../../components/ThemeToggle';
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
@@ -2615,6 +2616,7 @@ export default function Room() {
         )}
 
         <span className="spacer"></span>
+        <ThemeToggle />
         <AuthButton />
         <button className="btn ghost" onClick={leave}>Leave</button>
       </header>
