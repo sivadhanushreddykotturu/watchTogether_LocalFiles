@@ -50,13 +50,38 @@ async function getRoom(code) {
 }
 
 // Fire-and-forget: never awaited by socket handlers.
-function saveRoom(code, state) {
+function saveRoom(code, state, meta = {}) {
   if (!db) return;
+  const updateData = { code, state, lastActiveAt: new Date() };
+  if (meta.title) updateData.title = meta.title;
+  if (meta.ownerId) updateData.ownerId = meta.ownerId;
+  if (meta.ownerName) updateData.ownerName = meta.ownerName;
+
   db.collection('rooms').updateOne(
     { code },
-    { $set: { code, state, lastActiveAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+    { $set: updateData, $setOnInsert: { createdAt: new Date() } },
     { upsert: true }
   ).catch((err) => console.error('saveRoom failed:', err.message));
+}
+
+async function getUserRooms(ownerId) {
+  if (!db || !ownerId) return [];
+  try {
+    const docs = await db.collection('rooms')
+      .find({ ownerId })
+      .sort({ lastActiveAt: -1 })
+      .limit(10)
+      .toArray();
+    return docs.map((d) => ({
+      code: d.code,
+      title: d.title || `Room ${d.code}`,
+      ownerName: d.ownerName || 'Host',
+      source: d.state?.source || null,
+      lastActiveAt: d.lastActiveAt || d.createdAt,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 // ---- chat ----
@@ -98,4 +123,4 @@ async function getHistory(code, limit = 50) {
   } catch { return []; }
 }
 
-module.exports = { connect, isConnected, roomExists, getRoom, saveRoom, addMessage, getHistory };
+module.exports = { connect, isConnected, roomExists, getRoom, saveRoom, getUserRooms, addMessage, getHistory };

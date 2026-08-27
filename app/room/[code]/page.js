@@ -2531,26 +2531,59 @@ export default function Room() {
   return (
     <main className={'room' + (dimmed ? ' theater-dim' : '')} data-tab={tab}>
       <header className="room-bar">
-        <span className="brand">REEL<span className="brand-accent">SYNC</span></span>
-        <button className="code-slate desktop-only" onClick={copyCode} title="Copy room code">
-          <span className="slate-label">ROOM</span>
-          <span className="slate-code">{code}</span>
+        <button
+          type="button"
+          className="room-back-btn"
+          onClick={() => router.push('/')}
+          title="Back to Dashboard"
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
         </button>
+
+        <div className="room-title-meta">
+          <span className="room-title-name">
+            {sessionRef.current?.name ? `${sessionRef.current.name}'s Watch Party` : 'Watch Party'}
+          </span>
+          <button className="code-slate desktop-only" onClick={copyCode} title="Copy room code">
+            <span className="slate-label">ROOM</span>
+            <span className="slate-code">{code}</span>
+          </button>
+        </div>
+
+        <div className="room-live-cluster">
+          <span className="dash-live-pill">
+            <span className="live-pulse-dot" /> LIVE
+          </span>
+          <div className="dash-avatar-stack">
+            {users.slice(0, 3).map((u, i) => (
+              <span key={u.id || i} className="dash-stack-avatar" style={{ background: u.color }}>
+                {u.name ? u.name[0].toUpperCase() : '👤'}
+              </span>
+            ))}
+            <span className="dash-stack-count">+{users.length} watching</span>
+          </div>
+        </div>
+
         {isHost && (
-          <span className="host-badge" title="You are the room host" style={{ background: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.3)', color: '#F59E0B', fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          <span className="host-badge" title="You are the room host">
             👑 HOST
           </span>
         )}
+
         {pingMs !== null && (
           <span className={`ping-pill ${pingMs < 80 ? 'green' : pingMs < 200 ? 'yellow' : 'red'}`} title={`Latency: ${pingMs}ms`}>
             {pingMs < 80 ? '🟢' : pingMs < 200 ? '🟡' : '🔴'} {pingMs}ms
           </span>
         )}
+
         {fileMatch && (
           <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')} title={fileMatch.match ? 'Exact file match across participants' : `Duration differs by ${fileMatch.delta}s`}>
             {fileMatch.match ? '✓ Same File' : `⚠️ ${fileMatch.delta}s diff`}
           </span>
         )}
+
         {isHost && (
           <button
             type="button"
@@ -2562,46 +2595,60 @@ export default function Room() {
               getSocket().emit('set-adult-mode', next);
             }}
             title={adultMode ? 'Adult Mode ON (Pornhub & RedGIFs enabled)' : 'Adult Mode OFF (Safe mode)'}
-            style={{ fontSize: '11px', padding: '4px 8px', borderRadius: '6px' }}
           >
             {adultMode ? '🔞 Adult Mode ON' : '🔞 Adult Mode OFF'}
           </button>
         )}
+
         <span className="spacer"></span>
         <AuthButton />
         <button className="btn ghost" onClick={leave}>Leave</button>
       </header>
 
-      {/* Host knock approval banner */}
+      {/* Host Knock Requests Section (Reference UI Panel #2) */}
       {isHost && knockRequests.length > 0 && (
-        <div className="knock-banner">
-          {knockRequests.map((req) => (
-            <div key={req.knockId} className="knock-item">
-              <span className="knock-name">👋 <strong>{req.name}</strong> requested to join</span>
-              <button
-                type="button"
-                className="btn primary"
-                style={{ padding: '4px 12px', fontSize: '12px', borderRadius: '6px' }}
-                onClick={() => {
-                  getSocket().emit('approve-join', { knockId: req.knockId, code });
-                  setKnockRequests((prev) => prev.filter((r) => r.knockId !== req.knockId));
-                }}
-              >
-                Accept
-              </button>
-              <button
-                type="button"
-                className="btn ghost"
-                style={{ padding: '4px 12px', fontSize: '12px', borderRadius: '6px', color: 'var(--error)' }}
-                onClick={() => {
-                  getSocket().emit('reject-join', { knockId: req.knockId });
-                  setKnockRequests((prev) => prev.filter((r) => r.knockId !== req.knockId));
-                }}
-              >
-                Reject
-              </button>
-            </div>
-          ))}
+        <div className="stage-requests-panel">
+          <div className="srp-header">
+            <span className="srp-title">Requests</span>
+            <span className="srp-count">{knockRequests.length}</span>
+          </div>
+          <div className="srp-list">
+            {knockRequests.map((req) => (
+              <div key={req.knockId} className="srp-item">
+                <div className="srp-user-info">
+                  <div className="srp-avatar">👤</div>
+                  <div className="srp-details">
+                    <div className="srp-name">{req.name}</div>
+                    <div className="srp-note">What about watching together? 😊</div>
+                  </div>
+                </div>
+                <div className="srp-actions">
+                  <button
+                    type="button"
+                    className="srp-btn accept"
+                    onClick={() => {
+                      getSocket().emit('approve-join', { knockId: req.knockId, code });
+                      setKnockRequests((prev) => prev.filter((r) => r.knockId !== req.knockId));
+                      toast(`✓ Accepted ${req.name}`);
+                    }}
+                  >
+                    Accept
+                  </button>
+                  <button
+                    type="button"
+                    className="srp-btn reject"
+                    onClick={() => {
+                      getSocket().emit('reject-join', { knockId: req.knockId });
+                      setKnockRequests((prev) => prev.filter((r) => r.knockId !== req.knockId));
+                      toast(`Declined ${req.name}`);
+                    }}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

@@ -164,14 +164,57 @@ function joinRoom(io, socket, code, name, { rejoin = false, history } = {}, cb) 
 function attach(io) {
   io.on('connection', (socket) => {
     // --- create a room, returns its join code ---
-    socket.on('create-room', async (name, cb) => {
+    socket.on('create-room', async (payload, cb) => {
+      let name = '';
+      let title = '';
+      let ownerId = null;
+      let controlLock = false;
+      let sessionId = null;
+
+      if (typeof payload === 'string') {
+        name = payload;
+      } else if (payload && typeof payload === 'object') {
+        name = payload.name;
+        title = payload.title;
+        ownerId = payload.ownerId || payload.userId || null;
+        controlLock = Boolean(payload.controlLock);
+        sessionId = payload.sessionId || null;
+      }
+
+      if (sessionId) {
+        socket.data.sessionId = String(sessionId).slice(0, 64);
+      }
+
       const code = await makeCode();
-      rooms.set(code, freshRoom(code));
-      db.saveRoom(code, rooms.get(code).state);
+      const room = freshRoom(code);
+      room.title = String(title || `${cleanName(name)}'s Watch Party`).slice(0, 80);
+      room.controlLock = controlLock;
+      room.ownerId = ownerId;
+      rooms.set(code, room);
+
+      db.saveRoom(code, room.state, { title: room.title, ownerId, ownerName: cleanName(name) });
       joinRoom(io, socket, code, name, { history: [] }, cb);
-      // Mark the creator as host
-      const newRoom = rooms.get(code);
-      if (newRoom) newRoom.host = socket.id;
+      room.host = socket.id;
+    });
+
+    // --- get user's persistent / recent rooms ---
+    socket.on('get-my-rooms', async ({ userId, sessionId } = {}, cb) => {
+      if (typeof cb !== 'function') return;
+      const id = userId || sessionId;
+      if (!id) {
+        cb({ rooms: [] });
+        return;
+      }
+      const userRooms = await db.getUserRooms(id);
+      const enriched = userRooms.map((r) => {
+        const live = rooms.get(r.code);
+        return {
+          ...r,
+          liveCount: live ? live.users.size : 0,
+          isLive: Boolean(live),
+        };
+      });
+      cb({ rooms: enriched });
     });
 
     // --- join an existing room by code (hydrates from Mongo after a restart) ---
