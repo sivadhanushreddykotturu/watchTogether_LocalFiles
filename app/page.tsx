@@ -10,7 +10,7 @@ import { UserRoom } from '../types/realtime';
 export default function Home(): React.JSX.Element {
   const router = useRouter();
   const { user, isLoaded, isSignedIn } = useUser();
-  const [activeTab, setActiveTab] = useState<'discover' | 'my-rooms' | 'create'>('discover');
+  const [tab, setTab] = useState<'create' | 'join' | 'rooms'>('create');
   const [name, setName] = useState<string>('');
   const [code, setCode] = useState<string>('');
   const [partyTitle, setPartyTitle] = useState<string>('');
@@ -22,7 +22,6 @@ export default function Home(): React.JSX.Element {
   const nameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    // Pre-warm websocket connection immediately
     try {
       getSocket();
     } catch {
@@ -41,6 +40,7 @@ export default function Home(): React.JSX.Element {
     const urlCode = new URLSearchParams(window.location.search).get('room');
     if (urlCode) {
       setCode(urlCode.toUpperCase().slice(0, 5));
+      setTab('join');
     }
   }, [user]);
 
@@ -65,21 +65,9 @@ export default function Home(): React.JSX.Element {
       );
     };
 
-    if (socketReady()) {
-      fetchRooms();
-    } else {
-      const timer = setTimeout(fetchRooms, 600);
-      return () => clearTimeout(timer);
-    }
-  }, [user, isSignedIn]);
-
-  function socketReady(): boolean {
-    try {
-      return !!getSocket().connected;
-    } catch {
-      return false;
-    }
-  }
+    const timer = setTimeout(fetchRooms, 400);
+    return () => clearTimeout(timer);
+  }, [user, isSignedIn, tab]);
 
   function enter(res: { error?: string; self?: { name: string }; code?: string }): void {
     setLoading('');
@@ -93,10 +81,18 @@ export default function Home(): React.JSX.Element {
     router.push(`/room/${res.code}`);
   }
 
-  const createParty = (customTitle = '', lockMode = false) => {
+  const createParty = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setError('');
     const trimmedName =
       name.trim() || (user && (user.firstName || user.username)) || 'Host';
+
+    if (!trimmedName) {
+      setError('Please enter your name first.');
+      if (nameInputRef.current) nameInputRef.current.focus();
+      return;
+    }
+
     setLoading('create');
     sessionStorage.setItem('reelsync:name', trimmedName);
     const ownerId =
@@ -107,9 +103,9 @@ export default function Home(): React.JSX.Element {
       'create-room',
       {
         name: trimmedName,
-        title: customTitle || partyTitle || `${trimmedName}'s Watch Party`,
+        title: partyTitle.trim() || `${trimmedName}'s Watch Party`,
         ownerId,
-        controlLock: lockMode || isPrivateMode,
+        controlLock: isPrivateMode,
         sessionId:
           typeof window !== 'undefined' ? localStorage.getItem('reelsync:sessionId') : null,
       },
@@ -117,7 +113,8 @@ export default function Home(): React.JSX.Element {
     );
   };
 
-  const joinParty = (targetCode = '') => {
+  const joinParty = (e?: React.FormEvent, targetCode = '') => {
+    if (e) e.preventDefault();
     setError('');
     const joinCode = (targetCode || code).trim().toUpperCase();
     const trimmedName =
@@ -132,6 +129,7 @@ export default function Home(): React.JSX.Element {
       setError('Enter the 5-letter party code.');
       return;
     }
+
     setLoading('join');
     sessionStorage.setItem('reelsync:name', trimmedName);
     getSocket().emit(
@@ -147,175 +145,67 @@ export default function Home(): React.JSX.Element {
   };
 
   return (
-    <div className="dash-layout">
-      {/* Top Navbar */}
-      <header className="dash-nav">
-        <div className="dash-nav-left">
-          <span className="dash-logo">
-            <span className="dash-logo-icon">🎬</span>
-            <span className="dash-logo-text">
-              REEL<span className="brand-accent">SYNC</span>
-            </span>
-          </span>
-          <nav className="dash-nav-links">
-            <button
-              type="button"
-              className={'dash-nav-link' + (activeTab === 'discover' ? ' active' : '')}
-              onClick={() => setActiveTab('discover')}
-            >
-              Watch Parties
-            </button>
-            {isSignedIn && (
-              <button
-                type="button"
-                className={'dash-nav-link' + (activeTab === 'my-rooms' ? ' active' : '')}
-                onClick={() => setActiveTab('my-rooms')}
-              >
-                My Rooms {myRooms.length > 0 && <span className="dash-count-pill">{myRooms.length}</span>}
-              </button>
-            )}
-            <button
-              type="button"
-              className={'dash-nav-link' + (activeTab === 'create' ? ' active' : '')}
-              onClick={() => setActiveTab('create')}
-            >
-              + Create Party
-            </button>
-          </nav>
+    <main className="minimal-landing">
+      {/* Top Bar */}
+      <header className="minimal-header">
+        <div className="minimal-brand">
+          <span className="mb-icon">✦</span>
+          <span className="mb-text">REELSYNC</span>
         </div>
-
-        <div className="dash-nav-right">
+        <div className="minimal-auth">
           <AuthButton />
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="dash-content">
-        {/* Left Column: Hero & Featured Watch Parties */}
-        <section className="dash-main-col">
-          {/* Reference UI Panel #1: Hero Banner */}
-          <div className="dash-hero-card">
-            <div className="dash-hero-art-banner">
-              <div className="dash-hero-poster poster-1" />
-              <div className="dash-hero-poster poster-2" />
-              <div className="dash-hero-overlay-glow" />
-            </div>
+      {/* Centered Hub Card */}
+      <div className="minimal-card">
+        {/* Title and Subtitle */}
+        <div className="minimal-hero">
+          <h1 className="minimal-title">Synced Cinema</h1>
+          <p className="minimal-desc">
+            Watch local files, YouTube, and streams together with zero desync.
+          </p>
+        </div>
 
-            <div className="dash-hero-body">
-              <div className="dash-live-badge-row">
-                <span className="dash-live-pill">
-                  <span className="live-pulse-dot" /> LIVE
-                </span>
-                <div className="dash-avatar-stack">
-                  <span className="dash-stack-avatar bg-purple">🍿</span>
-                  <span className="dash-stack-avatar bg-blue">🔥</span>
-                  <span className="dash-stack-avatar bg-amber">🎬</span>
-                  <span className="dash-stack-count">+420 watching</span>
-                </div>
-              </div>
+        {/* Tab Switcher */}
+        <div className="minimal-tabs">
+          <button
+            type="button"
+            className={'min-tab' + (tab === 'create' ? ' active' : '')}
+            onClick={() => {
+              setTab('create');
+              setError('');
+            }}
+          >
+            Create Party
+          </button>
+          <button
+            type="button"
+            className={'min-tab' + (tab === 'join' ? ' active' : '')}
+            onClick={() => {
+              setTab('join');
+              setError('');
+            }}
+          >
+            Join with Code
+          </button>
+          <button
+            type="button"
+            className={'min-tab' + (tab === 'rooms' ? ' active' : '')}
+            onClick={() => {
+              setTab('rooms');
+              setError('');
+            }}
+          >
+            My Rooms {myRooms.length > 0 && <span className="tab-pill">{myRooms.length}</span>}
+          </button>
+        </div>
 
-              <h1 className="dash-hero-title">
-                Watching movies <br />
-                together is <span className="highlight-word">easy</span>
-              </h1>
-              <p className="dash-hero-desc">
-                Everyone opens their copy or streams in perfect lockstep — play, pause, rewind — with real-time chat & reactions.
-              </p>
-
-              <div className="dash-hero-actions">
-                <button
-                  type="button"
-                  className="dash-cta-btn"
-                  onClick={() => createParty('Main Watch Party')}
-                  disabled={loading !== ''}
-                >
-                  <span>{loading === 'create' ? 'Starting screening…' : 'Start Watching'}</span>
-                  <span className="dash-cta-arrow">→</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Persistent Watch Parties Grid */}
-          <div className="dash-section-head">
-            <h2 className="dash-section-title">Watch Parties</h2>
-            <div className="dash-section-sub">Jump into saved rooms or join friends</div>
-          </div>
-
-          <div className="dash-party-grid">
-            {myRooms.length > 0 ? (
-              myRooms.map((r) => (
-                <div key={r.code} className="party-card" onClick={() => joinParty(r.code)}>
-                  <div className="party-card-thumb">
-                    <span className="party-thumb-icon">🎥</span>
-                    {r.isLive && (
-                      <span className="party-live-tag">
-                        <span className="live-pulse-dot" /> {r.liveCount} online
-                      </span>
-                    )}
-                  </div>
-                  <div className="party-card-body">
-                    <div className="party-card-title">{r.title}</div>
-                    <div className="party-card-meta">
-                      <span className="party-code-badge">ROOM {r.code}</span>
-                      <span className="party-host-name">by {r.ownerName}</span>
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <>
-                {/* Default Sample Watch Parties */}
-                <div className="party-card" onClick={() => createParty('Avengers: Endgame Party')}>
-                  <div className="party-card-thumb avengers-thumb">
-                    <span className="party-thumb-icon">⚡</span>
-                    <span className="party-live-tag">
-                      <span className="live-pulse-dot" /> Live
-                    </span>
-                  </div>
-                  <div className="party-card-body">
-                    <div className="party-card-title">Avengers: Endgame</div>
-                    <div className="party-card-meta">
-                      <span>Action, Sci-Fi • ★ 8.3</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="party-card" onClick={() => createParty('Project: Adam Party')}>
-                  <div className="party-card-thumb adam-thumb">
-                    <span className="party-thumb-icon">🚀</span>
-                    <span className="party-live-tag">
-                      <span className="live-pulse-dot" /> 402 viewers
-                    </span>
-                  </div>
-                  <div className="party-card-body">
-                    <div className="party-card-title">Project: Adam</div>
-                    <div className="party-card-meta">
-                      <span>Action, Adventure • ★ 6.7</span>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        </section>
-
-        {/* Right Sidebar Column: Instant Join & Invitation (Reference UI #3) */}
-        <aside className="dash-sidebar-col">
-          {/* Card 1: Fast Join / Create */}
-          <div className="dash-action-card">
-            <h3 className="dash-action-title">
-              <span>⚡</span> Quick Join or Create
-            </h3>
-
-            {code && (
-              <div className="invite-banner" style={{ marginBottom: '12px' }}>
-                Joining room <span className="invite-code">{code}</span>
-              </div>
-            )}
-
-            <label className="dash-input-field">
-              <span className="dash-input-label">Your Screen Name</span>
+        {/* Tab 1: Create Watch Party */}
+        {tab === 'create' && (
+          <form onSubmit={createParty} className="minimal-form">
+            <div className="min-field">
+              <label className="min-label">Your Name</label>
               <input
                 ref={nameInputRef}
                 type="text"
@@ -327,59 +217,70 @@ export default function Home(): React.JSX.Element {
                   setName(e.target.value);
                   setError('');
                 }}
-                className="dash-text-input"
+                className="min-input"
               />
-            </label>
-
-            {activeTab === 'create' && (
-              <>
-                <label className="dash-input-field">
-                  <span className="dash-input-label">Party Title</span>
-                  <input
-                    type="text"
-                    maxLength={50}
-                    placeholder="e.g. Friday Movie Night"
-                    value={partyTitle}
-                    onChange={(e) => setPartyTitle(e.target.value)}
-                    className="dash-text-input"
-                  />
-                </label>
-
-                <div className="dash-toggle-row">
-                  <div>
-                    <div className="dash-toggle-title">🔒 Host Approval Lobby</div>
-                    <div className="dash-toggle-desc">Guests knock and wait for your approval</div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={isPrivateMode}
-                    onChange={(e) => setIsPrivateMode(e.target.checked)}
-                    className="dash-checkbox"
-                  />
-                </div>
-              </>
-            )}
-
-            <div className="dash-btn-group">
-              <button
-                type="button"
-                className="btn primary big dash-main-btn"
-                onClick={() => createParty()}
-                disabled={loading !== ''}
-              >
-                {loading === 'create' ? 'Launching Room…' : '✦ Launch Watch Party'}
-              </button>
             </div>
 
-            <div className="divider">
-              <span>or enter code</span>
+            <div className="min-field">
+              <label className="min-label">Room Title (Optional)</label>
+              <input
+                type="text"
+                maxLength={60}
+                placeholder="e.g. Movie Night"
+                value={partyTitle}
+                onChange={(e) => setPartyTitle(e.target.value)}
+                className="min-input"
+              />
             </div>
 
-            <div className="join-row">
+            <div className="min-toggle-box" onClick={() => setIsPrivateMode(!isPrivateMode)}>
+              <div className="mtb-info">
+                <span className="mtb-title">{isPrivateMode ? '🔒 Private Room (Host Approval)' : '🔓 Open Room'}</span>
+                <span className="mtb-sub">
+                  {isPrivateMode ? 'Guests must knock and be accepted by host' : 'Anyone with the 5-letter code joins instantly'}
+                </span>
+              </div>
+              <div className={'min-switch' + (isPrivateMode ? ' on' : '')}>
+                <div className="switch-dot" />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="min-btn primary"
+              disabled={loading !== ''}
+            >
+              {loading === 'create' ? 'Starting screening…' : 'Start Watch Party →'}
+            </button>
+          </form>
+        )}
+
+        {/* Tab 2: Join with Code */}
+        {tab === 'join' && (
+          <form onSubmit={(e) => joinParty(e)} className="minimal-form">
+            <div className="min-field">
+              <label className="min-label">Your Name</label>
+              <input
+                ref={nameInputRef}
+                type="text"
+                maxLength={24}
+                placeholder="e.g. Nani"
+                autoComplete="off"
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setError('');
+                }}
+                className="min-input"
+              />
+            </div>
+
+            <div className="min-field">
+              <label className="min-label">Room Code</label>
               <input
                 type="text"
                 maxLength={5}
-                placeholder="CODE"
+                placeholder="ABCDE"
                 autoComplete="off"
                 spellCheck={false}
                 value={code}
@@ -387,74 +288,64 @@ export default function Home(): React.JSX.Element {
                   setCode(e.target.value.toUpperCase());
                   setError('');
                 }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') joinParty();
-                }}
+                className="min-input code-input"
               />
-              <button
-                type="button"
-                className="btn primary"
-                onClick={() => joinParty()}
-                disabled={loading !== ''}
-              >
-                {loading === 'join' ? 'Joining…' : 'Join'}
-              </button>
             </div>
 
-            {error && <p className="error" role="alert">{error}</p>}
-          </div>
+            <button
+              type="submit"
+              className="min-btn primary"
+              disabled={loading !== ''}
+            >
+              {loading === 'join' ? 'Joining room…' : 'Join Party →'}
+            </button>
+          </form>
+        )}
 
-          {/* Card 2: Reference UI Panel #3 - Private Party Invitation Card */}
-          <div className="invitation-card">
-            <div className="invite-top-meta">
-              <span className="invite-tag">PRIVATE PARTY</span>
-              <span className="invite-dot">•</span>
-              <span className="invite-sender">Giorgi Kurasbediani</span>
-            </div>
-
-            <h4 className="invite-title">Party Invitation</h4>
-            <div className="invite-time">TODAY AT 23:00</div>
-            <p className="invite-msg">
-              Hey! 👋 I&apos;d like to invite you to our horror movie night party.
-            </p>
-
-            <div className="invite-movie-preview">
-              <span className="imp-thumb">🎬</span>
-              <div className="imp-info">
-                <div className="imp-title">Get Out</div>
-                <div className="imp-meta">Horror • 2hr 4m • 2019</div>
+        {/* Tab 3: My Persistent Rooms */}
+        {tab === 'rooms' && (
+          <div className="minimal-rooms-list">
+            {myRooms.length > 0 ? (
+              myRooms.map((r) => (
+                <div key={r.code} className="min-room-row" onClick={() => joinParty(undefined, r.code)}>
+                  <div className="mrr-left">
+                    <span className="mrr-icon">🎬</span>
+                    <div>
+                      <div className="mrr-title">{r.title}</div>
+                      <div className="mrr-meta">
+                        <span className="mrr-code">{r.code}</span>
+                        {r.isLive && <span className="mrr-live">● {r.liveCount} online</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <button type="button" className="min-btn small">
+                    Jump in →
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="min-empty-rooms">
+                <span className="mer-icon">🍿</span>
+                <p>No saved rooms yet</p>
+                <button
+                  type="button"
+                  className="min-btn ghost"
+                  style={{ marginTop: '8px', fontSize: '12px' }}
+                  onClick={() => setTab('create')}
+                >
+                  + Create your first party
+                </button>
               </div>
-            </div>
-
-            <div className="invite-members-row">
-              <span className="im-label">Members</span>
-              <div className="dash-avatar-stack">
-                <span className="dash-stack-avatar bg-purple">👩</span>
-                <span className="dash-stack-avatar bg-blue">👱‍♀️</span>
-                <span className="dash-stack-avatar bg-amber">🧑</span>
-                <span className="dash-stack-count">+11</span>
-              </div>
-            </div>
-
-            <div className="invite-actions">
-              <button
-                type="button"
-                className="btn ghost invite-reject-btn"
-                onClick={() => setError('Invitation declined.')}
-              >
-                Reject
-              </button>
-              <button
-                type="button"
-                className="btn primary invite-accept-btn"
-                onClick={() => createParty('Get Out Screening')}
-              >
-                Accept Invitation
-              </button>
-            </div>
+            )}
           </div>
-        </aside>
-      </main>
-    </div>
+        )}
+
+        {error && <p className="min-error" role="alert">{error}</p>}
+      </div>
+
+      <footer className="minimal-footer">
+        Peer-synchronized streaming. Local files remain on your device.
+      </footer>
+    </main>
   );
 }
