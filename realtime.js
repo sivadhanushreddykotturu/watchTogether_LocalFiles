@@ -373,6 +373,10 @@ function attach(io) {
       const sessionId = socket.data.sessionId || null;
       const msg = {
         id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+        // Echo the sender's optimistic id back so their client can swap the
+        // pending local copy for the canonical one (without this every own
+        // message renders twice).
+        clientId: payload && typeof payload === 'object' && payload.clientId ? String(payload.clientId).slice(0, 64) : null,
         system: false,
         sender: socket.id,
         senderSessionId: sessionId,

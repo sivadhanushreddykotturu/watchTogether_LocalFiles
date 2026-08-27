@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useUser, SignInButton } from '@clerk/nextjs';
 import { getSocket } from '../lib/socket';
 import { ThemeToggle } from './components/ThemeToggle';
+import { EmojiImg } from './components/AppleEmoji';
 
 export default function LandingPage(): React.JSX.Element {
   const router = useRouter();
@@ -170,7 +171,7 @@ export default function LandingPage(): React.JSX.Element {
               onClick={startInstantParty}
               disabled={loading !== ''}
             >
-              {loading === 'instant' ? 'Starting…' : '⚡ Start Instant Party'}
+              {loading === 'instant' ? 'Starting…' : <><EmojiImg char="⚡" size={15} /> Start Instant Party</>}
             </button>
 
             <div className="divider" style={{ margin: '4px 0' }}>

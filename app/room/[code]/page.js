@@ -14,6 +14,8 @@ import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
 import { parseMediaUrl, resolveMediaUrl, searchPornhub } from '../../../lib/mediaEmbeds';
 import { VoiceSession } from '../../../lib/voice';
+import { getAppleEmojiUrl } from '../../../lib/emoji';
+import { EmojiImg, renderWithAppleEmojis } from '../../components/AppleEmoji';
 import Hls from 'hls.js';
 
 // mic icons for the viewer chips
@@ -34,17 +36,7 @@ function fmt(t) {
 
 const clockFmt = (at) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-export function getAppleEmojiUrl(emoji) {
-  if (!emoji) return '';
-  try {
-    const codePoints = Array.from(emoji)
-      .map((char) => char.codePointAt(0).toString(16).toLowerCase())
-      .join('-');
-    return `https://cdn.jsdelivr.net/npm/emoji-datasource-apple@15.0.1/img/apple/64/${codePoints}.png`;
-  } catch (e) {
-    return '';
-  }
-}
+export { getAppleEmojiUrl };
 
 // ---------- subtitles & media ----------
 const SUB_COLORS = ['#ffffff', '#facc15', '#86efac', '#67e8f9'];
@@ -506,7 +498,7 @@ export default function Room() {
     const trimmed = text.trim();
     if (isGifUrl(trimmed)) {
       if (isSnippet) {
-        return <span style={{ fontStyle: 'italic', opacity: 0.9 }}>🎬 [GIF]</span>;
+        return <span style={{ fontStyle: 'italic', opacity: 0.9 }}><EmojiImg char="🎬" size={13} /> [GIF]</span>;
       }
       const isMp4 = trimmed.includes('.mp4') || trimmed.includes('redgifs') || trimmed.includes('/api/proxy/hls');
       if (isMp4) {
@@ -2619,13 +2611,13 @@ export default function Room() {
 
         {isHost && (
           <span className="host-badge" title="You are the room host">
-            👑 HOST
+            <EmojiImg char="👑" size={11} /> HOST
           </span>
         )}
 
         {pingMs !== null && (
           <span className={`ping-pill ${pingMs < 80 ? 'green' : pingMs < 200 ? 'yellow' : 'red'}`} title={`Latency: ${pingMs}ms`}>
-            {pingMs < 80 ? '🟢' : pingMs < 200 ? '🟡' : '🔴'} {pingMs}ms
+            <EmojiImg char={pingMs < 80 ? '🟢' : pingMs < 200 ? '🟡' : '🔴'} size={9} /> {pingMs}ms
           </span>
         )}
 
@@ -2647,7 +2639,7 @@ export default function Room() {
             }}
             title={adultMode ? 'Adult Mode ON (Pornhub & RedGIFs enabled)' : 'Adult Mode OFF (Safe mode)'}
           >
-            {adultMode ? '🔞 Adult Mode ON' : '🔞 Adult Mode OFF'}
+            <EmojiImg char="🔞" size={11} /> {adultMode ? 'Adult Mode ON' : 'Adult Mode OFF'}
           </button>
         )}
 
@@ -2668,7 +2660,7 @@ export default function Room() {
             {knockRequests.map((req) => (
               <div key={req.knockId} className="srp-item">
                 <div className="srp-user-info">
-                  <div className="srp-avatar">👤</div>
+                  <div className="srp-avatar"><EmojiImg char="👤" size={15} /></div>
                   <div className="srp-details">
                     <div className="srp-name">{req.name}</div>
                     <div className="srp-note">What about watching together? 😊</div>
@@ -2912,7 +2904,7 @@ export default function Room() {
               <div className="danmaku-layer" aria-hidden="true">
                 {danmakuList.map((d) => (
                   <span key={d.id} className="danmaku-item" style={{ top: `${d.top}%`, animationDuration: '6.5s' }}>
-                    {d.text}
+                    {renderWithAppleEmojis(d.text, 18)}
                   </span>
                 ))}
               </div>
@@ -2962,7 +2954,7 @@ export default function Room() {
                 {floatingBubbles.map((b) => (
                   <div key={b.id} className="floating-bubble">
                     <span className="fb-author" style={{ color: b.color }}>{b.name}:</span>
-                    <span className="fb-text">{b.text}</span>
+                    <span className="fb-text">{renderWithAppleEmojis(b.text, 13)}</span>
                   </div>
                 ))}
               </div>
@@ -3500,7 +3492,7 @@ export default function Room() {
               <div className="chat" ref={chatScrollRef}>
                 {messages.filter((m) => !(m.system && (m.text?.includes('left') || m.text?.includes('disconnected')))).length === 0 ? (
                   <div className="chat-empty">
-                    <div className="chat-empty-icon">💬</div>
+                    <div className="chat-empty-icon"><EmojiImg char="💬" size={28} /></div>
                     <div className="chat-empty-title">Welcome to the Room!</div>
                     <span className="chat-empty-hint">Say hi or share timestamps (e.g. 05:20) to jump to moments together.</span>
                   </div>
@@ -4217,7 +4209,7 @@ export default function Room() {
       )}
 
       <div className="toast-stack">
-        {toasts.map((t) => <div key={t.id} className="toast">{t.text}</div>)}
+        {toasts.map((t) => <div key={t.id} className="toast">{renderWithAppleEmojis(t.text, 13)}</div>)}
       </div>
     </main>
   );

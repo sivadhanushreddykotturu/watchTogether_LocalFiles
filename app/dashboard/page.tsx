@@ -6,6 +6,7 @@ import { useUser, useAuth, UserButton } from '@clerk/nextjs';
 import { getSocket } from '../../lib/socket';
 import { UserRoom } from '../../types/realtime';
 import { ThemeToggle } from '../components/ThemeToggle';
+import { EmojiImg } from '../components/AppleEmoji';
 
 export default function DashboardPage(): React.JSX.Element {
   const router = useRouter();
@@ -204,7 +205,10 @@ export default function DashboardPage(): React.JSX.Element {
             >
               <div className="mtb-info">
                 <div className="mtb-title">
-                  <span>{isPrivateMode ? '🔒 Private Party (Knock to Join)' : '🔓 Open Party (Direct Access)'}</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px' }}>
+                    <EmojiImg char={isPrivateMode ? '🔒' : '🔓'} size={14} />
+                    {isPrivateMode ? 'Private Party (Knock to Join)' : 'Open Party (Direct Access)'}
+                  </span>
                 </div>
                 <div className="mtb-sub">
                   {isPrivateMode
@@ -227,11 +231,12 @@ export default function DashboardPage(): React.JSX.Element {
               <button
                 type="button"
                 onClick={fetchRooms}
-                className="copy-chip-btn"
-                title="Refresh rooms"
-              >
-                🔄 Refresh
-              </button>
+                  className="copy-chip-btn"
+                  title="Refresh rooms"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+                >
+                  <EmojiImg char="🔄" size={12} /> Refresh
+                </button>
             )}
           </div>
 
@@ -244,7 +249,7 @@ export default function DashboardPage(): React.JSX.Element {
               myRooms.map((r) => (
                 <div key={r.code} className="min-room-row">
                   <div className="mrr-left" onClick={() => joinExistingRoom(undefined, r.code)} style={{ flex: 1 }}>
-                    <div className="mrr-icon">🎬</div>
+                    <div className="mrr-icon"><EmojiImg char="🎬" size={20} /></div>
                     <div>
                       <div className="mrr-title">{r.title}</div>
                       <div className="mrr-meta">
@@ -265,7 +270,7 @@ export default function DashboardPage(): React.JSX.Element {
                       onClick={(e) => copyRoomLink(r.code, e)}
                       title="Copy room link"
                     >
-                      {copiedCode === r.code ? '✓ Copied' : '🔗 Link'}
+                      {copiedCode === r.code ? '✓ Copied' : <><EmojiImg char="🔗" size={12} /> Link</>}
                     </button>
                     <button
                       type="button"
@@ -282,14 +287,14 @@ export default function DashboardPage(): React.JSX.Element {
                       onClick={() => deleteRoom(r.code)}
                       title="Delete room"
                     >
-                      🗑️
+                      <EmojiImg char="🗑️" size={14} />
                     </button>
                   </div>
                 </div>
               ))
             ) : (
               <div className="min-empty-rooms">
-                <span className="mer-icon">🍿</span>
+                <span className="mer-icon"><EmojiImg char="🍿" size={36} /></span>
                 <p style={{ margin: '0 0 4px', fontWeight: 600, color: 'var(--theme-text)' }}>
                   No watch parties yet
                 </p>

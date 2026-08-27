@@ -1,18 +1,9 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
+import { getAppleEmojiUrl } from '../../lib/emoji';
 
-export function getAppleEmojiUrl(emoji) {
-  if (!emoji) return '';
-  try {
-    const codePoints = Array.from(emoji)
-      .map((char) => char.codePointAt(0).toString(16).toLowerCase())
-      .join('-');
-    return 'https://cdn.jsdelivr.net/npm/emoji-datasource-apple@15.0.1/img/apple/64/' + codePoints + '.png';
-  } catch (e) {
-    return '';
-  }
-}
+export { getAppleEmojiUrl };
 
 export const EMOJI_CATEGORIES = [
   {
