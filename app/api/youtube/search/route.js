@@ -44,8 +44,8 @@ function parsePublicResults(html) {
   return results;
 }
 
-async function searchWithApiKey(query, apiKey) {
-  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=20&q=${encodeURIComponent(query)}&key=${apiKey}`;
+async function searchWithApiKey(query, apiKey, gl = 'IN', hl = 'en-GB') {
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=20&q=${encodeURIComponent(query)}&regionCode=${gl}&relevanceLanguage=${hl.split('-')[0]}&key=${apiKey}`;
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`YouTube API returned ${res.status}`);
@@ -64,6 +64,8 @@ async function searchWithApiKey(query, apiKey) {
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const q = (searchParams.get('q') || '').trim();
+  const gl = (searchParams.get('gl') || 'IN').toUpperCase();
+  const hl = searchParams.get('hl') || 'en-GB';
 
   if (!q) {
     return NextResponse.json({ results: [] });
@@ -73,7 +75,7 @@ export async function GET(request) {
 
   if (apiKey) {
     try {
-      const results = await searchWithApiKey(q, apiKey);
+      const results = await searchWithApiKey(q, apiKey, gl, hl);
       if (results.length > 0) {
         return NextResponse.json({ results });
       }
@@ -83,11 +85,11 @@ export async function GET(request) {
   }
 
   try {
-    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}&hl=en`;
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}&gl=${gl}&hl=${hl}`;
     const res = await fetch(searchUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': `${hl},en-IN;q=0.9,en;q=0.8,te;q=0.7,hi;q=0.6`,
       },
     });
 

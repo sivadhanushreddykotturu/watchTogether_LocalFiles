@@ -32,7 +32,7 @@ async function findAudioBridge(query) {
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (apiKey) {
     try {
-      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&q=${encodeURIComponent(query)}&key=${apiKey}`;
+      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&q=${encodeURIComponent(query)}&regionCode=IN&relevanceLanguage=en&key=${apiKey}`;
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
@@ -51,11 +51,11 @@ async function findAudioBridge(query) {
   }
 
   try {
-    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&hl=en`;
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&gl=IN&hl=en-GB`;
     const res = await fetch(searchUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Language': 'en-GB,en-IN;q=0.9,en;q=0.8,te;q=0.7,hi;q=0.6',
       },
     });
     if (res.ok) {

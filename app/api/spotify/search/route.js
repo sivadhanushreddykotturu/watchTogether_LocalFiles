@@ -57,9 +57,9 @@ async function getSpotifyToken() {
 }
 
 // Fallback search using iTunes/Deezer search if Spotify token is unavailable
-async function fallbackSearch(q) {
+async function fallbackSearch(q, country = 'IN') {
   try {
-    const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&entity=song&limit=20`);
+    const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&country=${country}&media=music&entity=song&limit=20`);
     if (res.ok) {
       const data = await res.json();
       return (data.results || []).map((t) => {
@@ -88,6 +88,7 @@ async function fallbackSearch(q) {
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const q = (searchParams.get('q') || '').trim();
+  const market = (searchParams.get('market') || searchParams.get('gl') || 'IN').toUpperCase();
 
   if (!q) {
     return NextResponse.json({ results: [] });
@@ -97,7 +98,7 @@ export async function GET(request) {
 
   if (token) {
     try {
-      const url = `https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&limit=20`;
+      const url = `https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&market=${market}&limit=20`;
       const res = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -139,6 +140,6 @@ export async function GET(request) {
   }
 
   // Fallback if Spotify token is blocked / rate-limited
-  const fallbackResults = await fallbackSearch(q);
+  const fallbackResults = await fallbackSearch(q, market);
   return NextResponse.json({ results: fallbackResults });
 }
