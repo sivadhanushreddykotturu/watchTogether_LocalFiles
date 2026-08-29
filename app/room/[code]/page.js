@@ -12,6 +12,7 @@ import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
+import { searchSpotify, resolveSpotifyTrack } from '../../../lib/spotify';
 import { parseMediaUrl, resolveMediaUrl, searchPornhub } from '../../../lib/mediaEmbeds';
 import { VoiceSession } from '../../../lib/voice';
 import { getAppleEmojiUrl } from '../../../lib/emoji';
@@ -2223,6 +2224,8 @@ export default function Room() {
       let results = [];
       if (platform === 'ph') {
         results = await searchPornhub(q, ctrl.signal);
+      } else if (platform === 'spotify') {
+        results = await searchSpotify(q, ctrl.signal);
       } else {
         results = await searchYouTube(q, ctrl.signal);
       }
@@ -2252,9 +2255,38 @@ export default function Room() {
   };
 
   const handleSelectSearchResult = async (item, playNow = true) => {
-    if (!item || (!item.id && !item.viewkey)) return;
+    if (!item || (!item.id && !item.viewkey && !item.spotifyId)) return;
     const socket = getSocket();
     if (!socket.connected) return;
+
+    if (searchPlatform === 'spotify' || item.platform === 'Spotify' || item.type === 'spotify') {
+      const resolved = await resolveSpotifyTrack({
+        url: item.url,
+        title: item.title,
+        author: item.author,
+        thumbnail: item.thumbnail,
+      });
+
+      const payload = resolved || {
+        type: 'youtube',
+        videoId: item.id?.replace('spotify-', ''),
+        title: item.title,
+        author: item.author,
+        thumbnail: item.thumbnail,
+        platform: 'Spotify',
+      };
+
+      if (playNow) {
+        socket.emit('source', { ...payload, playing: true });
+        toast(`Playing "${item.title}" on Spotify`);
+        setYtSearchModalOpen(false);
+        setYtPanelOpen(false);
+      } else {
+        socket.emit('queue-add', { ...payload, playNow: false });
+        toast(`Added "${item.title}" to queue`);
+      }
+      return;
+    }
 
     if (searchPlatform === 'ph' || item.platform === 'PH' || item.viewkey) {
       const phKey = item.viewkey || item.id;
@@ -3847,6 +3879,16 @@ export default function Room() {
                     >
                       🔴 YouTube
                     </button>
+                    <button
+                      type="button"
+                      className={'sidebar-platform-tab spotify' + (searchPlatform === 'spotify' ? ' active' : '')}
+                      onClick={() => {
+                        setSearchPlatform('spotify');
+                        if (ytSearchQuery) executeSearch(ytSearchQuery, 'spotify');
+                      }}
+                    >
+                      🟢 Spotify
+                    </button>
                     {adultMode && (
                       <button
                         type="button"
@@ -3864,7 +3906,7 @@ export default function Room() {
                     <input
                       type="text"
                       className="queue-input queue-search-input"
-                      placeholder={searchPlatform === 'ph' ? 'Search Pornhub videos…' : 'Search YouTube videos…'}
+                      placeholder={searchPlatform === 'spotify' ? 'Search Spotify songs, artists…' : searchPlatform === 'ph' ? 'Search Pornhub videos…' : 'Search YouTube videos…'}
                       value={ytSearchQuery}
                       onChange={(e) => handleSearchInputChange(e.target.value)}
                       onKeyDown={(e) => {
@@ -4122,6 +4164,16 @@ export default function Room() {
               >
                 <span className="tab-icon">🔴</span> YouTube
               </button>
+              <button
+                type="button"
+                className={'search-platform-tab spotify' + (searchPlatform === 'spotify' ? ' active' : '')}
+                onClick={() => {
+                  setSearchPlatform('spotify');
+                  if (ytSearchQuery) executeSearch(ytSearchQuery, 'spotify');
+                }}
+              >
+                <span className="tab-icon">🟢</span> Spotify
+              </button>
               {adultMode && (
                 <button
                   type="button"
@@ -4145,7 +4197,7 @@ export default function Room() {
                 <input
                   type="text"
                   className="yt-search-input"
-                  placeholder={searchPlatform === 'ph' ? 'Search Pornhub videos by title or tags…' : 'Search YouTube videos (e.g. songs, trailers, podcasts)…'}
+                  placeholder={searchPlatform === 'spotify' ? 'Search Spotify songs, artists, albums…' : searchPlatform === 'ph' ? 'Search Pornhub videos by title or tags…' : 'Search YouTube videos (e.g. songs, trailers, podcasts)…'}
                   value={ytSearchQuery}
                   autoFocus
                   onChange={(e) => handleSearchInputChange(e.target.value)}
@@ -4173,7 +4225,9 @@ export default function Room() {
             {!ytSearchQuery && (
               <div className="yt-search-suggestions">
                 <span className="yt-sug-label">Popular topics:</span>
-                {(searchPlatform === 'ph'
+                {(searchPlatform === 'spotify'
+                  ? ['Top Global Hits', 'Lofi & Chill Beats', 'Pop Rising', 'Hip-Hop Vibes', 'Acoustic Chill', 'Rock Classics', 'R&B / Soul']
+                  : searchPlatform === 'ph'
                   ? ['Trending', 'Popular With Women', 'Japanese', 'Anime', 'VR', '4K', 'Cosplay']
                   : ['Lofi Hip Hop', 'Synthwave', 'Movie Trailers', 'Chill Beats', 'Podcasts', 'Gaming', 'Top Music Hits']
                 ).map((tag) => (
@@ -4196,7 +4250,7 @@ export default function Room() {
               {ytSearching && ytSearchResults.length === 0 ? (
                 <div className="yt-search-loading-state">
                   <div className="yt-search-spinner-lg" />
-                  <p>{searchPlatform === 'ph' ? 'Searching Pornhub...' : 'Searching YouTube...'}</p>
+                  <p>{searchPlatform === 'spotify' ? 'Searching Spotify…' : searchPlatform === 'ph' ? 'Searching Pornhub...' : 'Searching YouTube...'}</p>
                 </div>
               ) : ytSearchError ? (
                 <div className="yt-search-error-state">

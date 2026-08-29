@@ -3183,6 +3183,11 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   border-bottom-color: var(--accent);
 }
 
+.search-platform-tab.spotify.active {
+  color: #1DB954;
+  border-bottom-color: #1DB954;
+}
+
 .sidebar-platform-tabs {
   display: flex;
   gap: 6px;
@@ -3211,6 +3216,12 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   color: #fff;
   background: var(--accent);
   border-color: var(--accent);
+}
+
+.sidebar-platform-tab.spotify.active {
+  color: #fff;
+  background: #1DB954;
+  border-color: #1DB954;
 }
 
 .yt-search-header {
