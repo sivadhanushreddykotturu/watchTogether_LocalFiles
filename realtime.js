@@ -482,7 +482,7 @@ function attach(io) {
 
     // --- source switch: local files <-> YouTube <-> HLS / PH Stream <-> Web Embed <-> Direct Stream. Resetting the source also
     // resets the playhead; everyone (including the setter) applies it uniformly.
-    socket.on('source', ({ type, videoId, embedUrl, url, title, platform, viewkey, playing = true } = {}) => {
+    socket.on('source', ({ type, videoId, embedUrl, url, title, platform, viewkey, playing = true, tmdbId, mediaType, season, episode, episodeTitle, showTitle, poster, backdrop } = {}) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
       if (room.controlLock && room.host !== socket.id) return; // locked: host only
@@ -497,7 +497,20 @@ function attach(io) {
         room.state.source = { type: 'ph', viewkey, url: url || null, embedUrl: embedUrl || null, title: String(title || 'PH Video').slice(0, 150), platform: 'PH' };
         room.state.playing = Boolean(playing);
       } else if (type === 'embed' && embedUrl) {
-        room.state.source = { type: 'embed', embedUrl: String(embedUrl).slice(0, 500), title: String(title || 'Web Video').slice(0, 150), platform: String(platform || 'Web Embed').slice(0, 50) };
+        room.state.source = {
+          type: 'embed',
+          embedUrl: String(embedUrl).slice(0, 1000),
+          title: String(title || 'Web Video').slice(0, 200),
+          platform: String(platform || 'Web Embed').slice(0, 50),
+          tmdbId: tmdbId || null,
+          mediaType: mediaType || null,
+          season: season ? Number(season) : null,
+          episode: episode ? Number(episode) : null,
+          episodeTitle: episodeTitle ? String(episodeTitle).slice(0, 200) : null,
+          showTitle: showTitle ? String(showTitle).slice(0, 200) : null,
+          poster: poster ? String(poster).slice(0, 500) : null,
+          backdrop: backdrop ? String(backdrop).slice(0, 500) : null,
+        };
         room.state.playing = Boolean(playing);
       } else {
         room.state.source = null; // back to local files
@@ -517,7 +530,7 @@ function attach(io) {
     });
 
     // --- queue management ---
-    socket.on('queue-add', ({ videoId, type, embedUrl, url, title, platform, viewkey, playNow } = {}, cb) => {
+    socket.on('queue-add', ({ videoId, type, embedUrl, url, title, platform, viewkey, playNow, tmdbId, mediaType, season, episode, episodeTitle, showTitle, poster, backdrop } = {}, cb) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
       if (room.controlLock && room.host !== socket.id) return; // locked: host only
@@ -532,7 +545,15 @@ function attach(io) {
         embedUrl: embedUrl || null,
         url: url || null,
         viewkey: viewkey || null,
-        title: String(title || (itemType === 'youtube' ? 'YouTube Video' : 'Web Video')).slice(0, 150),
+        tmdbId: tmdbId || null,
+        mediaType: mediaType || null,
+        season: season ? Number(season) : null,
+        episode: episode ? Number(episode) : null,
+        episodeTitle: episodeTitle ? String(episodeTitle).slice(0, 200) : null,
+        showTitle: showTitle ? String(showTitle).slice(0, 200) : null,
+        poster: poster ? String(poster).slice(0, 500) : null,
+        backdrop: backdrop ? String(backdrop).slice(0, 500) : null,
+        title: String(title || (itemType === 'youtube' ? 'YouTube Video' : 'Web Video')).slice(0, 200),
         platform: String(platform || (itemType === 'youtube' ? 'YouTube' : 'Web Video')).slice(0, 50),
         addedBy: socket.id,
         addedByName: user ? user.name : 'Someone',
@@ -549,6 +570,14 @@ function attach(io) {
           viewkey: item.viewkey,
           title: item.title,
           platform: item.platform,
+          tmdbId: item.tmdbId,
+          mediaType: item.mediaType,
+          season: item.season,
+          episode: item.episode,
+          episodeTitle: item.episodeTitle,
+          showTitle: item.showTitle,
+          poster: item.poster,
+          backdrop: item.backdrop,
         };
         room.state.time = 0;
         room.state.playing = true;
@@ -600,6 +629,14 @@ function attach(io) {
         url: item.url,
         title: item.title,
         platform: item.platform,
+        tmdbId: item.tmdbId || null,
+        mediaType: item.mediaType || null,
+        season: item.season || null,
+        episode: item.episode || null,
+        episodeTitle: item.episodeTitle || null,
+        showTitle: item.showTitle || null,
+        poster: item.poster || null,
+        backdrop: item.backdrop || null,
       };
       room.state.time = 0;
       room.state.playing = true;
@@ -633,6 +670,14 @@ function attach(io) {
         url: item.url,
         title: item.title,
         platform: item.platform,
+        tmdbId: item.tmdbId || null,
+        mediaType: item.mediaType || null,
+        season: item.season || null,
+        episode: item.episode || null,
+        episodeTitle: item.episodeTitle || null,
+        showTitle: item.showTitle || null,
+        poster: item.poster || null,
+        backdrop: item.backdrop || null,
       };
       room.state.time = 0;
       room.state.playing = true;

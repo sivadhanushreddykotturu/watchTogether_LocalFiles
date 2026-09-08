@@ -14,6 +14,8 @@ import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
 import { searchSpotify, resolveSpotifyTrack } from '../../../lib/spotify';
 import { parseMediaUrl, resolveMediaUrl, searchPornhub } from '../../../lib/mediaEmbeds';
+import { buildVidloveUrl, searchTmdb, fetchTmdbTrending, fetchTmdbTvDetails, fetchTmdbSeason } from '../../../lib/tmdb';
+import TmdbEpisodeModal from '../../components/TmdbEpisodeModal';
 import { VoiceSession } from '../../../lib/voice';
 import { getAppleEmojiUrl } from '../../../lib/emoji';
 import { EmojiImg, renderWithAppleEmojis } from '../../components/AppleEmoji';
@@ -80,7 +82,10 @@ export default function Room() {
   const [ytPanelOpen, setYtPanelOpen] = useState(false);
   const [ytUrl, setYtUrl] = useState('');
   const [ytSearchModalOpen, setYtSearchModalOpen] = useState(false);
-  const [searchPlatform, setSearchPlatform] = useState('youtube'); // 'youtube' | 'ph'
+  const [searchPlatform, setSearchPlatform] = useState('youtube'); // 'youtube' | 'spotify' | 'tmdb' | 'ph'
+  const [tmdbFilter, setTmdbFilter] = useState('all'); // 'all' | 'movie' | 'tv' | 'anime' | 'kdrama'
+  const [tmdbEpisodeModalOpen, setTmdbEpisodeModalOpen] = useState(false);
+  const [selectedSeriesForEpisodes, setSelectedSeriesForEpisodes] = useState(null);
   const [ytSearchQuery, setYtSearchQuery] = useState('');
   const [ytSearchResults, setYtSearchResults] = useState([]);
   const [ytSearching, setYtSearching] = useState(false);
@@ -96,6 +101,12 @@ export default function Room() {
       setSearchPlatform('youtube');
     }
   }, [adultMode, searchPlatform]);
+
+  useEffect(() => {
+    if (ytSearchModalOpen && searchPlatform === 'tmdb' && ytSearchResults.length === 0 && !ytSearching) {
+      executeSearch('', 'tmdb');
+    }
+  }, [ytSearchModalOpen, searchPlatform]);
   const [micOn, setMicOn] = useState(false);
   const [peerVoice, setPeerVoice] = useState({}); // socketId -> true while their mic is live
   const [speakers, setSpeakers] = useState({});  // socketId -> true while speaking
@@ -2127,6 +2138,14 @@ export default function Room() {
         viewkey: resolved.viewkey,
         title,
         platform: resolved.platform,
+        tmdbId: resolved.tmdbId,
+        mediaType: resolved.mediaType,
+        season: resolved.season,
+        episode: resolved.episode,
+        episodeTitle: resolved.episodeTitle,
+        showTitle: resolved.showTitle,
+        poster: resolved.poster,
+        backdrop: resolved.backdrop,
         playing: true,
       });
     } else {
@@ -2138,6 +2157,14 @@ export default function Room() {
         viewkey: resolved.viewkey,
         title,
         platform: resolved.platform,
+        tmdbId: resolved.tmdbId,
+        mediaType: resolved.mediaType,
+        season: resolved.season,
+        episode: resolved.episode,
+        episodeTitle: resolved.episodeTitle,
+        showTitle: resolved.showTitle,
+        poster: resolved.poster,
+        backdrop: resolved.backdrop,
         playNow: false,
       });
     }
@@ -2171,6 +2198,14 @@ export default function Room() {
       viewkey: resolved.viewkey,
       title,
       platform: resolved.platform,
+      tmdbId: resolved.tmdbId,
+      mediaType: resolved.mediaType,
+      season: resolved.season,
+      episode: resolved.episode,
+      episodeTitle: resolved.episodeTitle,
+      showTitle: resolved.showTitle,
+      poster: resolved.poster,
+      backdrop: resolved.backdrop,
       playNow,
     }, () => {
       setQueueLoading(false);
@@ -2205,14 +2240,11 @@ export default function Room() {
     setYtPanelOpen(false);
   };
 
-  const executeSearch = async (queryText, platformOverride) => {
+  const executeSearch = async (queryText, platformOverride, tmdbFilterOverride) => {
     const q = String(queryText || '').trim();
     const platform = platformOverride || searchPlatform;
-    if (!q) {
-      setYtSearchResults([]);
-      setYtSearching(false);
-      return;
-    }
+    const currentTmdbFilter = tmdbFilterOverride || tmdbFilter;
+
     if (searchAbortRef.current) {
       searchAbortRef.current.abort();
     }
@@ -2222,7 +2254,17 @@ export default function Room() {
     setYtSearchError('');
     try {
       let results = [];
-      if (platform === 'ph') {
+      if (platform === 'tmdb') {
+        if (!q) {
+          results = await fetchTmdbTrending({ type: currentTmdbFilter, signal: ctrl.signal });
+        } else {
+          results = await searchTmdb(q, { type: currentTmdbFilter, signal: ctrl.signal });
+        }
+      } else if (!q) {
+        setYtSearchResults([]);
+        setYtSearching(false);
+        return;
+      } else if (platform === 'ph') {
         results = await searchPornhub(q, ctrl.signal);
       } else if (platform === 'spotify') {
         results = await searchSpotify(q, ctrl.signal);
@@ -2244,7 +2286,7 @@ export default function Room() {
   const handleSearchInputChange = (text) => {
     setYtSearchQuery(text);
     clearTimeout(searchDebounceRef.current);
-    if (!text.trim()) {
+    if (!text.trim() && searchPlatform !== 'tmdb') {
       setYtSearchResults([]);
       setYtSearching(false);
       return;
@@ -2255,9 +2297,42 @@ export default function Room() {
   };
 
   const handleSelectSearchResult = async (item, playNow = true) => {
-    if (!item || (!item.id && !item.viewkey && !item.spotifyId)) return;
+    if (!item || (!item.id && !item.viewkey && !item.spotifyId && !item.tmdbId)) return;
     const socket = getSocket();
     if (!socket.connected) return;
+
+    // TMDB Item (Movie or TV Series)
+    if (searchPlatform === 'tmdb' || item.platform === 'TMDB' || item.tmdbId) {
+      if (item.mediaType === 'tv') {
+        setSelectedSeriesForEpisodes(item);
+        setTmdbEpisodeModalOpen(true);
+        return;
+      }
+
+      // Movie
+      const embedUrl = buildVidloveUrl({ tmdbId: item.tmdbId || item.id, type: 'movie' });
+      const payload = {
+        type: 'embed',
+        embedUrl,
+        title: item.title,
+        platform: 'Vidlove',
+        mediaType: 'movie',
+        tmdbId: item.tmdbId || item.id,
+        poster: item.poster,
+        backdrop: item.backdrop,
+      };
+
+      if (playNow) {
+        socket.emit('source', { ...payload, playing: true });
+        toast(`Playing "${item.title}"`);
+        setYtSearchModalOpen(false);
+        setYtPanelOpen(false);
+      } else {
+        socket.emit('queue-add', { ...payload, playNow: false });
+        toast(`Added "${item.title}" to queue`);
+      }
+      return;
+    }
 
     if (searchPlatform === 'spotify' || item.platform === 'Spotify' || item.type === 'spotify') {
       const resolved = await resolveSpotifyTrack({
@@ -2322,6 +2397,75 @@ export default function Room() {
       socket.emit('queue-add', { videoId: item.id, title: item.title, playNow: false });
       toast(`Added "${item.title}" to queue`);
     }
+  };
+
+  const handleSelectEpisode = (epPayload, playNow = true) => {
+    const socket = getSocket();
+    if (!socket.connected) return;
+
+    const embedUrl = buildVidloveUrl({
+      tmdbId: epPayload.tmdbId,
+      type: 'tv',
+      season: epPayload.season,
+      episode: epPayload.episode,
+    });
+
+    const payload = {
+      type: 'embed',
+      embedUrl,
+      title: epPayload.title,
+      platform: 'Vidlove',
+      mediaType: 'tv',
+      tmdbId: epPayload.tmdbId,
+      season: epPayload.season,
+      episode: epPayload.episode,
+      episodeTitle: epPayload.episodeTitle,
+      showTitle: epPayload.showTitle,
+      poster: epPayload.poster,
+      backdrop: epPayload.backdrop,
+    };
+
+    if (playNow) {
+      socket.emit('source', { ...payload, playing: true });
+      toast(`Playing ${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode}`);
+      setTmdbEpisodeModalOpen(false);
+      setYtSearchModalOpen(false);
+      setYtPanelOpen(false);
+    } else {
+      socket.emit('queue-add', { ...payload, playNow: false });
+      toast(`Added S${epPayload.season}:E${epPayload.episode} to queue`);
+    }
+  };
+
+  const handlePlayNextEpisode = () => {
+    if (!source?.tmdbId || source?.mediaType !== 'tv') return;
+    const socket = getSocket();
+    if (!socket.connected) return;
+
+    const nextEp = (Number(source.episode) || 1) + 1;
+    const season = Number(source.season) || 1;
+    const embedUrl = buildVidloveUrl({
+      tmdbId: source.tmdbId,
+      type: 'tv',
+      season,
+      episode: nextEp,
+    });
+
+    const cleanShowTitle = source.showTitle || source.title.split('·')[0].trim();
+    const payload = {
+      ...source,
+      type: 'embed',
+      embedUrl,
+      season,
+      episode: nextEp,
+      episodeTitle: `Episode ${nextEp}`,
+      showTitle: cleanShowTitle,
+      title: `${cleanShowTitle} · S${season}:E${nextEp}`,
+      playing: true,
+    };
+
+    socket.emit('source', payload);
+    toast(`Skipped to Episode ${nextEp}`);
   };
 
   const pokeTopBar = () => {
@@ -2842,6 +2986,43 @@ export default function Room() {
 
             {source?.type === 'embed' && (
               <div className="web-embed-wrap" style={{ transform: `scale(${zoom})` }}>
+                {source.mediaType === 'tv' && source.tmdbId && (
+                  <div className="room-tv-overlay">
+                    <div className="yt-top-title-wrap">
+                      <span style={{ fontSize: '18px' }}>📺</span>
+                      <span className="yt-top-title">
+                        {source.showTitle || source.title} · S{source.season || 1}:E{source.episode || 1} {source.episodeTitle ? `"${source.episodeTitle}"` : ''}
+                      </span>
+                    </div>
+                    <div className="yt-top-actions">
+                      <button
+                        type="button"
+                        className="room-tv-btn"
+                        onClick={() => {
+                          setSelectedSeriesForEpisodes({
+                            tmdbId: source.tmdbId,
+                            title: source.showTitle || source.title,
+                            name: source.showTitle || source.title,
+                            poster: source.poster,
+                            backdrop: source.backdrop,
+                          });
+                          setTmdbEpisodeModalOpen(true);
+                        }}
+                        title="Browse all seasons and episodes"
+                      >
+                        📑 Episodes
+                      </button>
+                      <button
+                        type="button"
+                        className="room-tv-btn"
+                        onClick={handlePlayNextEpisode}
+                        title="Play Next Episode"
+                      >
+                        ⏭️ Next Ep
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <iframe
                   src={source.embedUrl}
                   className="web-embed-iframe"
@@ -3250,7 +3431,7 @@ export default function Room() {
                 <div className="sub-backdrop" onClick={() => setYtPanelOpen(false)} />
                 <div className="sub-panel yt-panel">
                   <div className="sub-panel-head">
-                    <span className="sub-panel-title">YouTube</span>
+                    <span className="sub-panel-title">Online Media</span>
                     <button className="sub-close-btn" onClick={() => setYtPanelOpen(false)} title="Close">
                       <svg viewBox="0 0 24 24" width="16" height="16"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
                     </button>
@@ -3265,7 +3446,7 @@ export default function Room() {
                       }}
                     >
                       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-                      Search Videos (YouTube / PH)
+                      Browse Movies, Series & Videos
                     </button>
                   </div>
                   <div className="sub-row">
@@ -3274,7 +3455,7 @@ export default function Room() {
                       <input
                         type="text"
                         className="yt-url"
-                        placeholder="Paste YouTube link…"
+                        placeholder="Paste link (YouTube, TMDB, Vidlove, HLS)…"
                         value={ytUrl}
                         onChange={(e) => setYtUrl(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') handlePlayYouTube(true); }}
@@ -4156,6 +4337,16 @@ export default function Room() {
             <div className="search-platform-tabs">
               <button
                 type="button"
+                className={'search-platform-tab movies' + (searchPlatform === 'tmdb' ? ' active' : '')}
+                onClick={() => {
+                  setSearchPlatform('tmdb');
+                  executeSearch(ytSearchQuery, 'tmdb');
+                }}
+              >
+                <span className="tab-icon">🎬</span> Movies & Series
+              </button>
+              <button
+                type="button"
                 className={'search-platform-tab' + (searchPlatform === 'youtube' ? ' active' : '')}
                 onClick={() => {
                   setSearchPlatform('youtube');
@@ -4188,6 +4379,30 @@ export default function Room() {
               )}
             </div>
 
+            {searchPlatform === 'tmdb' && (
+              <div className="tmdb-subfilters">
+                {[
+                  { id: 'all', label: '🌟 All' },
+                  { id: 'movie', label: '🎬 Movies' },
+                  { id: 'tv', label: '📺 TV Series' },
+                  { id: 'anime', label: '⛩️ Anime' },
+                  { id: 'kdrama', label: '🌸 K-Drama' },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className={'tmdb-filter-chip' + (tmdbFilter === f.id ? ' active' : '')}
+                    onClick={() => {
+                      setTmdbFilter(f.id);
+                      executeSearch(ytSearchQuery, 'tmdb', f.id);
+                    }}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="yt-search-header">
               <div className="yt-search-input-wrap">
                 <svg className="yt-search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
@@ -4197,7 +4412,15 @@ export default function Room() {
                 <input
                   type="text"
                   className="yt-search-input"
-                  placeholder={searchPlatform === 'spotify' ? 'Search Spotify songs, artists, albums…' : searchPlatform === 'ph' ? 'Search Pornhub videos by title or tags…' : 'Search YouTube videos (e.g. songs, trailers, podcasts)…'}
+                  placeholder={
+                    searchPlatform === 'tmdb'
+                      ? 'Search movies, TV shows, anime, K-dramas (e.g. Inception, Squid Game, Solo Leveling)…'
+                      : searchPlatform === 'spotify'
+                      ? 'Search Spotify songs, artists, albums…'
+                      : searchPlatform === 'ph'
+                      ? 'Search Pornhub videos by title or tags…'
+                      : 'Search YouTube videos (e.g. songs, trailers, podcasts)…'
+                  }
                   value={ytSearchQuery}
                   autoFocus
                   onChange={(e) => handleSearchInputChange(e.target.value)}
@@ -4225,7 +4448,9 @@ export default function Room() {
             {!ytSearchQuery && (
               <div className="yt-search-suggestions">
                 <span className="yt-sug-label">Popular topics:</span>
-                {(searchPlatform === 'spotify'
+                {(searchPlatform === 'tmdb'
+                  ? ['Inception', 'Squid Game', 'Demon Slayer', 'Solo Leveling', 'Attack on Titan', 'Game of Thrones', 'Interstellar', 'Queen of Tears']
+                  : searchPlatform === 'spotify'
                   ? ['Top Global Hits', 'Lofi & Chill Beats', 'Pop Rising', 'Hip-Hop Vibes', 'Acoustic Chill', 'Rock Classics', 'R&B / Soul']
                   : searchPlatform === 'ph'
                   ? ['Trending', 'Popular With Women', 'Japanese', 'Anime', 'VR', '4K', 'Cosplay']
@@ -4250,7 +4475,15 @@ export default function Room() {
               {ytSearching && ytSearchResults.length === 0 ? (
                 <div className="yt-search-loading-state">
                   <div className="yt-search-spinner-lg" />
-                  <p>{searchPlatform === 'spotify' ? 'Searching Spotify…' : searchPlatform === 'ph' ? 'Searching Pornhub...' : 'Searching YouTube...'}</p>
+                  <p>
+                    {searchPlatform === 'tmdb'
+                      ? 'Fetching from TMDB…'
+                      : searchPlatform === 'spotify'
+                      ? 'Searching Spotify…'
+                      : searchPlatform === 'ph'
+                      ? 'Searching Pornhub...'
+                      : 'Searching YouTube...'}
+                  </p>
                 </div>
               ) : ytSearchError ? (
                 <div className="yt-search-error-state">
@@ -4260,37 +4493,121 @@ export default function Room() {
               ) : ytSearchResults.length > 0 ? (
                 <div className="yt-search-grid">
                   {ytSearchResults.map((video) => (
-                    <div key={video.id || video.viewkey} className="yt-card">
-                      <div className="yt-card-thumb-wrap">
-                        <img src={video.thumbnail} alt={video.title} className="yt-card-thumb" referrerPolicy="no-referrer" loading="lazy" />
-                        {video.duration && <span className="yt-card-duration">{video.duration}</span>}
-                      </div>
-                      <div className="yt-card-info">
-                        <div className="yt-card-title" title={video.title}>{video.title}</div>
-                        <div className="yt-card-meta">
-                          {video.author && <span className="yt-card-author">{video.author}</span>}
-                          {video.views && <span className="yt-card-views">{video.author ? ' · ' : ''}{video.views}</span>}
+                    video.platform === 'TMDB' || video.mediaType ? (
+                      <div key={video.id || video.tmdbId} className="yt-card tmdb-card">
+                        <div
+                          className="tmdb-card-poster-wrap"
+                          onClick={() => handleSelectSearchResult(video, true)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          {video.poster ? (
+                            <img src={video.poster} alt={video.title} className="tmdb-card-poster" referrerPolicy="no-referrer" loading="lazy" />
+                          ) : (
+                            <div className="tmdb-ep-thumb placeholder" style={{ height: '100%' }}>
+                              <span>{video.title}</span>
+                            </div>
+                          )}
+                          <div className="tmdb-card-badges">
+                            <span className={'tmdb-badge-chip ' + (video.subType || video.mediaType)}>
+                              {video.subType === 'anime' ? 'Anime' : video.subType === 'kdrama' ? 'K-Drama' : video.mediaType === 'tv' ? 'Series' : 'Movie'}
+                            </span>
+                            {video.year && <span className="tmdb-badge-chip" style={{ background: 'rgba(0,0,0,0.6)' }}>{video.year}</span>}
+                          </div>
+                          {video.rating && <div className="tmdb-card-rating">⭐ {video.rating}</div>}
                         </div>
-                        <div className="yt-card-actions">
-                          <button
-                            type="button"
-                            className="btn primary sm"
-                            onClick={() => handleSelectSearchResult(video, true)}
-                            title="Play now for the whole room"
-                          >
-                            ▶ Play Now
-                          </button>
-                          <button
-                            type="button"
-                            className="btn ghost sm"
-                            onClick={() => handleSelectSearchResult(video, false)}
-                            title="Add to shared queue"
-                          >
-                            + Queue
-                          </button>
+                        <div className="tmdb-card-content">
+                          <div className="tmdb-card-title" title={video.title}>{video.title}</div>
+                          {video.originalTitle && video.originalTitle !== video.title && (
+                            <div className="tmdb-card-meta">{video.originalTitle}</div>
+                          )}
+                          <p className="tmdb-card-overview">{video.overview || 'No synopsis available.'}</p>
+                          <div className="yt-card-actions">
+                            {video.mediaType === 'tv' ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn primary sm"
+                                  onClick={() => handleSelectSearchResult(video, true)}
+                                  title="Browse seasons & episodes"
+                                >
+                                  📑 Episodes
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn ghost sm"
+                                  onClick={() => {
+                                    handleSelectEpisode({
+                                      tmdbId: video.tmdbId || video.id,
+                                      season: 1,
+                                      episode: 1,
+                                      episodeTitle: 'Episode 1',
+                                      showTitle: video.title,
+                                      poster: video.poster,
+                                      backdrop: video.backdrop,
+                                      title: `${video.title} · S1:E1`,
+                                    }, false);
+                                  }}
+                                  title="Add Season 1 Episode 1 to queue"
+                                >
+                                  + Queue S1:E1
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn primary sm"
+                                  onClick={() => handleSelectSearchResult(video, true)}
+                                  title="Play movie now for the room"
+                                >
+                                  ▶ Play Now
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn ghost sm"
+                                  onClick={() => handleSelectSearchResult(video, false)}
+                                  title="Add movie to shared queue"
+                                >
+                                  + Queue
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div key={video.id || video.viewkey} className="yt-card">
+                        <div className="yt-card-thumb-wrap">
+                          <img src={video.thumbnail} alt={video.title} className="yt-card-thumb" referrerPolicy="no-referrer" loading="lazy" />
+                          {video.duration && <span className="yt-card-duration">{video.duration}</span>}
+                        </div>
+                        <div className="yt-card-info">
+                          <div className="yt-card-title" title={video.title}>{video.title}</div>
+                          <div className="yt-card-meta">
+                            {video.author && <span className="yt-card-author">{video.author}</span>}
+                            {video.views && <span className="yt-card-views">{video.author ? ' · ' : ''}{video.views}</span>}
+                          </div>
+                          <div className="yt-card-actions">
+                            <button
+                              type="button"
+                              className="btn primary sm"
+                              onClick={() => handleSelectSearchResult(video, true)}
+                              title="Play now for the whole room"
+                            >
+                              ▶ Play Now
+                            </button>
+                            <button
+                              type="button"
+                              className="btn ghost sm"
+                              onClick={() => handleSelectSearchResult(video, false)}
+                              title="Add to shared queue"
+                            >
+                              + Queue
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )
                   ))}
                 </div>
               ) : ytSearchQuery ? (
@@ -4300,14 +4617,14 @@ export default function Room() {
                     <path d="M21 21l-4.35-4.35" />
                   </svg>
                   <p>No results found for &ldquo;{ytSearchQuery}&rdquo;</p>
-                  <span>Try another search query or paste a direct video link in the URL box.</span>
+                  <span>Try another search query or check the spelling.</span>
                 </div>
               ) : (
                 <div className="yt-search-placeholder-state">
                   <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor">
                     <path d="M22 12s0-3.3-.42-4.8a2.5 2.5 0 0 0-1.76-1.77C18.25 5 12 5 12 5s-6.25 0-7.82.43A2.5 2.5 0 0 0 2.42 7.2C2 8.7 2 12 2 12s0 3.3.42 4.8c.23.86.9 1.53 1.76 1.77C5.75 19 12 19 12 19s6.25 0 7.82-.43a2.5 2.5 0 0 0 1.76-1.77C22 15.3 22 12 22 12zM10 15.5v-7l6 3.5-6 3.5z" />
                   </svg>
-                  <p>Search {searchPlatform === 'ph' ? 'Pornhub' : 'YouTube'} to watch videos together</p>
+                  <p>Search {searchPlatform === 'tmdb' ? 'Movies, TV Shows & Anime' : searchPlatform === 'ph' ? 'Pornhub' : 'YouTube'} to watch together</p>
                   <span>Type a search query above or pick one of the popular topics to get started.</span>
                 </div>
               )}
@@ -4315,6 +4632,26 @@ export default function Room() {
           </div>
         </div>
       )}
+
+      {/* TMDB Season & Episode Browser Modal */}
+      <TmdbEpisodeModal
+        isOpen={tmdbEpisodeModalOpen}
+        onClose={() => setTmdbEpisodeModalOpen(false)}
+        series={selectedSeriesForEpisodes}
+        onSelectEpisode={handleSelectEpisode}
+        currentSeason={
+          source?.mediaType === 'tv' &&
+          String(source?.tmdbId) === String(selectedSeriesForEpisodes?.tmdbId || selectedSeriesForEpisodes?.id)
+            ? Number(source.season) || 1
+            : 1
+        }
+        currentEpisode={
+          source?.mediaType === 'tv' &&
+          String(source?.tmdbId) === String(selectedSeriesForEpisodes?.tmdbId || selectedSeriesForEpisodes?.id)
+            ? Number(source.episode) || 1
+            : 1
+        }
+      />
 
       <div className="toast-stack">
         {toasts.map((t) => <div key={t.id} className="toast">{renderWithAppleEmojis(t.text, 13)}</div>)}
