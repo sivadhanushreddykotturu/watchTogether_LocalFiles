@@ -252,8 +252,7 @@ export default function Room() {
   const seekEmbed = (seconds) => {
     if (embedIframeRef.current?.contentWindow) {
       try {
-        embedIframeRef.current.contentWindow.postMessage({ type: 'seek', value: seconds }, '*');
-        embedIframeRef.current.contentWindow.postMessage({ type: 'setcurrenttime', time: seconds }, '*');
+        embedIframeRef.current.contentWindow.postMessage({ type: 'seek', time: seconds }, '*');
       } catch {}
     }
   };
@@ -276,17 +275,10 @@ export default function Room() {
 
   const handleUnmuteEmbed = () => {
     setEmbedMutedHint(false);
-    if (embedIframeRef.current?.contentWindow) {
-      try {
-        embedIframeRef.current.contentWindow.postMessage({ type: 'unmute' }, '*');
-        embedIframeRef.current.contentWindow.postMessage({ type: 'setvolume', value: 1 }, '*');
-        embedIframeRef.current.contentWindow.postMessage({ type: 'volume', volume: 100 }, '*');
-      } catch {}
-    }
     try {
       embedIframeRef.current?.focus();
     } catch {}
-    toast("Audio unmuted! (Press 'M' inside video if still muted)");
+    toast("Audio unmuted! (Click player or press 'M' inside video to toggle)");
   };
 
   const handleRetryEmbed = () => {
@@ -541,12 +533,6 @@ export default function Room() {
     const val = Math.max(0, Math.min(1, Number(v) || 0));
     setVolume(val);
     if (ytMode() && ytRef.current?.setVolume) ytRef.current.setVolume(Math.round(val * 100));
-    if (sourceRef.current?.type === 'embed' && embedIframeRef.current?.contentWindow) {
-      try {
-        embedIframeRef.current.contentWindow.postMessage({ type: 'setvolume', value: val }, '*');
-        embedIframeRef.current.contentWindow.postMessage({ type: 'volume', volume: Math.round(val * 100) }, '*');
-      } catch {}
-    }
     if (videoRef.current) {
       videoRef.current.volume = val;
       videoRef.current.muted = false;
@@ -997,7 +983,8 @@ export default function Room() {
         setStateLatest(playing, expected);
         const drift = expected - cur;
 
-        if (playing && Math.abs(drift) > 2.5 && Date.now() - lastLocalSeekRef.current > 4000) {
+        if (playing && Math.abs(drift) > 3.0 && expected > 2 && Date.now() - lastLocalSeekRef.current > 5000) {
+          lastLocalSeekRef.current = Date.now();
           guardRef.current.seek++;
           seekEmbed(expected);
         }
@@ -1618,9 +1605,6 @@ export default function Room() {
           seekEmbed(target);
           emitPlayback('seek');
         }
-        if (e.code === 'KeyM') {
-          handleUnmuteEmbed();
-        }
         if (e.code === 'KeyC') {
           setSubPanelOpen((prev) => !prev);
         }
@@ -1705,27 +1689,15 @@ export default function Room() {
       } else if (eventName === 'play') {
         embedPlayingRef.current = true;
         setPlaying(true);
-        if (guardRef.current.play > 0) {
-          guardRef.current.play--;
-        } else {
-          emitPlayback('play');
-        }
+        if (guardRef.current.play > 0) guardRef.current.play--;
       } else if (eventName === 'pause') {
         embedPlayingRef.current = false;
         setPlaying(false);
-        if (guardRef.current.pause > 0) {
-          guardRef.current.pause--;
-        } else {
-          emitPlayback('pause');
-        }
+        if (guardRef.current.pause > 0) guardRef.current.pause--;
       } else if (eventName === 'seeked') {
         updateTimeline();
         updateSubtitles();
-        if (guardRef.current.seek > 0) {
-          guardRef.current.seek--;
-        } else {
-          emitPlayback('seek');
-        }
+        if (guardRef.current.seek > 0) guardRef.current.seek--;
       }
     };
 
