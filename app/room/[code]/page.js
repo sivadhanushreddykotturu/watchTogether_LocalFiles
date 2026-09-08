@@ -337,7 +337,9 @@ export default function Room() {
       setEmbedDuration(0);
       setEmbedOffline(false);
       setEmbedMutedHint(true);
-      setTimeout(() => setEmbedMutedHint(false), 12000);
+      subsOnRef.current = false;
+      setSubsOn(false);
+      setSubText('');
 
       // Fallback: if stream hasn't hit ~2s of playback within 8s (e.g. autoplay blocked), jump to room position
       setTimeout(() => {
@@ -366,18 +368,8 @@ export default function Room() {
         } else {
           setEmbedOffline(false);
         }
-        if (res.subtitles && res.subtitles.length > 0) {
-          const offTrack = { id: 'off', label: 'Off / Disabled', cues: [] };
-          const tracks = [offTrack, ...res.subtitles];
-          subTracksRef.current = tracks;
-          setSubTracks(tracks);
-          const en = res.subtitles.find((t) => t.language === 'en' || t.label?.toLowerCase().includes('english'));
-          if (en) {
-            selectTrack(en.id, false);
-          }
-        }
       }).catch((err) => {
-        console.warn('Error fetching TMDB sources/subtitles:', err);
+        console.warn('Error checking TMDB sources:', err);
       });
     }
   };
@@ -796,14 +788,15 @@ export default function Room() {
 
   // ---------- player core ----------
   function updateTimeline() {
+    if (!fillRef.current || !headRef.current || !curRef.current || !durRef.current) return;
     const d = durationAny();
     const t = currentTimeAny();
     const isEmbed = sourceRef.current?.type === 'embed';
     if ((ytMode() && !ytRef.current) || (!ytMode() && !isEmbed && !fileLoadedRef.current) || !d || !isFinite(d)) {
-      if (fillRef.current) fillRef.current.style.width = '0%';
-      if (headRef.current) headRef.current.style.left = '0%';
-      if (curRef.current) curRef.current.textContent = '0:00';
-      if (durRef.current) durRef.current.textContent = '0:00';
+      fillRef.current.style.width = '0%';
+      headRef.current.style.left = '0%';
+      curRef.current.textContent = '0:00';
+      durRef.current.textContent = '0:00';
       renderTicks();
       return;
     }
@@ -1163,10 +1156,13 @@ export default function Room() {
     const onEnded = () => { setPlaying(false); releaseWakeLock(); };
 
     const updateSubtitles = () => {
+      if (sourceRef.current?.type === 'embed') {
+        setSubText((prev) => (prev ? '' : prev));
+        return;
+      }
       const v = videoRef.current;
       const cues = cuesRef.current;
-      const isEmbed = sourceRef.current?.type === 'embed';
-      if ((!v && !isEmbed) || !cues.length || !subsOnRef.current) {
+      if (!v || !cues.length || !subsOnRef.current) {
         setSubText((prev) => (prev ? '' : prev));
         return;
       }
@@ -1635,13 +1631,6 @@ export default function Room() {
           latestStateRef.current.time = target;
           emitPlayback('seek');
         }
-        if (e.code === 'KeyC') {
-          setSubPanelOpen((prev) => !prev);
-        }
-        if (e.code === 'KeyV') cycleSubtitles();
-        const subStep = e.shiftKey ? 500 : 50;
-        if (e.code === 'KeyG') nudgeSubtitles(-subStep);
-        if (e.code === 'KeyH') nudgeSubtitles(subStep);
         if (e.code === 'KeyL' || e.code === 'KeyD') setDimmed((prev) => !prev);
         return;
       }
@@ -3247,19 +3236,21 @@ export default function Room() {
           <span className="slate-label">ROOM</span>
           <span className="slate-code">{code}</span>
         </button>
-        <button
-          className={'mobile-action-btn' + (source?.type === 'youtube' ? (ytCcOn ? ' active' : '') : (subsOn ? ' active' : ''))}
-          onClick={() => {
-            if (source?.type === 'youtube') {
-              toggleYtCaptions();
-            } else {
-              setSubPanelOpen(!subPanelOpen);
-            }
-          }}
-          title={source?.type === 'youtube' ? 'Captions' : 'Subtitles'}
-        >
-          CC {source?.type === 'youtube' ? (ytCcOn ? 'On' : 'Off') : (subsOn ? 'On' : 'Off')}
-        </button>
+        {source?.type !== 'embed' && (
+          <button
+            className={'mobile-action-btn' + (source?.type === 'youtube' ? (ytCcOn ? ' active' : '') : (subsOn ? ' active' : ''))}
+            onClick={() => {
+              if (source?.type === 'youtube') {
+                toggleYtCaptions();
+              } else {
+                setSubPanelOpen(!subPanelOpen);
+              }
+            }}
+            title={source?.type === 'youtube' ? 'Captions' : 'Subtitles'}
+          >
+            CC {source?.type === 'youtube' ? (ytCcOn ? 'On' : 'Off') : (subsOn ? 'On' : 'Off')}
+          </button>
+        )}
         {fileMatch && (
           <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')}>
             {fileMatch.match ? '✓ Matched' : `⚠️ ${fileMatch.delta}s`}
@@ -3658,7 +3649,7 @@ export default function Room() {
               </div>
             )}
 
-            {subsOn && subText && (
+            {subsOn && subText && source?.type !== 'embed' && (
               <div
                 className="sub-overlay"
                 style={{
@@ -3857,7 +3848,8 @@ export default function Room() {
             )}
           </div>
 
-          <div className="transport-wrap">
+          {source?.type !== 'embed' && (
+            <div className="transport-wrap">
             {ytPanelOpen && (
               <>
                 <div className="sub-backdrop" onClick={() => setYtPanelOpen(false)} />
@@ -4121,6 +4113,7 @@ export default function Room() {
               </button>
             </div>
           </div>
+        )}
         </section>
 
         <aside className="side">
