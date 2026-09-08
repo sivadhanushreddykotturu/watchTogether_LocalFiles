@@ -82,7 +82,7 @@ export default function Room() {
   const [ytPanelOpen, setYtPanelOpen] = useState(false);
   const [ytUrl, setYtUrl] = useState('');
   const [ytSearchModalOpen, setYtSearchModalOpen] = useState(false);
-  const [searchPlatform, setSearchPlatform] = useState('youtube'); // 'youtube' | 'spotify' | 'tmdb' | 'ph'
+  const [searchPlatform, setSearchPlatform] = useState('tmdb'); // 'tmdb' | 'youtube' | 'ph'
   const [tmdbFilter, setTmdbFilter] = useState('all'); // 'all' | 'movie' | 'tv' | 'anime' | 'kdrama'
   const [tmdbEpisodeModalOpen, setTmdbEpisodeModalOpen] = useState(false);
   const [selectedSeriesForEpisodes, setSelectedSeriesForEpisodes] = useState(null);
@@ -4052,6 +4052,16 @@ export default function Room() {
                   <div className="sidebar-platform-tabs">
                     <button
                       type="button"
+                      className={'sidebar-platform-tab movies' + (searchPlatform === 'tmdb' ? ' active' : '')}
+                      onClick={() => {
+                        setSearchPlatform('tmdb');
+                        executeSearch(ytSearchQuery, 'tmdb');
+                      }}
+                    >
+                      🎬 Movies & Shows
+                    </button>
+                    <button
+                      type="button"
                       className={'sidebar-platform-tab' + (searchPlatform === 'youtube' ? ' active' : '')}
                       onClick={() => {
                         setSearchPlatform('youtube');
@@ -4059,16 +4069,6 @@ export default function Room() {
                       }}
                     >
                       🔴 YouTube
-                    </button>
-                    <button
-                      type="button"
-                      className={'sidebar-platform-tab spotify' + (searchPlatform === 'spotify' ? ' active' : '')}
-                      onClick={() => {
-                        setSearchPlatform('spotify');
-                        if (ytSearchQuery) executeSearch(ytSearchQuery, 'spotify');
-                      }}
-                    >
-                      🟢 Spotify
                     </button>
                     {adultMode && (
                       <button
@@ -4083,11 +4083,42 @@ export default function Room() {
                       </button>
                     )}
                   </div>
+
+                  {searchPlatform === 'tmdb' && (
+                    <div className="sidebar-subfilters">
+                      {[
+                        { id: 'all', label: '🌟 All' },
+                        { id: 'movie', label: '🎬 Movies' },
+                        { id: 'tv', label: '📺 Series' },
+                        { id: 'anime', label: '⛩️ Anime' },
+                        { id: 'kdrama', label: '🌸 K-Drama' },
+                      ].map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          className={'sidebar-filter-chip' + (tmdbFilter === f.id ? ' active' : '')}
+                          onClick={() => {
+                            setTmdbFilter(f.id);
+                            executeSearch(ytSearchQuery, 'tmdb', f.id);
+                          }}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
                   <div className="queue-search-input-wrap">
                     <input
                       type="text"
                       className="queue-input queue-search-input"
-                      placeholder={searchPlatform === 'spotify' ? 'Search Spotify songs, artists…' : searchPlatform === 'ph' ? 'Search Pornhub videos…' : 'Search YouTube videos…'}
+                      placeholder={
+                        searchPlatform === 'tmdb'
+                          ? 'Search movies, anime, K-dramas…'
+                          : searchPlatform === 'ph'
+                          ? 'Search Pornhub videos…'
+                          : 'Search YouTube videos…'
+                      }
                       value={ytSearchQuery}
                       onChange={(e) => handleSearchInputChange(e.target.value)}
                       onKeyDown={(e) => {
@@ -4127,23 +4158,43 @@ export default function Room() {
                       </div>
                       <div className="queue-search-items">
                         {ytSearchResults.slice(0, 10).map((video) => (
-                          <div key={video.id || video.viewkey} className="queue-search-item">
+                          <div key={video.id || video.tmdbId || video.viewkey} className="queue-search-item">
                             <div className="qsi-thumb-wrap">
-                              <img src={video.thumbnail} alt={video.title} className="qsi-thumb" referrerPolicy="no-referrer" loading="lazy" />
-                              {video.duration && <span className="qsi-duration">{video.duration}</span>}
+                              <img
+                                src={video.poster || video.thumbnail}
+                                alt={video.title}
+                                className="qsi-thumb"
+                                referrerPolicy="no-referrer"
+                                loading="lazy"
+                              />
+                              {video.duration ? (
+                                <span className="qsi-duration">{video.duration}</span>
+                              ) : video.rating ? (
+                                <span className="qsi-duration">⭐ {video.rating}</span>
+                              ) : null}
                             </div>
                             <div className="qsi-info">
                               <div className="qsi-title" title={video.title}>{video.title}</div>
-                              <div className="qsi-author">{video.author || (searchPlatform === 'ph' ? 'Pornhub' : '')}</div>
+                              <div className="qsi-author">
+                                {video.subType === 'anime'
+                                  ? '⛩️ Anime'
+                                  : video.subType === 'kdrama'
+                                  ? '🌸 K-Drama'
+                                  : video.mediaType === 'tv'
+                                  ? '📺 Series'
+                                  : video.mediaType === 'movie'
+                                  ? `🎬 Movie ${video.year ? `(${video.year})` : ''}`
+                                  : video.author || (searchPlatform === 'ph' ? 'Pornhub' : 'YouTube')}
+                              </div>
                             </div>
                             <div className="qsi-actions">
                               <button
                                 type="button"
                                 className="qi-btn play"
                                 onClick={() => handleSelectSearchResult(video, true)}
-                                title="Play now"
+                                title={video.mediaType === 'tv' ? 'Browse episodes' : 'Play now'}
                               >
-                                ▶
+                                {video.mediaType === 'tv' ? '📑' : '▶'}
                               </button>
                               <button
                                 type="button"
@@ -4165,7 +4216,7 @@ export default function Room() {
                   <input
                     type="text"
                     className="queue-input"
-                    placeholder="Paste YouTube, Pornhub, or direct video URL…"
+                    placeholder="Paste YouTube, TMDB, Vidlove, or direct video URL…"
                     value={queueInput}
                     onChange={(e) => setQueueInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleQueueAdd(false); }}
@@ -4354,16 +4405,6 @@ export default function Room() {
                 }}
               >
                 <span className="tab-icon">🔴</span> YouTube
-              </button>
-              <button
-                type="button"
-                className={'search-platform-tab spotify' + (searchPlatform === 'spotify' ? ' active' : '')}
-                onClick={() => {
-                  setSearchPlatform('spotify');
-                  if (ytSearchQuery) executeSearch(ytSearchQuery, 'spotify');
-                }}
-              >
-                <span className="tab-icon">🟢</span> Spotify
               </button>
               {adultMode && (
                 <button

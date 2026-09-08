@@ -4706,6 +4706,46 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   border-bottom-color: #ff4d6d;
 }
 
+.sidebar-platform-tab.movies.active {
+  color: #ff4d6d;
+  background: rgba(255, 77, 109, 0.15);
+  border-color: rgba(255, 77, 109, 0.4);
+}
+
+.sidebar-subfilters {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+.sidebar-subfilters::-webkit-scrollbar {
+  display: none;
+}
+
+.sidebar-filter-chip {
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #a1a1aa;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.sidebar-filter-chip:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.sidebar-filter-chip.active {
+  background: #ff4d6d;
+  border-color: #ff4d6d;
+  color: #fff;
+}
+
 .tmdb-subfilters {
   display: flex;
   gap: 8px;
