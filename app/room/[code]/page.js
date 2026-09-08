@@ -244,9 +244,12 @@ export default function Room() {
   const embedDurationRef = useRef(0);
   const embedPlayingRef = useRef(false);
   const embedInitialSyncedRef = useRef(false);
+  const embedSyncingRef = useRef(false);
   const [embedTime, setEmbedTime] = useState(0);
   const [embedDuration, setEmbedDuration] = useState(0);
   const [embedOffline, setEmbedOffline] = useState(false);
+  const [embedRoomPaused, setEmbedRoomPaused] = useState(false);
+  const [embedPausedActor, setEmbedPausedActor] = useState('');
   const [embedMutedHint, setEmbedMutedHint] = useState(false);
   const [embedKey, setEmbedKey] = useState(0);
 
@@ -331,30 +334,40 @@ export default function Room() {
         .catch(() => {});
     } else if (s?.type === 'embed' && (s?.tmdbId || s?.platform === 'Vidlove')) {
       embedInitialSyncedRef.current = false;
+      embedSyncingRef.current = false;
       embedTimeRef.current = 0;
       embedDurationRef.current = 0;
       setEmbedTime(0);
       setEmbedDuration(0);
       setEmbedOffline(false);
+      setEmbedRoomPaused(latestStateRef.current?.playing === false);
+      setEmbedPausedActor('');
       setEmbedMutedHint(true);
       subsOnRef.current = false;
       setSubsOn(false);
       setSubText('');
 
-      // Fallback: if stream hasn't hit ~2s of playback within 8s (e.g. autoplay blocked), jump to room position
+      // Fallback: if stream hasn't hit ~1.5s of playback within 6s (e.g. autoplay blocked), jump to room position
       setTimeout(() => {
         if (!embedInitialSyncedRef.current && sourceRef.current?.type === 'embed') {
           const roomPos = latestStateRef.current?.playing
             ? ((latestStateRef.current.time || 0) + (Date.now() - (latestStateRef.current.at || Date.now())) / 1000)
             : (latestStateRef.current?.time || 0);
-          if (roomPos > 3) {
-            embedInitialSyncedRef.current = true;
-            guardRef.current.seek++;
+          if (roomPos > 2) {
+            embedSyncingRef.current = true;
+            guardRef.current.seek += 3;
             seekEmbed(roomPos);
-            toast(`Synced with room at ${fmt(roomPos)}`);
+            setTimeout(() => {
+              embedInitialSyncedRef.current = true;
+              embedSyncingRef.current = false;
+              toast(`Synced with room at ${fmt(roomPos)}`);
+            }, 1000);
+          } else {
+            embedInitialSyncedRef.current = true;
+            embedSyncingRef.current = false;
           }
         }
-      }, 8000);
+      }, 6000);
 
       fetchTmdbSources({
         id: s.tmdbId,
@@ -866,9 +879,15 @@ export default function Room() {
         seekEmbed(state.time);
       }
       if (state.playing) {
+        setEmbedRoomPaused(false);
+        setPlaying(true);
+        embedPlayingRef.current = true;
         guard.play++;
         playEmbed();
       } else {
+        setEmbedRoomPaused(true);
+        setPlaying(false);
+        embedPlayingRef.current = false;
         guard.pause++;
         pauseEmbed();
       }
@@ -987,6 +1006,7 @@ export default function Room() {
 
     // Embed mode heartbeat
     if (sourceRef.current?.type === 'embed') {
+      if (!embedInitialSyncedRef.current || embedSyncingRef.current) return;
       const cur = embedTimeRef.current || 0;
       if (!socket.connected) return;
       socket.emit('time-update', cur, ({ expected, playing } = {}) => {
@@ -994,9 +1014,9 @@ export default function Room() {
         setStateLatest(playing, expected);
         const drift = expected - cur;
 
-        if (embedInitialSyncedRef.current && playing && Math.abs(drift) > 3.0 && expected > 2 && Date.now() - lastLocalSeekRef.current > 5000) {
+        if (embedInitialSyncedRef.current && !embedSyncingRef.current && playing && Math.abs(drift) > 3.0 && expected > 2 && Date.now() - lastLocalSeekRef.current > 5000) {
           lastLocalSeekRef.current = Date.now();
-          guardRef.current.seek++;
+          guardRef.current.seek += 2;
           seekEmbed(expected);
         }
       });
@@ -1242,8 +1262,17 @@ export default function Room() {
     };
 
     const onPlayback = ({ action, time, playing: p, name: actor }) => {
+      if (sourceRef.current?.type === 'embed') {
+        if (!p) {
+          setEmbedRoomPaused(true);
+          setEmbedPausedActor(actor || 'Someone');
+        } else {
+          setEmbedRoomPaused(false);
+          setEmbedPausedActor('');
+        }
+      }
       applyState({ playing: p, time });
-      if (!fileLoadedRef.current) {
+      if (!fileLoadedRef.current && sourceRef.current?.type !== 'embed' && sourceRef.current?.type !== 'youtube') {
         setPickerHint(`${actor} pressed ${action} at ${fmt(time)} — load your file to join in.`);
         return;
       }
@@ -1714,42 +1743,71 @@ export default function Room() {
             // Room is at the beginning, no jump needed
             if (curTime >= 0.5) {
               embedInitialSyncedRef.current = true;
+              embedSyncingRef.current = false;
             }
-          } else if (curTime >= 1.8) {
-            // Stream has loaded and played stably for ~2 seconds; now jump to room position!
-            embedInitialSyncedRef.current = true;
-            guardRef.current.seek++;
+          } else if (curTime >= 1.5 && !embedSyncingRef.current) {
+            // Stream has loaded and played stably for ~1.5 seconds; now jump to room position!
+            embedSyncingRef.current = true;
+            guardRef.current.seek += 3;
             seekEmbed(roomPos);
+            toast(`Syncing with room at ${fmt(roomPos)}…`);
+          } else if (embedSyncingRef.current && curTime >= roomPos - 3) {
+            // Seek has landed at the target room position!
+            embedInitialSyncedRef.current = true;
+            embedSyncingRef.current = false;
+            toast(`Synced with room at ${fmt(roomPos)}`);
             if (latestStateRef.current?.playing === false) {
-              guardRef.current.pause++;
+              setEmbedRoomPaused(true);
               pauseEmbed();
             }
-            toast(`Synced with room at ${fmt(roomPos)}`);
           }
         }
       } else if (eventName === 'play') {
         embedPlayingRef.current = true;
+        // Break the bounce-back loop: if the room is PAUSED, do NOT let un-paused background iframe resume the room!
+        if (latestStateRef.current?.playing === false) {
+          setPlaying(false);
+          setEmbedRoomPaused(true);
+          return;
+        }
         setPlaying(true);
+        setEmbedRoomPaused(false);
         if (guardRef.current.play > 0) {
           guardRef.current.play--;
-        } else if (embedInitialSyncedRef.current) {
+        } else if (embedInitialSyncedRef.current && !embedSyncingRef.current) {
           emitPlayback('play');
         }
       } else if (eventName === 'pause') {
         embedPlayingRef.current = false;
         setPlaying(false);
+        setEmbedRoomPaused(true);
         if (guardRef.current.pause > 0) {
           guardRef.current.pause--;
-        } else if (embedInitialSyncedRef.current) {
+        } else if (embedInitialSyncedRef.current && !embedSyncingRef.current) {
           lastLocalPauseRef.current = Date.now();
           emitPlayback('pause');
         }
       } else if (eventName === 'seeked') {
         updateTimeline();
         updateSubtitles();
+        if (embedSyncingRef.current) {
+          const roomPos = latestStateRef.current?.playing
+            ? ((latestStateRef.current.time || 0) + (Date.now() - (latestStateRef.current.at || Date.now())) / 1000)
+            : (latestStateRef.current?.time || 0);
+          if (curTime !== null && curTime >= roomPos - 3) {
+            embedInitialSyncedRef.current = true;
+            embedSyncingRef.current = false;
+            toast(`Synced with room at ${fmt(roomPos)}`);
+            if (latestStateRef.current?.playing === false) {
+              setEmbedRoomPaused(true);
+              pauseEmbed();
+            }
+          }
+          return; // Suppress outgoing seek during initial sync!
+        }
         if (guardRef.current.seek > 0) {
           guardRef.current.seek--;
-        } else if (embedInitialSyncedRef.current) {
+        } else if (embedInitialSyncedRef.current && !embedSyncingRef.current) {
           lastLocalSeekRef.current = Date.now();
           const t = curTime !== null ? curTime : (embedTimeRef.current || 0);
           latestStateRef.current.time = t;
@@ -2366,11 +2424,21 @@ export default function Room() {
     }
     if (sourceRef.current?.type === 'embed') {
       userIntentRef.current = true;
-      if (embedPlayingRef.current) {
+      const isCurrentlyPlaying = playing || embedPlayingRef.current || !embedRoomPaused;
+      if (isCurrentlyPlaying) {
+        setEmbedRoomPaused(true);
+        setPlaying(false);
+        embedPlayingRef.current = false;
         guardRef.current.pause++;
         pauseEmbed();
         emitPlayback('pause');
       } else {
+        setEmbedRoomPaused(false);
+        setPlaying(true);
+        embedPlayingRef.current = true;
+        const resumePos = latestStateRef.current?.time || embedTimeRef.current || 0;
+        guardRef.current.seek++;
+        seekEmbed(resumePos);
         guardRef.current.play++;
         playEmbed();
         emitPlayback('play');
@@ -3430,6 +3498,25 @@ export default function Room() {
                         onClick={() => setEmbedOffline(false)}
                       >
                         Dismiss & Wait
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {embedRoomPaused && !embedOffline && (
+                  <div className="embed-paused-overlay" onClick={togglePlay}>
+                    <div className="embed-paused-card" onClick={(e) => e.stopPropagation()}>
+                      <div className="embed-paused-icon">⏸️</div>
+                      <h3 className="embed-paused-title">Stream Paused</h3>
+                      <p className="embed-paused-desc">
+                        {embedPausedActor ? `${embedPausedActor} paused the movie` : 'Playback is paused across the room'} at {fmt(embedTimeRef.current || 0)}.
+                      </p>
+                      <button
+                        type="button"
+                        className="embed-btn resume"
+                        onClick={togglePlay}
+                      >
+                        ▶️ Resume Playback
                       </button>
                     </div>
                   </div>

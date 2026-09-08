@@ -75,6 +75,7 @@ function freshRoom(code, state) {
     sessionIds: new Map(), // socketId -> sessionId
     approved: new Set(), // sessionIds the host has let in through knock
     host: null, // socketId of room creator
+    hostSessionId: null, // persistent sessionId of room creator / host
     controlLock: false, // only host can control video + guests must knock to join
     adultMode: false, // enables adult content
     state: state || { playing: false, time: 0, updatedAt: Date.now(), subOffset: 0, source: null },
@@ -162,9 +163,15 @@ function joinRoom(io, socket, code, name, { rejoin = false, history } = {}, cb) 
 
   // Host recovery: a room rehydrated from Mongo (or one whose host vanished
   // without a handoff) has no host — the person entering right now takes over
-  // so the room is never left leaderless.
-  if (!room.host || !room.users.has(room.host)) {
+  // so the room is never left leaderless. If the persistent host reconnects, restore them.
+  if (room.hostSessionId && sessionId && room.hostSessionId === sessionId) {
+    if (room.host !== socket.id) {
+      room.host = socket.id;
+      socket.to(code).emit('host-change', { newHostId: room.host });
+    }
+  } else if (!room.host || !room.users.has(room.host)) {
     room.host = socket.id;
+    if (sessionId) room.hostSessionId = sessionId;
     socket.to(code).emit('host-change', { newHostId: room.host });
   }
 
@@ -259,6 +266,7 @@ function attach(io) {
       db.saveRoom(code, room.state, { title: room.title, ownerId, ownerName: cleanName(name), controlLock: room.controlLock });
       joinRoom(io, socket, code, name, { history: [] }, cb);
       room.host = socket.id;
+      if (socket.data.sessionId) room.hostSessionId = socket.data.sessionId;
     });
 
     // --- get user's persistent / recent rooms ---
@@ -345,6 +353,13 @@ function attach(io) {
       if (room.controlLock && room.host !== socket.id) return; // locked: host only
       time = Math.max(0, Number(time) || 0);
 
+      // Guard against an uninitialized joiner resetting an active playback session to 0:00:
+      // If the room is actively rolling ahead (> 5s), do not allow a seek to 0 by a non-host
+      // or someone whose player is still buffering from start.
+      if (action === 'seek' && time < 2 && room.state.time > 5 && room.state.playing && socket.id !== room.host) {
+        return;
+      }
+
       room.state.time = time;
       room.state.updatedAt = Date.now();
       if (action === 'play') room.state.playing = true;
@@ -366,9 +381,14 @@ function attach(io) {
       if (!room) return;
       const t = Number(time) || 0;
       if (socket.id === room.host) {
-        if (t > 0 || room.state.time < 5) {
-          room.state.time = t;
-          room.state.updatedAt = Date.now();
+        // Prevent fresh/buffering streams at 0s from wiping out an active room's position
+        const roomAhead = room.state.time > 5;
+        const freshZero = t < 2;
+        if (!roomAhead || !freshZero) {
+          if (t > 0 || room.state.time < 5) {
+            room.state.time = t;
+            room.state.updatedAt = Date.now();
+          }
         }
       }
       socket.to(room.code).emit('peer-time', { id: socket.id, time: t });
