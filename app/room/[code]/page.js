@@ -1622,13 +1622,17 @@ export default function Room() {
         if (e.code === 'ArrowRight') {
           e.preventDefault();
           const target = (embedTimeRef.current || 0) + 5;
+          guardRef.current.seek++;
           seekEmbed(target);
+          latestStateRef.current.time = target;
           emitPlayback('seek');
         }
         if (e.code === 'ArrowLeft') {
           e.preventDefault();
           const target = Math.max(0, (embedTimeRef.current || 0) - 5);
+          guardRef.current.seek++;
           seekEmbed(target);
+          latestStateRef.current.time = target;
           emitPlayback('seek');
         }
         if (e.code === 'KeyC') {
@@ -1737,15 +1741,31 @@ export default function Room() {
       } else if (eventName === 'play') {
         embedPlayingRef.current = true;
         setPlaying(true);
-        if (guardRef.current.play > 0) guardRef.current.play--;
+        if (guardRef.current.play > 0) {
+          guardRef.current.play--;
+        } else if (embedInitialSyncedRef.current) {
+          emitPlayback('play');
+        }
       } else if (eventName === 'pause') {
         embedPlayingRef.current = false;
         setPlaying(false);
-        if (guardRef.current.pause > 0) guardRef.current.pause--;
+        if (guardRef.current.pause > 0) {
+          guardRef.current.pause--;
+        } else if (embedInitialSyncedRef.current) {
+          lastLocalPauseRef.current = Date.now();
+          emitPlayback('pause');
+        }
       } else if (eventName === 'seeked') {
         updateTimeline();
         updateSubtitles();
-        if (guardRef.current.seek > 0) guardRef.current.seek--;
+        if (guardRef.current.seek > 0) {
+          guardRef.current.seek--;
+        } else if (embedInitialSyncedRef.current) {
+          lastLocalSeekRef.current = Date.now();
+          const t = curTime !== null ? curTime : (embedTimeRef.current || 0);
+          latestStateRef.current.time = t;
+          emitPlayback('seek');
+        }
       }
     };
 
@@ -2358,9 +2378,11 @@ export default function Room() {
     if (sourceRef.current?.type === 'embed') {
       userIntentRef.current = true;
       if (embedPlayingRef.current) {
+        guardRef.current.pause++;
         pauseEmbed();
         emitPlayback('pause');
       } else {
+        guardRef.current.play++;
         playEmbed();
         emitPlayback('play');
       }
@@ -2391,6 +2413,7 @@ export default function Room() {
         ytRef.current.seekTo(t, true);
         emitPlayback('seek');
       } else if (sourceRef.current?.type === 'embed') {
+        guardRef.current.seek++;
         seekEmbed(t);
         emitPlayback('seek');
       } else {
