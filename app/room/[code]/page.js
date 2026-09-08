@@ -339,6 +339,21 @@ export default function Room() {
       setEmbedMutedHint(true);
       setTimeout(() => setEmbedMutedHint(false), 12000);
 
+      // Fallback: if stream hasn't hit ~2s of playback within 8s (e.g. autoplay blocked), jump to room position
+      setTimeout(() => {
+        if (!embedInitialSyncedRef.current && sourceRef.current?.type === 'embed') {
+          const roomPos = latestStateRef.current?.playing
+            ? ((latestStateRef.current.time || 0) + (Date.now() - (latestStateRef.current.at || Date.now())) / 1000)
+            : (latestStateRef.current?.time || 0);
+          if (roomPos > 3) {
+            embedInitialSyncedRef.current = true;
+            guardRef.current.seek++;
+            seekEmbed(roomPos);
+            toast(`Synced with room at ${fmt(roomPos)}`);
+          }
+        }
+      }, 8000);
+
       fetchTmdbSources({
         id: s.tmdbId,
         type: s.mediaType || 'movie',
@@ -986,7 +1001,7 @@ export default function Room() {
         setStateLatest(playing, expected);
         const drift = expected - cur;
 
-        if (playing && Math.abs(drift) > 3.0 && expected > 2 && Date.now() - lastLocalSeekRef.current > 5000) {
+        if (embedInitialSyncedRef.current && playing && Math.abs(drift) > 3.0 && expected > 2 && Date.now() - lastLocalSeekRef.current > 5000) {
           lastLocalSeekRef.current = Date.now();
           guardRef.current.seek++;
           seekEmbed(expected);
@@ -1074,6 +1089,9 @@ export default function Room() {
       setMessages(Array.isArray(res.history) ? res.history : []);
       if (res.state.playing) {
         setPickerHint(`The room is already watching — at ${fmt(res.state.time)} and rolling.`);
+      }
+      if (res.state.source?.type === 'embed' && res.state.time > 5) {
+        toast(`Loading stream... Room is at ${fmt(res.state.time)}.`);
       }
     };
 
@@ -1695,14 +1713,25 @@ export default function Room() {
         updateSubtitles();
         setEmbedOffline(false);
         if (!embedInitialSyncedRef.current) {
-          embedInitialSyncedRef.current = true;
-          if (latestStateRef.current?.time > 2) {
+          const roomPos = latestStateRef.current?.playing
+            ? ((latestStateRef.current.time || 0) + (Date.now() - (latestStateRef.current.at || Date.now())) / 1000)
+            : (latestStateRef.current?.time || 0);
+
+          if (roomPos <= 3) {
+            // Room is at the beginning, no jump needed
+            if (curTime >= 0.5) {
+              embedInitialSyncedRef.current = true;
+            }
+          } else if (curTime >= 1.8) {
+            // Stream has loaded and played stably for ~2 seconds; now jump to room position!
+            embedInitialSyncedRef.current = true;
             guardRef.current.seek++;
-            seekEmbed(latestStateRef.current.time);
-          }
-          if (latestStateRef.current?.playing === false) {
-            guardRef.current.pause++;
-            pauseEmbed();
+            seekEmbed(roomPos);
+            if (latestStateRef.current?.playing === false) {
+              guardRef.current.pause++;
+              pauseEmbed();
+            }
+            toast(`Synced with room at ${fmt(roomPos)}`);
           }
         }
       } else if (eventName === 'play') {
