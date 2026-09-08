@@ -9,12 +9,12 @@ import KlipyGifPicker from '../../components/KlipyGifPicker';
 import AuthButton from '../../components/AuthButton';
 import ThemeToggle from '../../components/ThemeToggle';
 import { getSocket } from '../../../lib/socket';
-import { detectMediaTracks, parseExternalSubtitle } from '../../../lib/subtitles';
+import { detectMediaTracks, parseExternalSubtitle, parseSrtOrVtt } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
 import { searchSpotify, resolveSpotifyTrack } from '../../../lib/spotify';
 import { parseMediaUrl, resolveMediaUrl, searchPornhub } from '../../../lib/mediaEmbeds';
-import { buildVidloveUrl, searchTmdb, fetchTmdbTrending, fetchTmdbTvDetails, fetchTmdbSeason } from '../../../lib/tmdb';
+import { buildVidloveUrl, searchTmdb, fetchTmdbTrending, fetchTmdbTvDetails, fetchTmdbSeason, fetchTmdbSources } from '../../../lib/tmdb';
 import TmdbEpisodeModal from '../../components/TmdbEpisodeModal';
 import { VoiceSession } from '../../../lib/voice';
 import { getAppleEmojiUrl } from '../../../lib/emoji';
@@ -238,6 +238,76 @@ export default function Room() {
   const voiceRef = useRef(null); // VoiceSession, created lazily
   const voiceAudioRef = useRef(null); // hidden container for remote audio elements
 
+  // Embed / Vidlove player state & refs
+  const embedIframeRef = useRef(null);
+  const embedTimeRef = useRef(0);
+  const embedDurationRef = useRef(0);
+  const embedPlayingRef = useRef(false);
+  const [embedTime, setEmbedTime] = useState(0);
+  const [embedDuration, setEmbedDuration] = useState(0);
+  const [embedOffline, setEmbedOffline] = useState(false);
+  const [embedMutedHint, setEmbedMutedHint] = useState(false);
+  const [embedKey, setEmbedKey] = useState(0);
+
+  const seekEmbed = (seconds) => {
+    if (embedIframeRef.current?.contentWindow) {
+      try {
+        embedIframeRef.current.contentWindow.postMessage({ type: 'seek', value: seconds }, '*');
+        embedIframeRef.current.contentWindow.postMessage({ type: 'setcurrenttime', time: seconds }, '*');
+      } catch {}
+    }
+  };
+
+  const playEmbed = () => {
+    if (embedIframeRef.current?.contentWindow) {
+      try {
+        embedIframeRef.current.contentWindow.postMessage({ type: 'play' }, '*');
+      } catch {}
+    }
+  };
+
+  const pauseEmbed = () => {
+    if (embedIframeRef.current?.contentWindow) {
+      try {
+        embedIframeRef.current.contentWindow.postMessage({ type: 'pause' }, '*');
+      } catch {}
+    }
+  };
+
+  const handleUnmuteEmbed = () => {
+    setEmbedMutedHint(false);
+    if (embedIframeRef.current?.contentWindow) {
+      try {
+        embedIframeRef.current.contentWindow.postMessage({ type: 'unmute' }, '*');
+        embedIframeRef.current.contentWindow.postMessage({ type: 'setvolume', value: 1 }, '*');
+        embedIframeRef.current.contentWindow.postMessage({ type: 'volume', volume: 100 }, '*');
+      } catch {}
+    }
+    try {
+      embedIframeRef.current?.focus();
+    } catch {}
+    toast("Audio unmuted! (Press 'M' inside video if still muted)");
+  };
+
+  const handleRetryEmbed = () => {
+    setEmbedOffline(false);
+    setEmbedKey((k) => k + 1);
+    toast("Retrying stream server...");
+    const curSource = sourceRef.current;
+    if (curSource?.tmdbId) {
+      fetchTmdbSources({
+        id: curSource.tmdbId,
+        type: curSource.mediaType || 'movie',
+        season: curSource.season || 1,
+        episode: curSource.episode || 1,
+      }).then((res) => {
+        if (res?.hasServers === false) {
+          setTimeout(() => setEmbedOffline(true), 4000);
+        }
+      }).catch(() => {});
+    }
+  };
+
   const ytMode = () => sourceRef.current?.type === 'youtube';
   const setSourceState = (s) => {
     sourceRef.current = s;
@@ -265,17 +335,53 @@ export default function Room() {
           }
         })
         .catch(() => {});
+    } else if (s?.type === 'embed' && (s?.tmdbId || s?.platform === 'Vidlove')) {
+      embedTimeRef.current = 0;
+      embedDurationRef.current = 0;
+      setEmbedTime(0);
+      setEmbedDuration(0);
+      setEmbedOffline(false);
+      setEmbedMutedHint(true);
+      setTimeout(() => setEmbedMutedHint(false), 12000);
+
+      fetchTmdbSources({
+        id: s.tmdbId,
+        type: s.mediaType || 'movie',
+        season: s.season || 1,
+        episode: s.episode || 1,
+      }).then((res) => {
+        if (!res) return;
+        if (res.hasServers === false) {
+          setEmbedOffline(true);
+        } else {
+          setEmbedOffline(false);
+        }
+        if (res.subtitles && res.subtitles.length > 0) {
+          const offTrack = { id: 'off', label: 'Off / Disabled', cues: [] };
+          const tracks = [offTrack, ...res.subtitles];
+          subTracksRef.current = tracks;
+          setSubTracks(tracks);
+          const en = res.subtitles.find((t) => t.language === 'en' || t.label?.toLowerCase().includes('english'));
+          if (en) {
+            selectTrack(en.id, false);
+          }
+        }
+      }).catch((err) => {
+        console.warn('Error fetching TMDB sources/subtitles:', err);
+      });
     }
   };
 
   // Time/duration adapters — the sync engine reads through these so it
-  // doesn't care whether the source is a local file or YouTube.
+  // doesn't care whether the source is a local file, YouTube, or Vidlove embed.
   function currentTimeAny() {
     if (ytMode() && ytRef.current?.getCurrentTime) return ytRef.current.getCurrentTime();
+    if (sourceRef.current?.type === 'embed') return embedTimeRef.current || 0;
     return videoRef.current ? videoRef.current.currentTime : 0;
   }
   function durationAny() {
     if (ytMode() && ytRef.current?.getDuration) return ytRef.current.getDuration();
+    if (sourceRef.current?.type === 'embed') return embedDurationRef.current || 0;
     return videoRef.current ? videoRef.current.duration : 0;
   }
 
@@ -298,10 +404,29 @@ export default function Room() {
     } else {
       const track = subTracksRef.current.find((t) => t.id === trackId);
       if (track) {
-        cuesRef.current = track.cues || [];
-        subsOnRef.current = true;
-        setSubsOn(true);
-        if (announce) toast(`Subtitles: ${track.label}`);
+        if (track.url && (!track.cues || track.cues.length === 0)) {
+          fetch(track.url)
+            .then((r) => r.text())
+            .then((txt) => {
+              const parsed = parseSrtOrVtt(txt);
+              track.cues = parsed;
+              if (activeTrackIdRef.current === trackId) {
+                cuesRef.current = parsed;
+                subsOnRef.current = true;
+                setSubsOn(true);
+                if (announce) toast(`Subtitles: ${track.label}`);
+              }
+            })
+            .catch((err) => {
+              console.warn('Failed to load subtitle track:', err);
+              toast(`Failed to load subtitle: ${track.label}`);
+            });
+        } else {
+          cuesRef.current = track.cues || [];
+          subsOnRef.current = true;
+          setSubsOn(true);
+          if (announce) toast(`Subtitles: ${track.label}`);
+        }
       }
     }
   };
@@ -416,6 +541,12 @@ export default function Room() {
     const val = Math.max(0, Math.min(1, Number(v) || 0));
     setVolume(val);
     if (ytMode() && ytRef.current?.setVolume) ytRef.current.setVolume(Math.round(val * 100));
+    if (sourceRef.current?.type === 'embed' && embedIframeRef.current?.contentWindow) {
+      try {
+        embedIframeRef.current.contentWindow.postMessage({ type: 'setvolume', value: val }, '*');
+        embedIframeRef.current.contentWindow.postMessage({ type: 'volume', volume: Math.round(val * 100) }, '*');
+      } catch {}
+    }
     if (videoRef.current) {
       videoRef.current.volume = val;
       videoRef.current.muted = false;
@@ -663,7 +794,8 @@ export default function Room() {
   function updateTimeline() {
     const d = durationAny();
     const t = currentTimeAny();
-    if ((ytMode() && !ytRef.current) || (!ytMode() && !fileLoadedRef.current) || !d || !isFinite(d)) {
+    const isEmbed = sourceRef.current?.type === 'embed';
+    if ((ytMode() && !ytRef.current) || (!ytMode() && !isEmbed && !fileLoadedRef.current) || !d || !isFinite(d)) {
       if (fillRef.current) fillRef.current.style.width = '0%';
       if (headRef.current) headRef.current.style.left = '0%';
       if (curRef.current) curRef.current.textContent = '0:00';
@@ -684,7 +816,8 @@ export default function Room() {
     if (!box) return;
     box.innerHTML = '';
     const d = durationAny();
-    if ((ytMode() && !ytRef.current) || (!ytMode() && !fileLoadedRef.current) || !d || !isFinite(d)) return;
+    const isEmbed = sourceRef.current?.type === 'embed';
+    if ((ytMode() && !ytRef.current) || (!ytMode() && !isEmbed && !fileLoadedRef.current) || !d || !isFinite(d)) return;
     for (const [id, p] of peersRef.current) {
       if (id === (meRef.current && meRef.current.id) || typeof p.time !== 'number') continue;
       const el = document.createElement('div');
@@ -722,6 +855,25 @@ export default function Room() {
       } else if (ytPlayingRef.current) {
         guard.pause++;
         yt.pauseVideo();
+      }
+      updateTimeline();
+      return;
+    }
+
+    // Embed mode: drive the iframe player instead of the <video> element.
+    if (sourceRef.current?.type === 'embed') {
+      const guard = guardRef.current;
+      const cur = embedTimeRef.current || 0;
+      if (Math.abs(cur - state.time) > 1.5) {
+        guard.seek++;
+        seekEmbed(state.time);
+      }
+      if (state.playing) {
+        guard.play++;
+        playEmbed();
+      } else {
+        guard.pause++;
+        pauseEmbed();
       }
       updateTimeline();
       return;
@@ -831,6 +983,23 @@ export default function Room() {
           yt.seekTo(expected, true);
         } else if (playing && !ytPlayingRef.current && Date.now() - lastLocalPauseRef.current > 5000) {
           setResumeOpen(true);
+        }
+      });
+      return;
+    }
+
+    // Embed mode heartbeat
+    if (sourceRef.current?.type === 'embed') {
+      const cur = embedTimeRef.current || 0;
+      if (!socket.connected) return;
+      socket.emit('time-update', cur, ({ expected, playing } = {}) => {
+        if (typeof expected !== 'number') return;
+        setStateLatest(playing, expected);
+        const drift = expected - cur;
+
+        if (playing && Math.abs(drift) > 2.5 && Date.now() - lastLocalSeekRef.current > 4000) {
+          guardRef.current.seek++;
+          seekEmbed(expected);
         }
       });
       return;
@@ -983,7 +1152,8 @@ export default function Room() {
     const updateSubtitles = () => {
       const v = videoRef.current;
       const cues = cuesRef.current;
-      if (!v || !cues.length || !subsOnRef.current) {
+      const isEmbed = sourceRef.current?.type === 'embed';
+      if ((!v && !isEmbed) || !cues.length || !subsOnRef.current) {
         setSubText((prev) => (prev ? '' : prev));
         return;
       }
@@ -1434,6 +1604,33 @@ export default function Room() {
         if (e.code === 'KeyL' || e.code === 'KeyD') setDimmed((prev) => !prev);
         return;
       }
+      if (sourceRef.current?.type === 'embed') {
+        if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+        if (e.code === 'ArrowRight') {
+          e.preventDefault();
+          const target = (embedTimeRef.current || 0) + 5;
+          seekEmbed(target);
+          emitPlayback('seek');
+        }
+        if (e.code === 'ArrowLeft') {
+          e.preventDefault();
+          const target = Math.max(0, (embedTimeRef.current || 0) - 5);
+          seekEmbed(target);
+          emitPlayback('seek');
+        }
+        if (e.code === 'KeyM') {
+          handleUnmuteEmbed();
+        }
+        if (e.code === 'KeyC') {
+          setSubPanelOpen((prev) => !prev);
+        }
+        if (e.code === 'KeyV') cycleSubtitles();
+        const subStep = e.shiftKey ? 500 : 50;
+        if (e.code === 'KeyG') nudgeSubtitles(-subStep);
+        if (e.code === 'KeyH') nudgeSubtitles(subStep);
+        if (e.code === 'KeyL' || e.code === 'KeyD') setDimmed((prev) => !prev);
+        return;
+      }
       const v = videoRef.current;
       if (e.code === 'Space') {
         e.preventDefault();
@@ -1473,13 +1670,74 @@ export default function Room() {
       if (e.code === 'KeyB') cycleAudioTrack(); // VLC: B cycles audio tracks
       if (e.code === 'KeyL' || e.code === 'KeyD') setDimmed((prev) => !prev);
     };
+
+    const onMessage = (e) => {
+      if (!e.data) return;
+      let eventName = null;
+      let curTime = null;
+      let dur = null;
+
+      if (e.data.type === 'PLAYER_EVENT' && e.data.data) {
+        eventName = e.data.data.event;
+        curTime = typeof e.data.data.currentTime === 'number' ? e.data.data.currentTime : null;
+        dur = typeof e.data.data.duration === 'number' ? e.data.data.duration : null;
+      } else if (typeof e.data === 'object') {
+        eventName = e.data.event || e.data.type;
+        curTime = typeof e.data.currentTime === 'number' ? e.data.currentTime : (typeof e.data.time === 'number' ? e.data.time : null);
+        dur = typeof e.data.duration === 'number' ? e.data.duration : null;
+      }
+
+      if (!eventName) return;
+
+      if (curTime !== null) {
+        embedTimeRef.current = curTime;
+        setEmbedTime(curTime);
+      }
+      if (dur !== null && dur > 0) {
+        embedDurationRef.current = dur;
+        setEmbedDuration(dur);
+      }
+
+      if (eventName === 'timeupdate') {
+        updateTimeline();
+        updateSubtitles();
+        setEmbedOffline(false);
+      } else if (eventName === 'play') {
+        embedPlayingRef.current = true;
+        setPlaying(true);
+        if (guardRef.current.play > 0) {
+          guardRef.current.play--;
+        } else {
+          emitPlayback('play');
+        }
+      } else if (eventName === 'pause') {
+        embedPlayingRef.current = false;
+        setPlaying(false);
+        if (guardRef.current.pause > 0) {
+          guardRef.current.pause--;
+        } else {
+          emitPlayback('pause');
+        }
+      } else if (eventName === 'seeked') {
+        updateTimeline();
+        updateSubtitles();
+        if (guardRef.current.seek > 0) {
+          guardRef.current.seek--;
+        } else {
+          emitPlayback('seek');
+        }
+      }
+    };
+
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('resize', onResize);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('message', onMessage);
     // (onFsChange registered above, removed in cleanup)
 
     // --- cleanup: leave the room, drop everything ---
     return () => {
+      window.removeEventListener('message', onMessage);
       socket.emit('leave-room');
       socket.off('playback', onPlayback);
       socket.off('users', onUsers);
@@ -2077,6 +2335,17 @@ export default function Room() {
       if (ytPlayingRef.current) yt.pauseVideo(); else yt.playVideo();
       return;
     }
+    if (sourceRef.current?.type === 'embed') {
+      userIntentRef.current = true;
+      if (embedPlayingRef.current) {
+        pauseEmbed();
+        emitPlayback('pause');
+      } else {
+        playEmbed();
+        emitPlayback('play');
+      }
+      return;
+    }
     const v = videoRef.current;
     if (!fileLoadedRef.current || !v) return;
     userIntentRef.current = true;
@@ -2088,7 +2357,7 @@ export default function Room() {
   const onScrub = (e, commit) => {
     const d = durationAny();
     if (!d || !isFinite(d)) return;
-    if (!ytMode() && !fileLoadedRef.current) return;
+    if (!ytMode() && sourceRef.current?.type !== 'embed' && !fileLoadedRef.current) return;
     const rect = timelineRef.current.getBoundingClientRect();
     const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     const t = ratio * d;
@@ -2100,6 +2369,9 @@ export default function Room() {
       latestStateRef.current.time = t;
       if (ytMode()) {
         ytRef.current.seekTo(t, true);
+        emitPlayback('seek');
+      } else if (sourceRef.current?.type === 'embed') {
+        seekEmbed(t);
         emitPlayback('seek');
       } else {
         const v = videoRef.current;
@@ -2986,44 +3258,152 @@ export default function Room() {
 
             {source?.type === 'embed' && (
               <div className="web-embed-wrap" style={{ transform: `scale(${zoom})` }}>
-                {source.mediaType === 'tv' && source.tmdbId && (
+                {source.tmdbId && (
                   <div className="room-tv-overlay">
                     <div className="yt-top-title-wrap">
-                      <span style={{ fontSize: '18px' }}>📺</span>
+                      <span style={{ fontSize: '18px' }}>{source.mediaType === 'tv' ? '📺' : '🎬'}</span>
                       <span className="yt-top-title">
-                        {source.showTitle || source.title} · S{source.season || 1}:E{source.episode || 1} {source.episodeTitle ? `"${source.episodeTitle}"` : ''}
+                        {source.mediaType === 'tv'
+                          ? `${source.showTitle || source.title} · S${source.season || 1}:E${source.episode || 1} ${source.episodeTitle ? `"${source.episodeTitle}"` : ''}`
+                          : (source.title || 'Movie Stream')}
                       </span>
                     </div>
                     <div className="yt-top-actions">
+                      {source.mediaType === 'tv' ? (
+                        <>
+                          <button
+                            type="button"
+                            className="room-tv-btn"
+                            onClick={() => {
+                              setSelectedSeriesForEpisodes({
+                                tmdbId: source.tmdbId,
+                                title: source.showTitle || source.title,
+                                name: source.showTitle || source.title,
+                                poster: source.poster,
+                                backdrop: source.backdrop,
+                              });
+                              setTmdbEpisodeModalOpen(true);
+                            }}
+                            title="Browse all seasons and episodes"
+                          >
+                            📑 Episodes
+                          </button>
+                          <button
+                            type="button"
+                            className="room-tv-btn"
+                            onClick={handlePlayNextEpisode}
+                            title="Play Next Episode"
+                          >
+                            ⏭️ Next Ep
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="room-tv-btn"
+                          onClick={() => {
+                            setSearchPlatform('tmdb');
+                            setYtSearchModalOpen(true);
+                          }}
+                          title="Browse and search movies"
+                        >
+                          🔍 Browse
+                        </button>
+                      )}
                       <button
                         type="button"
-                        className="room-tv-btn"
-                        onClick={() => {
-                          setSelectedSeriesForEpisodes({
-                            tmdbId: source.tmdbId,
-                            title: source.showTitle || source.title,
-                            name: source.showTitle || source.title,
-                            poster: source.poster,
-                            backdrop: source.backdrop,
-                          });
-                          setTmdbEpisodeModalOpen(true);
-                        }}
-                        title="Browse all seasons and episodes"
+                        className="room-tv-btn offline-help"
+                        onClick={() => setEmbedOffline(true)}
+                        title="Server offline or buffering? Get recovery options"
                       >
-                        📑 Episodes
-                      </button>
-                      <button
-                        type="button"
-                        className="room-tv-btn"
-                        onClick={handlePlayNextEpisode}
-                        title="Play Next Episode"
-                      >
-                        ⏭️ Next Ep
+                        🔄 Server Help
                       </button>
                     </div>
                   </div>
                 )}
+
+                {embedMutedHint && (
+                  <button
+                    type="button"
+                    className="embed-unmute-pill"
+                    onClick={handleUnmuteEmbed}
+                    title="Click to unmute audio"
+                  >
+                    <span className="unmute-icon">🔊</span>
+                    <span>Tap to Unmute Audio</span>
+                  </button>
+                )}
+
+                {embedOffline && (
+                  <div className="embed-offline-overlay">
+                    <div className="embed-offline-card">
+                      <div className="embed-offline-icon">📡</div>
+                      <h3 className="embed-offline-title">Stream Server Unavailable</h3>
+                      <p className="embed-offline-desc">
+                        All scraper mirrors for this {source.mediaType === 'tv' ? 'episode' : 'movie'} are currently offline or unreachable.
+                        Would you like to try again or switch?
+                      </p>
+                      <div className="embed-offline-actions">
+                        <button
+                          type="button"
+                          className="embed-btn retry"
+                          onClick={handleRetryEmbed}
+                        >
+                          🔄 Try Again / Reset
+                        </button>
+                        {source.mediaType === 'tv' && (
+                          <button
+                            type="button"
+                            className="embed-btn next"
+                            onClick={handlePlayNextEpisode}
+                          >
+                            ⏭️ Next Episode
+                          </button>
+                        )}
+                        {source.mediaType === 'tv' ? (
+                          <button
+                            type="button"
+                            className="embed-btn episodes"
+                            onClick={() => {
+                              setSelectedSeriesForEpisodes({
+                                tmdbId: source.tmdbId,
+                                title: source.showTitle || source.title,
+                                name: source.showTitle || source.title,
+                                poster: source.poster,
+                                backdrop: source.backdrop,
+                              });
+                              setTmdbEpisodeModalOpen(true);
+                            }}
+                          >
+                            📑 Choose Another Episode
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="embed-btn episodes"
+                            onClick={() => {
+                              setSearchPlatform('tmdb');
+                              setYtSearchModalOpen(true);
+                            }}
+                          >
+                            🔍 Search Another Movie
+                          </button>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="embed-offline-dismiss"
+                        onClick={() => setEmbedOffline(false)}
+                      >
+                        Dismiss & Wait
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <iframe
+                  key={embedKey}
+                  ref={embedIframeRef}
                   src={source.embedUrl}
                   className="web-embed-iframe"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
@@ -3273,64 +3653,68 @@ export default function Room() {
               <button className="btn primary big" onClick={resume}>Catch up with the room</button>
             </div>
 
-            {subPanelOpen && !source && (
+            {subPanelOpen && (!source || source.type === 'embed') && (
               <>
                 <div className="sub-backdrop" onClick={() => setSubPanelOpen(false)} />
                 <div className="sub-panel">
                   <div className="sub-panel-head">
-                    <span className="sub-panel-title">Subtitles & Audio</span>
+                    <span className="sub-panel-title">{source?.type === 'embed' ? 'Subtitles & Captions' : 'Subtitles & Audio'}</span>
                     <button className="sub-close-btn" onClick={() => setSubPanelOpen(false)} title="Close">
                       <svg viewBox="0 0 24 24" width="16" height="16"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
                     </button>
                   </div>
 
-                  <div className="sub-row">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                      <span className="sub-label">Audio Track (B key · only you)</span>
-                      {audioTracks.length > 1 && (
-                        <span className="sub-badge">{audioTracks.length} Tracks</span>
-                      )}
-                    </div>
-                    <select
-                      className="sub-select"
-                      value={activeAudioTrackId}
-                      onChange={(e) => selectAudioTrack(e.target.value, true)}
-                      disabled={audioTracks.length <= 1}
-                    >
-                      {audioTracks.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {(!source || source.type !== 'embed') && (
+                    <>
+                      <div className="sub-row">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                          <span className="sub-label">Audio Track (B key · only you)</span>
+                          {audioTracks.length > 1 && (
+                            <span className="sub-badge">{audioTracks.length} Tracks</span>
+                          )}
+                        </div>
+                        <select
+                          className="sub-select"
+                          value={activeAudioTrackId}
+                          onChange={(e) => selectAudioTrack(e.target.value, true)}
+                          disabled={audioTracks.length <= 1}
+                        >
+                          {audioTracks.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                  <div className="sub-row">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                      <span className="sub-label">Auto EAC-3 Transcoder</span>
-                      {transcodingAudio && <span className="sub-badge">Converting {transcodeProgress}%</span>}
-                    </div>
-                    <button
-                      type="button"
-                      className="btn ghost sm"
-                      style={{ width: '100%', justifyContent: 'center' }}
-                      disabled={transcodingAudio || !fileLoadedRef.current}
-                      onClick={() => runAudioTranscode()}
-                    >
-                      {transcodingAudio ? `Converting (${transcodeProgress}%)...` : '⚡ Auto-Convert EAC-3 Audio to MP3'}
-                    </button>
-                  </div>
+                      <div className="sub-row">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                          <span className="sub-label">Auto EAC-3 Transcoder</span>
+                          {transcodingAudio && <span className="sub-badge">Converting {transcodeProgress}%</span>}
+                        </div>
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          style={{ width: '100%', justifyContent: 'center' }}
+                          disabled={transcodingAudio || !fileLoadedRef.current}
+                          onClick={() => runAudioTranscode()}
+                        >
+                          {transcodingAudio ? `Converting (${transcodeProgress}%)...` : '⚡ Auto-Convert EAC-3 Audio to MP3'}
+                        </button>
+                      </div>
 
-                  <div className="sub-row">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                      <span className="sub-label">External Audio (MP3 / AAC / M4A)</span>
-                      {extAudioName && <span className="sub-badge">Loaded</span>}
-                    </div>
-                    <label className="btn ghost sm" htmlFor="audioInput" style={{ cursor: 'pointer' }}>
-                      {extAudioName ? `Replace: ${extAudioName.slice(0, 18)}...` : '+ Add audio file'}
-                    </label>
-                    <input id="audioInput" ref={audioInputRef} type="file" accept="audio/*,.mp3,.aac,.m4a,.wav,.ogg,.opus" hidden onChange={onPickExternalAudio} />
-                  </div>
+                      <div className="sub-row">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                          <span className="sub-label">External Audio (MP3 / AAC / M4A)</span>
+                          {extAudioName && <span className="sub-badge">Loaded</span>}
+                        </div>
+                        <label className="btn ghost sm" htmlFor="audioInput" style={{ cursor: 'pointer' }}>
+                          {extAudioName ? `Replace: ${extAudioName.slice(0, 18)}...` : '+ Add audio file'}
+                        </label>
+                        <input id="audioInput" ref={audioInputRef} type="file" accept="audio/*,.mp3,.aac,.m4a,.wav,.ogg,.opus" hidden onChange={onPickExternalAudio} />
+                      </div>
+                    </>
+                  )}
 
                   <div className="sub-row">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
@@ -3338,6 +3722,11 @@ export default function Room() {
                       {subTracks.filter((t) => t.type === 'embedded').length > 0 && (
                         <span className="sub-badge">
                           {subTracks.filter((t) => t.type === 'embedded').length} Embedded
+                        </span>
+                      )}
+                      {source?.type === 'embed' && subTracks.length > 1 && (
+                        <span className="sub-badge">
+                          {subTracks.length - 1} Online Tracks
                         </span>
                       )}
                     </div>
@@ -3537,7 +3926,7 @@ export default function Room() {
             )}
 
             <div className="transport">
-              <button className="t-btn" onClick={togglePlay} disabled={playDisabled && source?.type !== 'youtube' && source?.type !== 'hls' && source?.type !== 'direct'} title="Play / pause (space)">
+              <button className="t-btn" onClick={togglePlay} disabled={playDisabled && source?.type !== 'youtube' && source?.type !== 'hls' && source?.type !== 'direct' && source?.type !== 'embed'} title="Play / pause (space)">
                 {playing ? (
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
                     <rect x="6" y="4.5" width="3.5" height="15" rx="1.5"/>

@@ -766,7 +766,7 @@ input[type="text"]::placeholder { color: #525b70; }
   line-height: 1.4;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
   pointer-events: none;
-  z-index: 3;
+  z-index: 30;
 }
 
 .sub-backdrop {
@@ -5345,3 +5345,155 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Embed Offline Overlay & Recovery Modal ── */
+.embed-offline-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 12, 18, 0.88);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+  padding: 20px;
+  animation: fadeIn 0.2s ease;
+}
+
+.embed-offline-card {
+  background: rgba(22, 27, 39, 0.95);
+  border: 1px solid rgba(255, 77, 109, 0.4);
+  border-radius: 16px;
+  padding: 28px 24px;
+  max-width: 460px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7), 0 0 20px rgba(255, 77, 109, 0.15);
+}
+
+.embed-offline-icon {
+  font-size: 38px;
+  margin-bottom: 12px;
+}
+
+.embed-offline-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 8px;
+}
+
+.embed-offline-desc {
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+
+.embed-offline-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.embed-btn {
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.embed-btn.retry {
+  background: #ff4d6d;
+  color: #fff;
+}
+.embed-btn.retry:hover {
+  background: #ff3358;
+  transform: translateY(-1px);
+}
+
+.embed-btn.next {
+  background: #3b82f6;
+  color: #fff;
+}
+.embed-btn.next:hover {
+  background: #2563eb;
+  transform: translateY(-1px);
+}
+
+.embed-btn.episodes {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #e2e8f0;
+}
+.embed-btn.episodes:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.embed-offline-dismiss {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px;
+}
+.embed-offline-dismiss:hover {
+  color: #cbd5e1;
+  text-decoration: underline;
+}
+
+/* ── Embed Unmute Floating Pill ── */
+.embed-unmute-pill {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  z-index: 35;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 77, 109, 0.5);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 9999px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 12px rgba(255, 77, 109, 0.25);
+  transition: all 0.2s ease;
+  animation: pulsePill 2s infinite;
+}
+
+.embed-unmute-pill:hover {
+  background: #ff4d6d;
+  border-color: #ff4d6d;
+  transform: scale(1.04);
+}
+
+@keyframes pulsePill {
+  0%, 100% { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 12px rgba(255, 77, 109, 0.25); }
+  50% { box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 0 20px rgba(255, 77, 109, 0.5); }
+}
+
+.room-tv-btn.offline-help {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+}
+.room-tv-btn.offline-help:hover {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+}
+

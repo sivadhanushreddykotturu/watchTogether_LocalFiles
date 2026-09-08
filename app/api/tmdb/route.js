@@ -262,6 +262,61 @@ export async function GET(request) {
       return NextResponse.json({ ok: true, movie });
     }
 
+    // 6. Sources & Subtitles from Vidlove scraper
+    if (action === 'sources') {
+      if (!id) return NextResponse.json({ ok: false, error: 'Missing ID' }, { status: 400 });
+
+      const isTv = type === 'tv';
+      const endpoint = isTv
+        ? `https://api.vidlove.cc/tv?id=${encodeURIComponent(id)}&season=${encodeURIComponent(season || '1')}&episode=${encodeURIComponent(searchParams.get('episode') || '1')}&mode=json`
+        : `https://api.vidlove.cc/movie?id=${encodeURIComponent(id)}&mode=json`;
+
+      try {
+        const scrapeRes = await fetch(endpoint, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            Accept: 'application/json',
+          },
+          cache: 'no-store',
+        });
+
+        if (!scrapeRes.ok) {
+          return NextResponse.json({ ok: true, subtitles: [], hasServers: false });
+        }
+
+        const data = await scrapeRes.json();
+        const rawSubs = Array.isArray(data?.subtitles) ? data.subtitles : [];
+
+        // Clean & sort subtitles (English first, followed by alphabetical)
+        const formattedSubs = rawSubs
+          .filter((s) => s && s.file && s.label)
+          .map((s, idx) => ({
+            id: `scraper-${idx}-${s.label.toLowerCase().replace(/[^a-z0-9]/g, '')}`,
+            label: s.label,
+            url: s.file,
+            type: s.type || 'vtt',
+            language: s.label.toLowerCase().includes('english') ? 'en' : 'sub',
+          }))
+          .sort((a, b) => {
+            const aEn = a.label.toLowerCase().includes('english');
+            const bEn = b.label.toLowerCase().includes('english');
+            if (aEn && !bEn) return -1;
+            if (!aEn && bEn) return 1;
+            return a.label.localeCompare(b.label);
+          });
+
+        return NextResponse.json({
+          ok: true,
+          subtitles: formattedSubs,
+          hasServers: Boolean(data?.source?.url || data?.source?.manifest),
+          source: data?.source || null,
+        });
+      } catch (scrapeErr) {
+        console.warn('Vidlove scraper error:', scrapeErr);
+        return NextResponse.json({ ok: true, subtitles: [], hasServers: false });
+      }
+    }
+
     return NextResponse.json({ ok: false, error: `Unknown action: ${action}` }, { status: 400 });
   } catch (err) {
     console.error('TMDB API Route Error:', err);
