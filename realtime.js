@@ -364,7 +364,14 @@ function attach(io) {
     socket.on('time-update', (time, cb) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
-      socket.to(room.code).emit('peer-time', { id: socket.id, time: Number(time) || 0 });
+      const t = Number(time) || 0;
+      if (socket.id === room.host) {
+        if (t > 0 || room.state.time < 5) {
+          room.state.time = t;
+          room.state.updatedAt = Date.now();
+        }
+      }
+      socket.to(room.code).emit('peer-time', { id: socket.id, time: t });
       if (typeof cb === 'function') cb({ expected: currentPosition(room.state), playing: room.state.playing });
     });
 

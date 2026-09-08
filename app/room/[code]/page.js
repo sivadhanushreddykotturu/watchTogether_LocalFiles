@@ -243,6 +243,7 @@ export default function Room() {
   const embedTimeRef = useRef(0);
   const embedDurationRef = useRef(0);
   const embedPlayingRef = useRef(false);
+  const embedInitialSyncedRef = useRef(false);
   const [embedTime, setEmbedTime] = useState(0);
   const [embedDuration, setEmbedDuration] = useState(0);
   const [embedOffline, setEmbedOffline] = useState(false);
@@ -282,6 +283,7 @@ export default function Room() {
   };
 
   const handleRetryEmbed = () => {
+    embedInitialSyncedRef.current = false;
     setEmbedOffline(false);
     setEmbedKey((k) => k + 1);
     toast("Retrying stream server...");
@@ -328,6 +330,7 @@ export default function Room() {
         })
         .catch(() => {});
     } else if (s?.type === 'embed' && (s?.tmdbId || s?.platform === 'Vidlove')) {
+      embedInitialSyncedRef.current = false;
       embedTimeRef.current = 0;
       embedDurationRef.current = 0;
       setEmbedTime(0);
@@ -1092,6 +1095,7 @@ export default function Room() {
     // --- video element events ---
     const video = videoRef.current;
     const onPlay = () => {
+      if (sourceRef.current?.type === 'embed' || sourceRef.current?.type === 'youtube') return;
       setPlaying(true);
       setSyncStatus(true);
       ensureWakeLock();
@@ -1105,6 +1109,7 @@ export default function Room() {
       }
     };
     const onPause = () => {
+      if (sourceRef.current?.type === 'embed' || sourceRef.current?.type === 'youtube') return;
       setPlaying(false);
       releaseWakeLock();
       if (extAudioRef.current && extAudioRef.current.src && !extAudioRef.current.paused) {
@@ -1121,6 +1126,7 @@ export default function Room() {
       // Allow hardware decoders to seek without interruption
     };
     const onSeeked = () => {
+      if (sourceRef.current?.type === 'embed' || sourceRef.current?.type === 'youtube') return;
       updateTimeline();
       updateSubtitles();
       const v = videoRef.current;
@@ -1132,6 +1138,8 @@ export default function Room() {
         }
       }
       if (guardRef.current.seek > 0) { guardRef.current.seek--; return; }
+      if (!userIntentRef.current) return;
+      userIntentRef.current = false;
       emitPlayback('seek');
     };
     const onEnded = () => { setPlaying(false); releaseWakeLock(); };
@@ -1686,6 +1694,17 @@ export default function Room() {
         updateTimeline();
         updateSubtitles();
         setEmbedOffline(false);
+        if (!embedInitialSyncedRef.current) {
+          embedInitialSyncedRef.current = true;
+          if (latestStateRef.current?.time > 2) {
+            guardRef.current.seek++;
+            seekEmbed(latestStateRef.current.time);
+          }
+          if (latestStateRef.current?.playing === false) {
+            guardRef.current.pause++;
+            pauseEmbed();
+          }
+        }
       } else if (eventName === 'play') {
         embedPlayingRef.current = true;
         setPlaying(true);
