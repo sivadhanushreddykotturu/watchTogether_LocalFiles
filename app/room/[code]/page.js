@@ -3431,6 +3431,8 @@ export default function Room() {
             <video
               ref={videoRef}
               playsInline
+              referrerPolicy="no-referrer"
+              crossOrigin="anonymous"
               className={source?.type === 'youtube' || source?.type === 'embed' ? 'hidden' : ''}
               style={{ transform: `scale(${zoom})` }}
             ></video>

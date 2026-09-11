@@ -322,6 +322,8 @@ export default function ShortsModal({
               loop
               playsInline
               autoPlay
+              referrerPolicy="no-referrer"
+              crossOrigin="anonymous"
               muted={isMuted}
               onClick={() => setIsPlaying((p) => !p)}
             />
@@ -336,6 +338,8 @@ export default function ShortsModal({
                 poster={nextClip.poster}
                 preload="auto"
                 muted
+                referrerPolicy="no-referrer"
+                crossOrigin="anonymous"
                 style={{ display: 'none' }}
               />
             )}

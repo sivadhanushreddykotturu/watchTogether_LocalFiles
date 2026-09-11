@@ -10,6 +10,7 @@ const mono = JetBrains_Mono({ weight: ['400', '600'], subsets: ['latin'], variab
 export const metadata = {
   title: 'ReelSync — watch local files together',
   description: 'Everyone opens their own copy of the file. ReelSync keeps every screen in lockstep.',
+  referrer: 'no-referrer',
 };
 
 export default function RootLayout({
