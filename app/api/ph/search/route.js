@@ -166,6 +166,87 @@ function parsePornhubSearchHtml(html) {
   return results;
 }
 
+const SEMANTIC_SYNONYMS = {
+  teacher: ['teacher', 'teach', 'student', 'class', 'classroom', 'lesson', 'tutor', 'school', 'professor', 'exam'],
+  school: ['school', 'schoolgirl', 'student', 'class', 'classroom', 'college', 'campus', 'uniform', 'lesson', 'teacher', 'homework'],
+  bdsm: ['bdsm', 'bondage', 'tied', 'spank', 'spanked', 'spanking', 'submissive', 'domina', 'mistress', 'slave', 'chastity', 'cuffed', 'dungeon', 'fetish', 'torture', 'restrained'],
+  doctor: ['doctor', 'nurse', 'hospital', 'clinic', 'patient', 'medical'],
+  nurse: ['nurse', 'doctor', 'hospital', 'clinic', 'patient', 'medical'],
+  massage: ['massage', 'masseur', 'masseuse', 'spa', 'rub', 'oil'],
+  office: ['office', 'boss', 'secretary', 'coworker', 'colleague', 'desk', 'workplace', 'job'],
+  maid: ['maid', 'cleaner', 'housekeeper', 'hotel', 'uniform'],
+  cop: ['cop', 'police', 'officer', 'arrest', 'handcuff'],
+};
+
+function computeRelevance(title, queryWords, stems, synonyms) {
+  const lower = title.toLowerCase();
+  let score = 0;
+
+  // Exact full query match
+  const fullQuery = queryWords.join(' ');
+  if (lower.includes(fullQuery)) {
+    score += 100;
+  }
+
+  // Exact word boundary match
+  for (const word of queryWords) {
+    if (word.length < 2) continue;
+    const regex = new RegExp(`\\b${word}\\b`, 'i');
+    if (regex.test(lower)) {
+      score += 50;
+    } else if (lower.includes(word)) {
+      score += 25;
+    }
+  }
+
+  // Stem matches
+  for (const stem of stems) {
+    if (stem.length < 3) continue;
+    if (lower.includes(stem)) {
+      score += 15;
+    }
+  }
+
+  // Synonym matches
+  for (const syn of synonyms) {
+    if (lower.includes(syn)) {
+      score += 10;
+    }
+  }
+
+  // Penalize unrelated family/step porn if user was NOT searching for step/family
+  const queryIsStep = queryWords.some(w => ['step', 'family', 'taboo', 'sister', 'mom', 'brother', 'dad', 'daughter', 'son'].includes(w));
+  if (!queryIsStep && (lower.includes('stepmom') || lower.includes('stepbro') || lower.includes('stepdad') || lower.includes('stepsis'))) {
+    if (score <= 15) {
+      score -= 30;
+    }
+  }
+
+  return score;
+}
+
+async function fetchSearchPage(q, page = 1) {
+  try {
+    const url = `https://www.pornhub.org/video/search?search=${encodeURIComponent(q)}&page=${page}`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Cookie': 'accessAgeDisclaimerPH=1; platform=pc; bs=1'
+      },
+      redirect: 'follow',
+      next: { revalidate: 300 }
+    });
+    if (!res.ok) return [];
+    const html = await res.text();
+    return parsePornhubSearchHtml(html);
+  } catch (err) {
+    console.error('Fetch search page error:', err);
+    return [];
+  }
+}
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const q = (searchParams.get('q') || searchParams.get('search') || '').trim();
@@ -177,24 +258,73 @@ export async function GET(request) {
 
   try {
     const canonicalQuery = q.toLowerCase();
-    const searchUrl = `https://www.pornhub.org/video/search?search=${encodeURIComponent(canonicalQuery)}&page=${page}`;
-    const res = await fetch(searchUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Cookie': 'accessAgeDisclaimerPH=1; platform=pc; bs=1'
-      },
-      redirect: 'follow',
-      next: { revalidate: 300 }
-    });
 
-    if (!res.ok) {
-      return NextResponse.json({ ok: false, error: `Pornhub returned status ${res.status}`, results: [] }, { status: res.status });
+    // Handle common trailing duplicate consonants typos e.g. "schooll" -> "school"
+    const dedupEnd = canonicalQuery.replace(/([bcdfghjklmnpqrstvwxyz])\1+$/i, '$1');
+    const queriesToTry = [canonicalQuery];
+    if (dedupEnd !== canonicalQuery && dedupEnd.length >= 3) {
+      queriesToTry.push(dedupEnd);
     }
 
-    const html = await res.text();
-    const results = parsePornhubSearchHtml(html);
+    const queryWords = canonicalQuery.split(/\s+/).filter(Boolean);
+    const stems = queryWords.map(w => {
+      if (w.endsWith('ing') && w.length > 5) return w.slice(0, -3);
+      if (w.endsWith('es') && w.length > 4) return w.slice(0, -2);
+      if (w.endsWith('s') && w.length > 3) return w.slice(0, -1);
+      if (w.endsWith('er') && w.length > 4) return w.slice(0, -2);
+      return w;
+    });
+    if (dedupEnd !== canonicalQuery) stems.push(dedupEnd);
+
+    let synonyms = [];
+    for (const word of queryWords) {
+      if (SEMANTIC_SYNONYMS[word]) {
+        synonyms.push(...SEMANTIC_SYNONYMS[word]);
+      }
+    }
+    if (SEMANTIC_SYNONYMS[dedupEnd]) {
+      synonyms.push(...SEMANTIC_SYNONYMS[dedupEnd]);
+    }
+    synonyms = [...new Set(synonyms)];
+
+    let allResults = [];
+    const seenVkeys = new Set();
+
+    const pagePromises = queriesToTry.map(queryAttempt => fetchSearchPage(queryAttempt, page));
+    const pageResults = await Promise.all(pagePromises);
+    for (const items of pageResults) {
+      for (const item of items) {
+        if (!seenVkeys.has(item.viewkey)) {
+          seenVkeys.add(item.viewkey);
+          allResults.push(item);
+        }
+      }
+    }
+
+    let scored = allResults.map(item => ({
+      item,
+      score: computeRelevance(item.title, queryWords, stems, synonyms)
+    }));
+
+    // Auto-enrich from page 2 if strong matches < 18 on page 1
+    const strongMatches = scored.filter(s => s.score >= 10);
+    if (strongMatches.length < 18 && page === 1) {
+      const p2Items = await fetchSearchPage(queriesToTry[0], 2);
+      for (const item of p2Items) {
+        if (!seenVkeys.has(item.viewkey)) {
+          seenVkeys.add(item.viewkey);
+          scored.push({
+            item,
+            score: computeRelevance(item.title, queryWords, stems, synonyms)
+          });
+        }
+      }
+    }
+
+    // Sort descending by relevance score
+    scored.sort((a, b) => b.score - a.score);
+
+    const results = scored.map(s => s.item).slice(0, 32);
 
     return NextResponse.json({ ok: true, results, count: results.length });
   } catch (err) {
