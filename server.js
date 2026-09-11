@@ -27,6 +27,35 @@ const PORT = process.env.PORT || 3000;
 const https = require('https');
 const urlModule = require('url');
 
+async function resolveFreshPhHls(viewkey) {
+  if (!viewkey) return null;
+  try {
+    const targetUrl = `https://www.pornhub.org/view_video.php?viewkey=${viewkey}`;
+    const res = await fetch(targetUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Cookie': 'accessAgeDisclaimerPH=1; age_verified=1; platform=pc; bs=1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      redirect: 'follow',
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const flashvarsMatch = html.match(/flashvars_\d+\s*=\s*({.+?});/);
+    if (!flashvarsMatch) return null;
+    const flashvars = JSON.parse(flashvarsMatch[1]);
+    const mediaDefs = Array.isArray(flashvars.mediaDefinitions) ? flashvars.mediaDefinitions : [];
+    const hlsItems = mediaDefs.filter((m) => m.format === 'hls' && m.videoUrl);
+    hlsItems.sort((a, b) => (Number(b.quality) || Number(b.height) || 0) - (Number(a.quality) || Number(a.height) || 0));
+    return hlsItems[0]?.videoUrl || null;
+  } catch (err) {
+    console.error('[ph-refresh] Error resolving fresh stream for viewkey:', viewkey, err);
+    return null;
+  }
+}
+
 function handleHlsProxy(req, res, defaultReferer = '') {
   const parsed = urlModule.parse(req.url, true);
   let targetUrl = parsed.query.url;
@@ -36,8 +65,12 @@ function handleHlsProxy(req, res, defaultReferer = '') {
     return;
   }
 
+  const viewkey = parsed.query.viewkey || '';
+  const isPhncdn = targetUrl.includes('phncdn.com') || targetUrl.includes('pornhub');
+
   // Re-attach any sub-query parameters that were parsed separately (e.g. &in=..., &q=...)
-  const nonTargetKeys = ['url', 'referer'];
+  // Exclude non-target query parameters so they are not appended to signed upstream URLs
+  const nonTargetKeys = ['url', 'referer', 'viewkey', 'retry'];
   const extraParams = [];
   for (const [k, v] of Object.entries(parsed.query)) {
     if (!nonTargetKeys.includes(k) && typeof v === 'string') {
@@ -51,8 +84,8 @@ function handleHlsProxy(req, res, defaultReferer = '') {
 
   let referer = parsed.query.referer || defaultReferer;
   if (!referer) {
-    if (targetUrl.includes('pornhub.com') || targetUrl.includes('phncdn.com')) {
-      referer = 'https://www.pornhub.com/';
+    if (isPhncdn) {
+      referer = 'https://www.pornhub.org/';
     } else if (targetUrl.includes('redgifs.com')) {
       referer = 'https://www.redgifs.com/';
     } else if (targetUrl.includes('ahcdn.com') || targetUrl.includes('xhamster')) {
@@ -69,16 +102,47 @@ function handleHlsProxy(req, res, defaultReferer = '') {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': '*/*',
   };
-  if (clientIp) {
+  // IMPORTANT: Do NOT send X-Forwarded-For or CF-Connecting-IP to token-signed CDNs like phncdn.com!
+  // The token is signed for the proxy server's egress IP; forwarding the client IP causes CDN signature mismatch (410 Gone / 403).
+  if (clientIp && !isPhncdn) {
     upstreamHeaders['X-Forwarded-For'] = clientIp;
     upstreamHeaders['CF-Connecting-IP'] = clientIp;
   }
   if (referer) upstreamHeaders['Referer'] = referer;
   if (referer && referer.includes('pornhub') && !targetUrl.includes('phncdn.com')) {
-    upstreamHeaders['Cookie'] = 'accessAgeDisclaimerPH=1; age_verified=1;';
+    upstreamHeaders['Cookie'] = 'accessAgeDisclaimerPH=1; age_verified=1; platform=pc; bs=1';
   }
 
   const clientReq = https.get(targetUrl, { headers: upstreamHeaders }, (upstreamRes) => {
+    // If upstream returns 410 Gone (expired token) or 403 Forbidden on a Pornhub stream, attempt automatic refresh!
+    if ((upstreamRes.statusCode === 410 || upstreamRes.statusCode === 403) && isPhncdn && viewkey && !parsed.query.retry) {
+      console.warn(`[ph-proxy] Upstream returned ${upstreamRes.statusCode} for viewkey ${viewkey}, refreshing stream token...`);
+      resolveFreshPhHls(viewkey).then((freshUrl) => {
+        if (freshUrl) {
+          let nextUrl = freshUrl;
+          // If the requested target was a segment or child playlist, replace expired query tokens (?h=...&e=...) with fresh tokens
+          if (!targetUrl.includes('master.m3u8') && freshUrl.includes('?')) {
+            const freshQuery = freshUrl.split('?')[1];
+            const baseTarget = targetUrl.split('?')[0];
+            nextUrl = `${baseTarget}?${freshQuery}`;
+          }
+          const retryReq = {
+            ...req,
+            url: `/api/proxy/hls?url=${encodeURIComponent(nextUrl)}&viewkey=${encodeURIComponent(viewkey)}&retry=1${referer ? '&referer=' + encodeURIComponent(referer) : ''}`
+          };
+          handleHlsProxy(retryReq, res, referer);
+          return;
+        }
+        res.writeHead(upstreamRes.statusCode, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+        res.end(`Upstream returned ${upstreamRes.statusCode} (token expired)`);
+      }).catch((e) => {
+        console.error('[ph-proxy] Token refresh failed:', e);
+        res.writeHead(upstreamRes.statusCode, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+        res.end(`Upstream returned ${upstreamRes.statusCode}`);
+      });
+      return;
+    }
+
     if (upstreamRes.statusCode >= 400) {
       res.writeHead(upstreamRes.statusCode, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
       res.end(`Upstream returned ${upstreamRes.statusCode}`);
@@ -114,7 +178,7 @@ function handleHlsProxy(req, res, defaultReferer = '') {
               } else if (!abs.startsWith('http://') && !abs.startsWith('https://')) {
                 abs = baseUrl + abs;
               }
-              const proxyUrl = `/api/proxy/hls?url=${encodeURIComponent(abs)}${referer ? '&referer=' + encodeURIComponent(referer) : ''}`;
+              const proxyUrl = `/api/proxy/hls?url=${encodeURIComponent(abs)}${referer ? '&referer=' + encodeURIComponent(referer) : ''}${viewkey ? '&viewkey=' + encodeURIComponent(viewkey) : ''}`;
               return `URI="${proxyUrl}"`;
             });
           }
@@ -128,7 +192,7 @@ function handleHlsProxy(req, res, defaultReferer = '') {
           } else if (!absUrl.startsWith('http://') && !absUrl.startsWith('https://')) {
             absUrl = baseUrl + absUrl;
           }
-          return `/api/proxy/hls?url=${encodeURIComponent(absUrl)}${referer ? '&referer=' + encodeURIComponent(referer) : ''}`;
+          return `/api/proxy/hls?url=${encodeURIComponent(absUrl)}${referer ? '&referer=' + encodeURIComponent(referer) : ''}${viewkey ? '&viewkey=' + encodeURIComponent(viewkey) : ''}`;
         }).join('\n');
 
         res.writeHead(200, {

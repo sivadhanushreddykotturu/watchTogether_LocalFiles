@@ -2062,11 +2062,35 @@ export default function Room() {
         hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (event, data) => {
           setCurrentAudioTrack(data.id);
         });
-        hls.on(Hls.Events.ERROR, (event, data) => {
+        hls.on(Hls.Events.ERROR, async (event, data) => {
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
                 console.warn('HLS Network error, attempting recovery...', data);
+                if ((data.response?.code === 410 || data.response?.code === 403) && source.platform === 'PH' && source.viewkey) {
+                  try {
+                    const res = await fetch(`/api/ph?viewkey=${encodeURIComponent(source.viewkey)}`);
+                    if (res.ok) {
+                      const phData = await res.json();
+                      if (phData.ok && phData.hlsUrl) {
+                        console.log('[PH] Refreshed expired HLS stream on 410 network error');
+                        hls.loadSource(phData.hlsUrl);
+                        hls.startLoad();
+                        return;
+                      }
+                    }
+                  } catch (e) {
+                    console.error('[PH] Failed to refresh stream on network error:', e);
+                  }
+                  // Fall back seamlessly to embed player if token refresh fails
+                  setCurrentSource(prev => prev ? {
+                    ...prev,
+                    type: 'embed',
+                    embedUrl: `https://www.pornhub.org/embed/${source.viewkey}`,
+                    platform: 'PH'
+                  } : null);
+                  return;
+                }
                 hls.startLoad();
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
@@ -2075,8 +2099,17 @@ export default function Room() {
                 break;
               default:
                 console.warn('HLS Fatal error:', data);
-                hls.destroy();
-                toast('Could not load stream');
+                if (source.platform === 'PH' && source.viewkey) {
+                  setCurrentSource(prev => prev ? {
+                    ...prev,
+                    type: 'embed',
+                    embedUrl: `https://www.pornhub.org/embed/${source.viewkey}`,
+                    platform: 'PH'
+                  } : null);
+                } else {
+                  hls.destroy();
+                  toast('Could not load stream');
+                }
                 break;
             }
           }
@@ -2091,6 +2124,38 @@ export default function Room() {
         if (latestStateRef.current.playing) {
           video.play().catch(() => {});
         }
+
+        const handleNativeError = async () => {
+          if (source.platform === 'PH' && source.viewkey) {
+            console.warn('[PH] Native video error on iOS/Safari, attempting stream recovery...');
+            try {
+              const res = await fetch(`/api/ph?viewkey=${encodeURIComponent(source.viewkey)}`);
+              if (res.ok) {
+                const data = await res.json();
+                if (data.ok && data.hlsUrl && data.hlsUrl !== video.src) {
+                  video.src = data.hlsUrl;
+                  if (latestStateRef.current.time) {
+                    video.currentTime = latestStateRef.current.time;
+                  }
+                  if (latestStateRef.current.playing) {
+                    video.play().catch(() => {});
+                  }
+                  return;
+                }
+              }
+            } catch (e) {
+              console.error('[PH] Native recovery failed:', e);
+            }
+            // Seamless embed fallback if direct HLS fails on iOS
+            setCurrentSource(prev => prev ? {
+              ...prev,
+              type: 'embed',
+              embedUrl: `https://www.pornhub.org/embed/${source.viewkey}`,
+              platform: 'PH'
+            } : null);
+          }
+        };
+        video.addEventListener('error', handleNativeError, { once: true });
       }
 
       if (source.audioUrl) {
