@@ -833,6 +833,21 @@ function attach(io) {
       knock.socket.emit('knock-rejected', { knockId, reason: 'The host declined your request.' });
     });
 
+    // --- Shorts/Reels sync: synchronized scrolling across all room members ---
+    socket.on('shorts-sync', ({ clipId, index, isPlaying, time } = {}) => {
+      const room = rooms.get(socket.data.room);
+      if (!room) return;
+      const user = room.users.get(socket.id);
+      socket.to(room.code).emit('shorts-sync', {
+        clipId,
+        index,
+        isPlaying,
+        time,
+        senderId: socket.id,
+        userName: user ? user.name : 'Someone',
+      });
+    });
+
     // --- Host controls: lock/unlock video control ---
     socket.on('set-control-lock', (locked) => {
       const room = rooms.get(socket.data.room);

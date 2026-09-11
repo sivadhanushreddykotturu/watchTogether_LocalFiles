@@ -16,6 +16,7 @@ import { searchSpotify, resolveSpotifyTrack } from '../../../lib/spotify';
 import { parseMediaUrl, resolveMediaUrl, searchPornhub } from '../../../lib/mediaEmbeds';
 import { buildVidloveUrl, searchTmdb, fetchTmdbTrending, fetchTmdbTvDetails, fetchTmdbSeason, fetchTmdbSources } from '../../../lib/tmdb';
 import TmdbEpisodeModal from '../../components/TmdbEpisodeModal';
+import ShortsModal from '../../components/ShortsModal';
 import { VoiceSession } from '../../../lib/voice';
 import { getAppleEmojiUrl } from '../../../lib/emoji';
 import { EmojiImg, renderWithAppleEmojis } from '../../components/AppleEmoji';
@@ -86,6 +87,7 @@ export default function Room() {
   const [tmdbFilter, setTmdbFilter] = useState('all'); // 'all' | 'movie' | 'tv' | 'anime' | 'kdrama'
   const [tmdbEpisodeModalOpen, setTmdbEpisodeModalOpen] = useState(false);
   const [selectedSeriesForEpisodes, setSelectedSeriesForEpisodes] = useState(null);
+  const [shortsModalOpen, setShortsModalOpen] = useState(false);
   const [ytSearchQuery, setYtSearchQuery] = useState('');
   const [ytSearchResults, setYtSearchResults] = useState([]);
   const [ytSearching, setYtSearching] = useState(false);
@@ -3310,6 +3312,18 @@ export default function Room() {
           </button>
         )}
 
+        {adultMode && (
+          <button
+            type="button"
+            className="btn ghost reels-header-btn"
+            onClick={() => setShortsModalOpen(true)}
+            title="Open 18+ Reels & Shorts (RedGifs)"
+            style={{ color: '#ff3366', borderColor: 'rgba(255, 51, 102, 0.4)', fontWeight: 700 }}
+          >
+            ⚡ Reels
+          </button>
+        )}
+
         <span className="spacer"></span>
         <ThemeToggle />
         <AuthButton />
@@ -4024,6 +4038,18 @@ export default function Room() {
                       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
                       Browse Movies, Series & Videos
                     </button>
+                    {adultMode && (
+                      <button
+                        className="btn ghost"
+                        style={{ width: '100%', marginTop: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '8px 12px', color: '#ff3366', borderColor: 'rgba(255, 51, 102, 0.35)', fontWeight: 600 }}
+                        onClick={() => {
+                          setYtPanelOpen(false);
+                          setShortsModalOpen(true);
+                        }}
+                      >
+                        ⚡ 18+ Reels & Shorts
+                      </button>
+                    )}
                   </div>
                   <div className="sub-row">
                     <span className="sub-label">Or Paste Link</span>
@@ -4995,6 +5021,20 @@ export default function Room() {
                   <span className="tab-icon">🔞</span> Pornhub
                 </button>
               )}
+              {adultMode && (
+                <button
+                  type="button"
+                  className="search-platform-tab"
+                  style={{ color: '#ff3366' }}
+                  onClick={() => {
+                    setYtSearchModalOpen(false);
+                    setShortsModalOpen(true);
+                  }}
+                  title="Open 18+ Reels & Shorts (RedGifs)"
+                >
+                  <span className="tab-icon">⚡</span> Reels
+                </button>
+              )}
             </div>
 
             {searchPlatform === 'tmdb' && (
@@ -5269,6 +5309,46 @@ export default function Room() {
             ? Number(source.episode) || 1
             : 1
         }
+      />
+
+      {/* 18+ Shorts & Reels Modal */}
+      <ShortsModal
+        isOpen={shortsModalOpen}
+        onClose={() => setShortsModalOpen(false)}
+        socket={getSocket()}
+        roomCode={roomCode}
+        isHost={isHost}
+        onPlayForRoom={(clip) => {
+          const socket = getSocket();
+          if (!socket.connected) return;
+          const payload = {
+            type: 'direct',
+            url: clip.hdUrl || clip.sdUrl || clip.url,
+            title: clip.title || `Reel by @${clip.author}`,
+            author: `@${clip.author}`,
+            thumbnail: clip.thumbnail || clip.poster,
+            poster: clip.poster,
+            platform: 'RedGifs',
+          };
+          socket.emit('source', { ...payload, playing: true });
+          toast(`Playing Reel by @${clip.author}`);
+        }}
+        onAddToQueue={(clip) => {
+          const socket = getSocket();
+          if (!socket.connected) return;
+          const payload = {
+            type: 'direct',
+            url: clip.hdUrl || clip.sdUrl || clip.url,
+            title: clip.title || `Reel by @${clip.author}`,
+            author: `@${clip.author}`,
+            thumbnail: clip.thumbnail || clip.poster,
+            poster: clip.poster,
+            platform: 'RedGifs',
+            playNow: false,
+          };
+          socket.emit('queue-add', payload);
+          toast(`Added Reel by @${clip.author} to queue`);
+        }}
       />
 
       <div className="toast-stack">
