@@ -5316,7 +5316,7 @@ export default function Room() {
         isOpen={shortsModalOpen}
         onClose={() => setShortsModalOpen(false)}
         socket={getSocket()}
-        roomCode={roomCode}
+        roomCode={code}
         isHost={isHost}
         onPlayForRoom={(clip) => {
           const socket = getSocket();
