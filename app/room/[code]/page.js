@@ -3306,7 +3306,7 @@ export default function Room() {
             }}
             title={adultMode ? 'Adult Mode ON (Pornhub & RedGIFs enabled)' : 'Adult Mode OFF (Safe mode)'}
           >
-            <EmojiImg char="🔞" size={11} /> {adultMode ? 'Adult Mode ON' : 'Adult Mode OFF'}
+            <EmojiImg char="🔞" size={11} /> <span className="adult-mode-label">{adultMode ? 'Adult Mode ON' : 'Adult Mode OFF'}</span>
           </button>
         )}
 
