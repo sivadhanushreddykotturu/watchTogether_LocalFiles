@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { useUser, useAuth, UserButton } from '@clerk/nextjs';
 import { getSocket } from '../../lib/socket';
 import { UserRoom } from '../../types/realtime';
-import { ThemeToggle } from '../components/ThemeToggle';
 import { EmojiImg } from '../components/AppleEmoji';
 
 export default function DashboardPage(): React.JSX.Element {
@@ -141,207 +140,192 @@ export default function DashboardPage(): React.JSX.Element {
   }
 
   const displayName = user.firstName || user.username || 'Member';
+  const liveRooms = myRooms.filter((r) => r.isLive);
+  const watchingNow = liveRooms.reduce((sum, r) => sum + (r.liveCount || 0), 0);
 
   return (
-    <main className="minimal-landing">
-      <div className="minimal-container" style={{ maxWidth: '680px' }}>
-        {/* Top Navigation Bar */}
-        <header className="minimal-header">
-          <div className="minimal-brand" style={{ cursor: 'pointer' }} onClick={() => router.push('/dashboard')}>
-            <span className="mb-icon">✦</span>
-            <span>REELSYNC</span>
-            <span className="tab-pill" style={{ marginLeft: '4px' }}>DASHBOARD</span>
+    <div className="app-shell">
+      <header className="lp-nav app-nav">
+        <button type="button" className="minimal-brand brand-btn" onClick={() => router.push('/dashboard')}>
+          <span className="mb-icon">✦</span>
+          <span>REELSYNC</span>
+        </button>
+        <div className="lp-nav-actions">
+          <div className="app-nav-user">
+            <UserButton />
+            <span className="app-nav-name">{displayName}</span>
           </div>
+        </div>
+      </header>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <ThemeToggle />
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingLeft: '4px' }}>
-              <UserButton />
-              <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--theme-text)' }}>
-                {displayName}
-              </span>
+      <main className="dash">
+        <section className="dash-hero">
+          <div>
+            <p className="dash-eyebrow">Dashboard</p>
+            <h1 className="dash-title">Hey {displayName}</h1>
+            <p className="dash-sub">Your saved rooms stay put between sessions — share the code once, reuse it every movie night.</p>
+          </div>
+          <dl className="dash-stats">
+            <div className="dash-stat">
+              <dt>Saved rooms</dt>
+              <dd>{loadingRooms ? '–' : myRooms.length}</dd>
             </div>
-          </div>
-        </header>
+            <div className="dash-stat">
+              <dt>Live now</dt>
+              <dd className={liveRooms.length ? 'is-live' : ''}>{loadingRooms ? '–' : liveRooms.length}</dd>
+            </div>
+            <div className="dash-stat">
+              <dt>Watching</dt>
+              <dd>{loadingRooms ? '–' : watchingNow}</dd>
+            </div>
+          </dl>
+        </section>
 
-        {/* Main Dashboard Card */}
-        <div className="minimal-card">
-          <div style={{ marginBottom: '24px' }}>
-            <h1 className="minimal-title" style={{ textAlign: 'left', margin: '0 0 6px' }}>
-              My Watch Parties
-            </h1>
-            <p className="minimal-desc" style={{ textAlign: 'left' }}>
-              Persistent cinema rooms saved to your account. Stay synced with friends anytime.
-            </p>
-          </div>
+        {error && <div className="min-error dash-error" role="alert">{error}</div>}
 
-          {/* Section 1: Create Room Form */}
-          <form onSubmit={createPersistentRoom} className="minimal-form" style={{ marginBottom: '28px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '10px' }}>
+        <div className={'dash-grid' + (!loadingRooms && myRooms.length > 0 ? ' has-rooms' : '')}>
+          <aside className="dash-actions">
+            <form onSubmit={createPersistentRoom} className="dash-card">
+              <h2 className="dash-card-title">Start a party</h2>
+              <p className="dash-card-sub">Creates a room saved to your account.</p>
               <input
                 type="text"
                 maxLength={60}
-                placeholder="Party Title (e.g. Movie Night, Anime Club)"
+                placeholder="Title, e.g. Friday Movie Night"
+                aria-label="Party title"
                 value={partyTitle}
                 onChange={(e) => setPartyTitle(e.target.value)}
                 className="min-input"
               />
-              <button type="submit" className="min-btn primary" disabled={loading !== ''} style={{ width: 'auto', minWidth: '140px' }}>
-                {loading === 'create' ? 'Creating…' : '+ Create Party'}
-              </button>
-            </div>
-
-            {/* Privacy Toggle Box */}
-            <div
-              className="min-toggle-box"
-              onClick={() => setIsPrivateMode(!isPrivateMode)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  setIsPrivateMode(!isPrivateMode);
-                }
-              }}
-            >
-              <div className="mtb-info">
-                <div className="mtb-title">
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px' }}>
-                    <EmojiImg char={isPrivateMode ? '🔒' : '🔓'} size={14} />
-                    {isPrivateMode ? 'Private Party (Knock to Join)' : 'Open Party (Direct Access)'}
-                  </span>
-                </div>
-                <div className="mtb-sub">
-                  {isPrivateMode
-                    ? 'Guests request permission and must be approved by the host'
-                    : 'Anyone with the room link can join and stream directly'}
-                </div>
-              </div>
-              <div className={'min-switch' + (isPrivateMode ? ' on' : '')}>
-                <div className="switch-dot" />
-              </div>
-            </div>
-          </form>
-
-          {/* Section 2: Saved Persistent Rooms */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-            <span style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--theme-text-dim)' }}>
-              Saved Rooms ({myRooms.length})
-            </span>
-            {myRooms.length > 0 && (
               <button
                 type="button"
-                onClick={fetchRooms}
-                  className="copy-chip-btn"
-                  title="Refresh rooms"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}
-                >
-                  <EmojiImg char="🔄" size={12} /> Refresh
-                </button>
-            )}
-          </div>
+                className="dash-toggle"
+                role="switch"
+                aria-checked={isPrivateMode}
+                onClick={() => setIsPrivateMode(!isPrivateMode)}
+              >
+                <span className="dash-toggle-text">
+                  <span className="dash-toggle-title">
+                    <EmojiImg char={isPrivateMode ? '🔒' : '🔓'} size={13} />
+                    {isPrivateMode ? 'Private — knock to join' : 'Open — anyone with the link'}
+                  </span>
+                  <span className="dash-toggle-sub">
+                    {isPrivateMode ? 'You approve each guest before they get in.' : 'Guests with the code join instantly.'}
+                  </span>
+                </span>
+                <span className={'min-switch' + (isPrivateMode ? ' on' : '')} aria-hidden="true">
+                  <span className="switch-dot" />
+                </span>
+              </button>
+              <button type="submit" className="min-btn primary dash-card-cta" disabled={loading !== ''}>
+                {loading === 'create' ? 'Creating…' : 'Create party'}
+              </button>
+            </form>
 
-          <div className="minimal-rooms-list" style={{ marginBottom: '28px' }}>
+            <form onSubmit={(e) => joinExistingRoom(e)} className="dash-card">
+              <h2 className="dash-card-title">Join with a code</h2>
+              <div className="join-row">
+                <input
+                  type="text"
+                  maxLength={5}
+                  placeholder="CODE"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-label="5-letter room code"
+                  value={joinCode}
+                  onChange={(e) => {
+                    setJoinCode(e.target.value.toUpperCase());
+                    setError('');
+                  }}
+                  className="min-input code-input"
+                />
+                <button type="submit" className="min-btn ghost" disabled={loading !== '' || !joinCode.trim()}>
+                  {loading === 'join' ? 'Joining…' : 'Join'}
+                </button>
+              </div>
+            </form>
+          </aside>
+
+          <section className="dash-rooms" aria-labelledby="rooms-heading">
+            <div className="dash-section-head">
+              <h2 id="rooms-heading" className="dash-section-title">Your rooms</h2>
+              {myRooms.length > 0 && (
+                <button type="button" onClick={fetchRooms} className="dash-refresh" title="Refresh rooms">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+                  Refresh
+                </button>
+              )}
+            </div>
+
             {loadingRooms ? (
-              <div className="min-empty-rooms" style={{ padding: '24px 16px' }}>
-                <p style={{ margin: 0 }}>Loading your saved rooms…</p>
+              <div className="room-grid" aria-busy="true">
+                {[0, 1, 2, 3].map((i) => <div key={i} className="room-card skeleton" />)}
               </div>
             ) : myRooms.length > 0 ? (
-              myRooms.map((r) => (
-                <div key={r.code} className="min-room-row">
-                  <div className="mrr-left" onClick={() => joinExistingRoom(undefined, r.code)} style={{ flex: 1 }}>
-                    <div className="mrr-icon"><EmojiImg char="🎬" size={20} /></div>
-                    <div>
-                      <div className="mrr-title">{r.title}</div>
-                      <div className="mrr-meta">
-                        <span className="mrr-code">{r.code}</span>
-                        {r.isLive ? (
-                          <span className="mrr-live">● {r.liveCount} online</span>
-                        ) : (
-                          <span>Ready</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div className="room-grid">
+                {myRooms.map((r) => (
+                  <article key={r.code} className={'room-card' + (r.isLive ? ' live' : '')}>
                     <button
                       type="button"
-                      className="min-btn small"
-                      onClick={(e) => copyRoomLink(r.code, e)}
-                      title="Copy room link"
-                    >
-                      {copiedCode === r.code ? '✓ Copied' : <><EmojiImg char="🔗" size={12} /> Link</>}
-                    </button>
-                    <button
-                      type="button"
-                      className="min-btn small"
-                      style={{ background: 'var(--accent)', color: '#FFFFFF', borderColor: 'transparent' }}
+                      className="room-card-main"
                       onClick={() => joinExistingRoom(undefined, r.code)}
+                      title={`Join ${r.title}`}
                     >
-                      Join →
+                      <span className="room-card-art" aria-hidden="true">
+                        <span className="room-card-initial">{(r.title || '?').trim()[0]?.toUpperCase()}</span>
+                      </span>
+                      <span className="room-card-body">
+                        <span className="room-card-title">{r.title}</span>
+                        <span className="room-card-meta">
+                          <span className="mrr-code">{r.code}</span>
+                          {r.isLive ? (
+                            <span className="room-card-status live"><span className="live-dot" />{r.liveCount} watching</span>
+                          ) : (
+                            <span className="room-card-status">Idle</span>
+                          )}
+                        </span>
+                      </span>
                     </button>
-                    <button
-                      type="button"
-                      className="min-btn ghost"
-                      style={{ padding: '7px 10px', fontSize: '13px', color: 'var(--error)' }}
-                      onClick={() => deleteRoom(r.code)}
-                      title="Delete room"
-                    >
-                      <EmojiImg char="🗑️" size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))
+                    <div className="room-card-actions">
+                      <button type="button" className="min-btn primary small-cta" onClick={() => joinExistingRoom(undefined, r.code)}>
+                        {r.isLive ? 'Join now' : 'Open'}
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-action"
+                        onClick={(e) => copyRoomLink(r.code, e)}
+                        title="Copy invite link"
+                        aria-label="Copy invite link"
+                      >
+                        {copiedCode === r.code ? (
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                        ) : (
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-action danger"
+                        onClick={() => deleteRoom(r.code)}
+                        title="Delete room"
+                        aria-label="Delete room"
+                      >
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
             ) : (
-              <div className="min-empty-rooms">
-                <span className="mer-icon"><EmojiImg char="🍿" size={36} /></span>
-                <p style={{ margin: '0 0 4px', fontWeight: 600, color: 'var(--theme-text)' }}>
-                  No watch parties yet
-                </p>
-                <p style={{ margin: 0, fontSize: '12px', color: 'var(--theme-text-muted)' }}>
-                  Create a persistent party above or join a friend&apos;s code below.
-                </p>
+              <div className="dash-empty">
+                <EmojiImg char="🍿" size={32} />
+                <p className="dash-empty-title">No saved rooms yet</p>
+                <p className="dash-empty-sub">Start a party and it&apos;ll show up here, ready for next time.</p>
               </div>
             )}
-          </div>
-
-          {/* Section 3: Join Room with Code */}
-          <div className="divider" style={{ margin: '24px 0 20px' }}>
-            <span>or join with friend&apos;s code</span>
-          </div>
-
-          <form onSubmit={(e) => joinExistingRoom(e)} className="join-row">
-            <input
-              type="text"
-              maxLength={5}
-              placeholder="CODE"
-              autoComplete="off"
-              spellCheck={false}
-              value={joinCode}
-              onChange={(e) => {
-                setJoinCode(e.target.value.toUpperCase());
-                setError('');
-              }}
-              className="min-input code-input"
-              style={{ flex: 1 }}
-            />
-            <button
-              type="submit"
-              className="min-btn primary"
-              disabled={loading !== '' || !joinCode.trim()}
-              style={{ width: 'auto', minWidth: '120px' }}
-            >
-              {loading === 'join' ? 'Joining…' : 'Join →'}
-            </button>
-          </form>
-
-          {error && <div className="min-error" role="alert">{error}</div>}
+          </section>
         </div>
-
-        <footer className="minimal-footer">
-          Signed in as <strong style={{ color: 'var(--theme-text)' }}>{displayName}</strong>. Rooms are synced in real-time.
-        </footer>
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }

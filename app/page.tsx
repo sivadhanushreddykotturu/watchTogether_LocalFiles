@@ -4,7 +4,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser, SignInButton } from '@clerk/nextjs';
 import { getSocket } from '../lib/socket';
-import { ThemeToggle } from './components/ThemeToggle';
 import { EmojiImg } from './components/AppleEmoji';
 
 export default function LandingPage(): React.JSX.Element {
@@ -108,124 +107,212 @@ export default function LandingPage(): React.JSX.Element {
     );
   }
 
+  const features = [
+    { icon: '🔒', title: 'Files never leave your device', desc: 'Each person plays their own copy. Only play, pause and seek events travel over the wire.' },
+    { icon: '⏱️', title: 'Everyone on the same frame', desc: 'Play, pause and seek hit every screen at once, and latecomers catch up to where the room is.' },
+    { icon: '🎙️', title: 'Voice, chat & reactions', desc: 'Talk over the film, drop GIFs, or fire a 🍿 that floats across everyone’s screen.' },
+    { icon: '🎞️', title: 'Subtitles & audio tracks', desc: 'Embedded MKV tracks, your own SRT/VTT/ASS files, and a room-wide timing nudge.' },
+    { icon: '📺', title: 'A shared queue', desc: 'Search YouTube, movies and series, or paste a link — anyone in the room can add to it.' },
+    { icon: '🚪', title: 'Private rooms', desc: 'Turn on knock-to-join and approve each guest before they get in.' },
+  ];
+
+  const steps = [
+    { title: 'Start a room', desc: 'Type a name and hit start. No account needed.' },
+    { title: 'Share the code', desc: 'Friends join from any browser with your 5-letter code.' },
+    { title: 'Pick the same file', desc: 'Everyone opens their copy — playback locks together.' },
+  ];
+
+  const focusStart = () => {
+    document.getElementById('start')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => nameInputRef.current?.focus({ preventScroll: true }), 350);
+  };
+
   return (
-    <main className="minimal-landing">
-      <div className="minimal-container" style={{ maxWidth: '520px' }}>
-        {/* Top Header */}
-        <header className="minimal-header">
-          <div className="minimal-brand">
-            <span className="mb-icon">✦</span>
-            <span>REELSYNC</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <ThemeToggle />
-            <SignInButton mode="modal">
-              <button type="button" className="min-btn ghost" style={{ fontSize: '13px', padding: '6px 14px' }}>
-                Sign in
-              </button>
-            </SignInButton>
-          </div>
-        </header>
-
-        {/* Main Landing Hero Card */}
-        <div className="minimal-card">
-          <div className="minimal-hero" style={{ textAlign: 'left' }}>
-            <div style={{ display: 'inline-flex', marginBottom: '14px' }}>
-              <span className="tab-pill" style={{ letterSpacing: '0.12em', color: 'var(--accent)', borderColor: 'var(--accent-soft)', background: 'var(--accent-soft)' }}>
-                ✦ SYNCED STREAMING
-              </span>
-            </div>
-            <h1 className="hero-title">
-              Watch Together<br />
-              in <span className="hero-accent">Lockstep</span>
-            </h1>
-            <p className="minimal-desc" style={{ maxWidth: '400px' }}>
-              Everyone opens the same video — ReelSync keeps play, pause and seek in perfect sync. Local files never leave your device.
-            </p>
-          </div>
-
-          {/* Guest-first: one name field powers both actions */}
-          <div className="minimal-form">
-            <div className="min-field">
-              <label className="min-label" htmlFor="guest-name">Your name</label>
-              <input
-                ref={nameInputRef}
-                id="guest-name"
-                type="text"
-                maxLength={24}
-                placeholder="e.g. Nani"
-                autoComplete="off"
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  setError('');
-                }}
-                className="min-input"
-              />
-            </div>
-
-            <button
-              type="button"
-              className="min-btn primary"
-              style={{ padding: '14px', fontSize: '15px' }}
-              onClick={startInstantParty}
-              disabled={loading !== ''}
-            >
-              {loading === 'instant' ? 'Starting…' : <><EmojiImg char="⚡" size={15} /> Start Instant Party</>}
-            </button>
-
-            <div className="divider" style={{ margin: '4px 0' }}>
-              <span>or join a friend&apos;s room</span>
-            </div>
-
-            <div className="join-row">
-              <input
-                type="text"
-                maxLength={5}
-                placeholder="CODE"
-                autoComplete="off"
-                spellCheck={false}
-                aria-label="5-letter room code"
-                value={code}
-                onChange={(e) => {
-                  setCode(e.target.value.toUpperCase());
-                  setError('');
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') joinParty(e);
-                }}
-                className="min-input code-input"
-                style={{ flex: 1 }}
-              />
-              <button
-                type="button"
-                className="min-btn ghost"
-                style={{ minWidth: '112px' }}
-                onClick={joinParty}
-                disabled={loading !== '' || !code.trim()}
-              >
-                {loading === 'join' ? 'Joining…' : 'Join →'}
-              </button>
-            </div>
-          </div>
-
-          {error && <div className="min-error" role="alert">{error}</div>}
-
-          {/* Account path — secondary */}
-          <div className="divider" style={{ margin: '24px 0 14px' }}>
-            <span>with an account</span>
-          </div>
+    <main className="lp-page">
+      <header className="lp-nav">
+        <div className="minimal-brand">
+          <span className="mb-icon">✦</span>
+          <span>REELSYNC</span>
+        </div>
+        <div className="lp-nav-actions">
           <SignInButton mode="modal">
-            <button type="button" className="min-btn ghost" style={{ width: '100%', fontSize: '13px' }}>
-              Sign in for saved rooms &amp; host controls →
-            </button>
+            <button type="button" className="min-btn ghost lp-nav-signin">Sign in</button>
           </SignInButton>
         </div>
+      </header>
 
-        <footer className="minimal-footer">
-          Peer-synchronized streaming. Local video files remain on your device.
-        </footer>
-      </div>
+      <section className="lp-hero">
+        <div className="lp-hero-copy">
+          <span className="lp-eyebrow-pill">✦ Synced streaming</span>
+          <h1 className="hero-title lp-hero-title">
+            Watch together<br />
+            in <span className="hero-accent">lockstep</span>
+          </h1>
+          <p className="lp-hero-sub">
+            Everyone opens their own copy of the same video. ReelSync keeps play, pause and seek in sync across every screen — your files never leave your device.
+          </p>
+          <ul className="lp-trust">
+            <li>No uploads</li>
+            <li>No sign-up to start</li>
+            <li>Works on phone &amp; desktop</li>
+          </ul>
+        </div>
+
+        <div className="lp-hero-card" id="start">
+          <div className="minimal-card lp-start-card">
+            <h2 className="lp-start-title">Start watching</h2>
+            <div className="minimal-form">
+              <div className="min-field">
+                <label className="min-label" htmlFor="guest-name">Your name</label>
+                <input
+                  ref={nameInputRef}
+                  id="guest-name"
+                  type="text"
+                  maxLength={24}
+                  placeholder="e.g. Nani"
+                  autoComplete="off"
+                  value={name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    setError('');
+                  }}
+                  className="min-input"
+                />
+              </div>
+
+              <button
+                type="button"
+                className="min-btn primary lp-start-cta"
+                onClick={startInstantParty}
+                disabled={loading !== ''}
+              >
+                {loading === 'instant' ? 'Starting…' : <><EmojiImg char="⚡" size={15} /> Start instant party</>}
+              </button>
+
+              <div className="divider lp-divider">
+                <span>or join a room</span>
+              </div>
+
+              <div className="join-row">
+                <input
+                  type="text"
+                  maxLength={5}
+                  placeholder="CODE"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-label="5-letter room code"
+                  value={code}
+                  onChange={(e) => {
+                    setCode(e.target.value.toUpperCase());
+                    setError('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') joinParty(e);
+                  }}
+                  className="min-input code-input"
+                />
+                <button
+                  type="button"
+                  className="min-btn ghost"
+                  onClick={joinParty}
+                  disabled={loading !== '' || !code.trim()}
+                >
+                  {loading === 'join' ? 'Joining…' : 'Join'}
+                </button>
+              </div>
+            </div>
+
+            {error && <div className="min-error" role="alert">{error}</div>}
+
+            <p className="lp-start-foot">
+              Want saved rooms &amp; host controls?{' '}
+              <SignInButton mode="modal">
+                <button type="button" className="lp-link-btn">Sign in</button>
+              </SignInButton>
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="lp-preview" aria-hidden="true">
+        <div className="lp-mock">
+          <div className="lp-mock-bar">
+            <span className="lp-mock-dot" /><span className="lp-mock-dot" /><span className="lp-mock-dot" />
+            <span className="lp-mock-title">Friday Movie Night · <b>K7Q2M</b></span>
+            <span className="lp-mock-live"><span className="live-dot" /> 4 watching</span>
+          </div>
+          <div className="lp-mock-body">
+            <div className="lp-mock-player">
+              <div className="lp-mock-screen">
+                <span className="lp-mock-sub">“We’re going to need a bigger boat.”</span>
+                <span className="lp-mock-float"><EmojiImg char="🍿" size={30} /></span>
+                <span className="lp-mock-float f2"><EmojiImg char="😱" size={24} /></span>
+              </div>
+              <div className="lp-mock-transport">
+                <span className="lp-mock-play" />
+                <span className="lp-mock-track">
+                  <span className="lp-mock-fill" />
+                  <span className="lp-mock-tick" style={{ left: '46%', background: '#f59e0b' }} />
+                  <span className="lp-mock-tick" style={{ left: '47%', background: '#60a5fa' }} />
+                  <span className="lp-mock-tick" style={{ left: '47.5%', background: '#f472b6' }} />
+                </span>
+                <span className="lp-mock-time">1:02:14</span>
+              </div>
+            </div>
+            <div className="lp-mock-chat">
+              <div className="lp-mock-msg"><span className="lp-mock-av" style={{ background: '#f59e0b' }}>A</span><span><b>Asha</b>that shark is so fake <EmojiImg char="😂" size={13} /></span></div>
+              <div className="lp-mock-msg"><span className="lp-mock-av" style={{ background: '#60a5fa' }}>R</span><span><b>Rohan</b>it’s 1975, respect it</span></div>
+              <div className="lp-mock-msg"><span className="lp-mock-av" style={{ background: '#f472b6' }}>M</span><span><b>Mei</b>rewind to 58:10 pls</span></div>
+              <div className="lp-mock-input">Say something…</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="lp-section" id="features">
+        <div className="lp-section-head">
+          <p className="lp-section-eyebrow">Why ReelSync</p>
+          <h2 className="lp-section-title">Built for movie nights, not meetings</h2>
+        </div>
+        <div className="lp-feature-grid">
+          {features.map((f) => (
+            <div className="lp-feature-card" key={f.title}>
+              <div className="lp-feature-icon"><EmojiImg char={f.icon} size={20} /></div>
+              <div>
+                <h3 className="lp-feature-title">{f.title}</h3>
+                <p className="lp-feature-desc">{f.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="lp-section lp-how">
+        <div className="lp-section-head">
+          <p className="lp-section-eyebrow">How it works</p>
+          <h2 className="lp-section-title">Three steps to showtime</h2>
+        </div>
+        <ol className="lp-steps">
+          {steps.map((s, i) => (
+            <li className="lp-step" key={s.title}>
+              <span className="lp-step-num">{i + 1}</span>
+              <div>
+                <h3 className="lp-step-title">{s.title}</h3>
+                <p className="lp-step-desc">{s.desc}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section className="lp-final">
+        <h2 className="lp-final-title">Your next movie night starts with a code.</h2>
+        <button type="button" className="min-btn primary" onClick={focusStart}>Start a party</button>
+      </section>
+
+      <footer className="lp-footer">
+        Peer-synchronized streaming. Local video files stay on your device.
+      </footer>
     </main>
   );
 }

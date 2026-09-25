@@ -7,7 +7,6 @@ import { v4 as uuidv4 } from 'uuid';
 import AppleEmojiPicker from '../../components/AppleEmojiPicker';
 import KlipyGifPicker from '../../components/KlipyGifPicker';
 import AuthButton from '../../components/AuthButton';
-import ThemeToggle from '../../components/ThemeToggle';
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle, parseSrtOrVtt } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
@@ -136,6 +135,10 @@ export default function Room() {
   const emojiPickerRef = useRef(null);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const gifPickerRef = useRef(null);
+  const [roomMenuOpen, setRoomMenuOpen] = useState(false);
+  const roomMenuRef = useRef(null);
+  const [transportMore, setTransportMore] = useState(false);
+  const [reactTrayOpen, setReactTrayOpen] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [volume, setVolume] = useState(1);
   const [danmakuEnabled, setDanmakuEnabled] = useState(false);
@@ -2298,6 +2301,34 @@ export default function Room() {
     }
   }, [emojiPickerOpen, gifPickerOpen]);
 
+  useEffect(() => {
+    if (!roomMenuOpen) return;
+    function onDown(e) {
+      // Clerk's sign-in modal renders outside the menu; don't close the menu mid-click.
+      if (roomMenuRef.current && !roomMenuRef.current.contains(e.target) && !e.target.closest('.cl-rootBox, .cl-modalBackdrop')) {
+        setRoomMenuOpen(false);
+      }
+    }
+    function onKey(e) { if (e.key === 'Escape') setRoomMenuOpen(false); }
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [roomMenuOpen]);
+
+  const copyInviteLink = async () => {
+    const url = `${window.location.origin}/room/${code}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Invite link copied');
+    } catch {
+      toast('Invite link: ' + url);
+    }
+    setRoomMenuOpen(false);
+  };
+
   // unread count in the tab title
   useEffect(() => {
     document.title = unread > 0 ? `(${unread}) ReelSync` : 'ReelSync — watch local files together';
@@ -3252,68 +3283,121 @@ export default function Room() {
           </svg>
         </button>
 
-        <div className="room-title-meta">
+        <div className="room-id">
           <span className="room-title-name">
             {sessionRef.current?.name ? `${sessionRef.current.name}'s Watch Party` : 'Watch Party'}
           </span>
-          <button className="code-slate desktop-only" onClick={copyCode} title="Copy room code">
-            <span className="slate-label">ROOM</span>
-            <span className="slate-code">{code}</span>
-          </button>
-        </div>
-
-        <div className="room-live-cluster">
-          <span className="dash-live-pill">
-            <span className="live-pulse-dot" /> LIVE
-          </span>
-          <div className="dash-avatar-stack">
-            {users.slice(0, 3).map((u, i) => (
-              <span key={u.id || i} className="dash-stack-avatar" style={{ background: u.color }}>
-                {u.name ? u.name[0].toUpperCase() : '👤'}
-              </span>
-            ))}
-            <span className="dash-stack-count">+{users.length} watching</span>
+          <div className="room-id-meta">
+            <button type="button" className="room-code-chip" onClick={copyCode} title="Copy room code">
+              <span className="slate-code">{code}</span>
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="12" height="12" rx="2" />
+                <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+              </svg>
+            </button>
+            <span className="room-watching">
+              <span className="live-pulse-dot" />
+              {users.length} watching
+            </span>
           </div>
         </div>
 
-        {isHost && (
-          <span className="host-badge" title="You are the room host">
-            <EmojiImg char="👑" size={11} /> HOST
-          </span>
-        )}
-
-        {pingMs !== null && (
-          <span className={`ping-pill ${pingMs < 80 ? 'green' : pingMs < 200 ? 'yellow' : 'red'}`} title={`Latency: ${pingMs}ms`}>
-            <EmojiImg char={pingMs < 80 ? '🟢' : pingMs < 200 ? '🟡' : '🔴'} size={9} /> {pingMs}ms
-          </span>
-        )}
-
-        {fileMatch && (
-          <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')} title={fileMatch.match ? 'Exact file match across participants' : `Duration differs by ${fileMatch.delta}s`}>
-            {fileMatch.match ? '✓ Same File' : `⚠️ ${fileMatch.delta}s diff`}
-          </span>
-        )}
-
-        {isHost && (
-          <button
-            type="button"
-            className={`btn ghost adult-mode-btn ${adultMode ? 'adult-on' : ''}`}
-            onClick={() => {
-              const next = !adultMode;
-              setAdultMode(next);
-              adultModeRef.current = next;
-              getSocket().emit('set-adult-mode', next);
-            }}
-            title={adultMode ? 'Adult Mode ON (Pornhub & RedGIFs enabled)' : 'Adult Mode OFF (Safe mode)'}
-          >
-            <EmojiImg char="🔞" size={11} /> {adultMode ? 'Adult Mode ON' : 'Adult Mode OFF'}
-          </button>
-        )}
+        <div className="room-presence desktop-only" aria-label={`${users.length} people in the room`}>
+          {users.slice(0, 4).map((u, i) => (
+            <span key={u.id || i} className="dash-stack-avatar" style={{ background: u.color }} title={u.name}>
+              {u.name ? u.name[0].toUpperCase() : '?'}
+            </span>
+          ))}
+          {users.length > 4 && <span className="dash-stack-avatar more">+{users.length - 4}</span>}
+        </div>
 
         <span className="spacer"></span>
-        <ThemeToggle />
-        <AuthButton />
-        <button className="btn ghost" onClick={leave}>Leave</button>
+
+        <div className="room-status desktop-only">
+          {isHost && (
+            <span className="host-badge" title="You are the room host">
+              <EmojiImg char="👑" size={11} /> Host
+            </span>
+          )}
+          {fileMatch && (
+            <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')} title={fileMatch.match ? 'Exact file match across participants' : `Duration differs by ${fileMatch.delta}s`}>
+              {fileMatch.match ? '✓ Same file' : `⚠️ ${fileMatch.delta}s diff`}
+            </span>
+          )}
+          {pingMs !== null && (
+            <span className={`ping-pill ${pingMs < 80 ? 'green' : pingMs < 200 ? 'yellow' : 'red'}`} title={`Latency: ${pingMs}ms`}>
+              {pingMs}ms
+            </span>
+          )}
+        </div>
+
+        <div className="room-menu-wrap" ref={roomMenuRef}>
+          <button
+            type="button"
+            className={'room-icon-btn' + (roomMenuOpen ? ' active' : '')}
+            onClick={() => setRoomMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={roomMenuOpen}
+            title="Room options"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" />
+            </svg>
+          </button>
+
+          {roomMenuOpen && (
+            <div className="room-menu" role="menu">
+              <div className="room-menu-status mobile-only">
+                {isHost && <span className="host-badge"><EmojiImg char="👑" size={11} /> Host</span>}
+                {fileMatch && (
+                  <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')}>
+                    {fileMatch.match ? '✓ Same file' : `⚠️ ${fileMatch.delta}s diff`}
+                  </span>
+                )}
+                {pingMs !== null && (
+                  <span className={`ping-pill ${pingMs < 80 ? 'green' : pingMs < 200 ? 'yellow' : 'red'}`}>{pingMs}ms</span>
+                )}
+              </div>
+
+              <button type="button" className="room-menu-item" role="menuitem" onClick={copyInviteLink}>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <span>Copy invite link</span>
+              </button>
+
+              {isHost && (
+                <button
+                  type="button"
+                  className="room-menu-item"
+                  role="menuitemcheckbox"
+                  aria-checked={adultMode}
+                  onClick={() => {
+                    const next = !adultMode;
+                    setAdultMode(next);
+                    adultModeRef.current = next;
+                    getSocket().emit('set-adult-mode', next);
+                  }}
+                  title={adultMode ? 'Adult Mode ON (Pornhub & RedGIFs enabled)' : 'Adult Mode OFF (Safe mode)'}
+                >
+                  <EmojiImg char="🔞" size={15} />
+                  <span>Adult mode</span>
+                  <span className={'min-switch sm' + (adultMode ? ' on' : '')} aria-hidden="true"><span className="switch-dot" /></span>
+                </button>
+              )}
+
+              <div className="room-menu-row">
+                <span>Account</span>
+                <AuthButton />
+              </div>
+
+              <button type="button" className="room-menu-item danger mobile-only" role="menuitem" onClick={leave}>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                <span>Leave room</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        <button type="button" className="leave-btn desktop-only" onClick={leave}>Leave</button>
       </header>
 
       {/* Host Knock Requests Section (Reference UI Panel #2) */}
@@ -3362,35 +3446,6 @@ export default function Room() {
           </div>
         </div>
       )}
-
-      {/* phone-only quick action bar */}
-      <div className="mobile-actions-bar">
-        <button className="code-slate" onClick={copyCode} title="Copy room code">
-          <span className="slate-label">ROOM</span>
-          <span className="slate-code">{code}</span>
-        </button>
-        {source?.type !== 'embed' && (
-          <button
-            className={'mobile-action-btn' + (source?.type === 'youtube' ? (ytCcOn ? ' active' : '') : (subsOn ? ' active' : ''))}
-            onClick={() => {
-              if (source?.type === 'youtube') {
-                toggleYtCaptions();
-              } else {
-                setSubPanelOpen(!subPanelOpen);
-              }
-            }}
-            title={source?.type === 'youtube' ? 'Captions' : 'Subtitles'}
-          >
-            CC {source?.type === 'youtube' ? (ytCcOn ? 'On' : 'Off') : (subsOn ? 'On' : 'Off')}
-          </button>
-        )}
-        {fileMatch && (
-          <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')}>
-            {fileMatch.match ? '✓ Matched' : `⚠️ ${fileMatch.delta}s`}
-          </span>
-        )}
-        <span className="side-count">{users.length} watching</span>
-      </div>
 
       <div className={'stage' + (chatOpen ? '' : ' chat-collapsed')}>
         <section className="screen-col">
@@ -4114,8 +4169,8 @@ export default function Room() {
               </>
             )}
 
-            <div className="transport">
-              <button className="t-btn" onClick={togglePlay} disabled={playDisabled && source?.type !== 'youtube' && source?.type !== 'hls' && source?.type !== 'direct' && source?.type !== 'embed'} title="Play / pause (space)">
+            <div className={'transport' + (transportMore ? ' expanded' : '')}>
+              <button className="t-btn t-play" onClick={togglePlay} disabled={playDisabled && source?.type !== 'youtube' && source?.type !== 'hls' && source?.type !== 'direct' && source?.type !== 'embed'} title="Play / pause (space)">
                 {playing ? (
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
                     <rect x="6" y="4.5" width="3.5" height="15" rx="1.5"/>
@@ -4158,6 +4213,7 @@ export default function Room() {
 
               <span className="timecode"><span ref={curRef}>0:00</span><span className="sep">/</span><span ref={durRef}>0:00</span></span>
 
+              <div className="t-secondary">
               <select
                 className="speed-select"
                 value={String(speed)}
@@ -4228,21 +4284,6 @@ export default function Room() {
               )}
 
               <button
-                className={'t-btn cc' + (source?.type === 'youtube' ? (ytCcOn ? ' active on' : '') : (subPanelOpen ? ' active' : '') + (subsOn ? ' on' : ''))}
-                onClick={() => {
-                  if (source?.type === 'youtube') {
-                    toggleYtCaptions();
-                  } else {
-                    setSubPanelOpen(!subPanelOpen);
-                  }
-                }}
-                title={source?.type === 'youtube' ? (ytCcOn ? 'Disable Captions (C)' : 'Enable Captions (C)') : 'Subtitles (V to cycle)'}
-              >
-                CC
-                {(source?.type === 'youtube' ? ytCcOn : subsOn) && <span className="cc-dot" />}
-              </button>
-
-              <button
                 className={'t-btn pip-btn' + (pipOn ? ' active' : '')}
                 onClick={togglePip}
                 disabled={!pipSupported || source?.type === 'youtube' || source?.type === 'embed'}
@@ -4259,6 +4300,34 @@ export default function Room() {
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="2" y="4" width="20" height="16" rx="2" />
                   <rect x="11" y="12" width="8" height="5" rx="1" fill="currentColor" stroke="none" />
+                </svg>
+              </button>
+              </div>
+
+              <button
+                className={'t-btn cc' + (source?.type === 'youtube' ? (ytCcOn ? ' active on' : '') : (subPanelOpen ? ' active' : '') + (subsOn ? ' on' : ''))}
+                onClick={() => {
+                  if (source?.type === 'youtube') {
+                    toggleYtCaptions();
+                  } else {
+                    setSubPanelOpen(!subPanelOpen);
+                  }
+                }}
+                title={source?.type === 'youtube' ? (ytCcOn ? 'Disable Captions (C)' : 'Enable Captions (C)') : 'Subtitles (V to cycle)'}
+              >
+                CC
+                {(source?.type === 'youtube' ? ytCcOn : subsOn) && <span className="cc-dot" />}
+              </button>
+
+              <button
+                type="button"
+                className={'t-btn t-more' + (transportMore ? ' active' : '')}
+                onClick={() => setTransportMore((v) => !v)}
+                aria-expanded={transportMore}
+                title={transportMore ? 'Fewer controls' : 'More controls (speed, volume, online media, PiP…)'}
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                  <circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" />
                 </svg>
               </button>
 
@@ -4292,6 +4361,33 @@ export default function Room() {
                 {queue.length > 0 && <span className="queue-pill">{queue.length}</span>}
               </button>
             </div>
+            <div className="viewers" aria-label="People in the room">
+              {users.map((u) => {
+                const isMe = u.id === meId;
+                const on = isMe ? micOn : !!peerVoice[u.id];
+                const speaking = !!speakers[u.id];
+                return (
+                  <span key={u.id} className={'viewer' + (isMe ? ' me' : '')} title={isMe ? `${u.name} (you)` : u.name}>
+                    <span className={'avatar' + (speaking ? ' speaking' : '')} style={{ background: u.color }}>{u.name[0].toUpperCase()}</span>
+                    <span className="viewer-name">{u.name}</span>
+                    {isMe ? (
+                      <button
+                        type="button"
+                        className={'mic-btn' + (on ? ' on' : '')}
+                        onClick={toggleMic}
+                        title={on ? 'Mute your mic' : 'Unmute your mic'}
+                      >
+                        {micIcon(on)}
+                      </button>
+                    ) : (
+                      <span className={'mic-btn mic-state' + (on ? ' on' : '')} title={on ? `${u.name} is on mic` : `${u.name} is muted`}>
+                        {micIcon(on)}
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
             <button
               className="side-collapse-btn"
               onClick={() => {
@@ -4307,34 +4403,6 @@ export default function Room() {
 
           {tab === 'chat' ? (
             <>
-              <div className="viewers">
-                {users.map((u) => {
-                  const isMe = u.id === meId;
-                  const on = isMe ? micOn : !!peerVoice[u.id];
-                  const speaking = !!speakers[u.id];
-                  return (
-                    <span key={u.id} className={'viewer' + (isMe ? ' me' : '')}>
-                      <span className={'avatar' + (speaking ? ' speaking' : '')} style={{ background: u.color }}>{u.name[0].toUpperCase()}</span>
-                      {u.name}
-                      {isMe ? (
-                        <button
-                          type="button"
-                          className={'mic-btn' + (on ? ' on' : '')}
-                          onClick={toggleMic}
-                          title={on ? 'Mute your mic' : 'Unmute your mic'}
-                        >
-                          {micIcon(on)}
-                        </button>
-                      ) : (
-                        <span className={'mic-btn mic-state' + (on ? ' on' : '')} title={on ? `${u.name} is on mic` : `${u.name} is muted`}>
-                          {micIcon(on)}
-                        </span>
-                      )}
-                    </span>
-                  );
-                })}
-              </div>
-
               <div className="chat" ref={chatScrollRef}>
                 {messages.filter((m) => !(m.system && (m.text?.includes('left') || m.text?.includes('disconnected')))).length === 0 ? (
                   <div className="chat-empty">
@@ -4446,7 +4514,7 @@ export default function Room() {
                 })()}
               </div>
 
-              <div className="reaction-bar">
+              <div className={'reaction-bar chat-reactions' + (reactTrayOpen ? ' open' : '')}>
                 {['🍿', '😂', '🔥', '😱', '💀', '❤️', '🤌', '👀'].map((emoji) => {
                   const appleUrl = getAppleEmojiUrl(emoji);
                   return (
@@ -4560,6 +4628,15 @@ export default function Room() {
                 )}
                 <button
                   type="button"
+                  className={'chat-emoji-toggle chat-react-toggle' + (reactTrayOpen ? ' active' : '')}
+                  onClick={() => setReactTrayOpen((v) => !v)}
+                  aria-expanded={reactTrayOpen}
+                  title="Quick reactions"
+                >
+                  <EmojiImg char="🍿" size={17} />
+                </button>
+                <button
+                  type="button"
                   className={'chat-emoji-toggle' + (emojiPickerOpen && emojiTarget === 'chat' ? ' active' : '')}
                   onClick={() => {
                     setEmojiTarget('chat');
@@ -4607,86 +4684,72 @@ export default function Room() {
             </>
           ) : (
             <div className="queue-container">
-              <div className="queue-mode-switch">
-                <button
-                  type="button"
-                  className={'q-mode-btn' + (queueTabMode === 'search' ? ' active' : '')}
-                  onClick={() => setQueueTabMode('search')}
-                >
-                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-                  Search Videos
-                </button>
-                <button
-                  type="button"
-                  className={'q-mode-btn' + (queueTabMode === 'url' ? ' active' : '')}
-                  onClick={() => setQueueTabMode('url')}
-                >
-                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                  Paste Link
-                </button>
-              </div>
-
-              {queueTabMode === 'search' ? (
-                <div className="queue-search-section">
-                  <div className="sidebar-platform-tabs">
+              <div className="queue-toolbar">
+                {queueTabMode === 'search' ? (
+                  <div className="seg-control" role="tablist" aria-label="Search source">
                     <button
                       type="button"
-                      className={'sidebar-platform-tab movies' + (searchPlatform === 'tmdb' ? ' active' : '')}
+                      role="tab"
+                      aria-selected={searchPlatform === 'tmdb'}
+                      className={'seg-btn' + (searchPlatform === 'tmdb' ? ' active' : '')}
                       onClick={() => {
                         setSearchPlatform('tmdb');
                         executeSearch(ytSearchQuery, 'tmdb');
                       }}
                     >
-                      🎬 Movies & Shows
+                      Movies &amp; TV
                     </button>
                     <button
                       type="button"
-                      className={'sidebar-platform-tab' + (searchPlatform === 'youtube' ? ' active' : '')}
+                      role="tab"
+                      aria-selected={searchPlatform === 'youtube'}
+                      className={'seg-btn' + (searchPlatform === 'youtube' ? ' active' : '')}
                       onClick={() => {
                         setSearchPlatform('youtube');
                         if (ytSearchQuery) executeSearch(ytSearchQuery, 'youtube');
                       }}
                     >
-                      🔴 YouTube
+                      YouTube
                     </button>
                     {adultMode && (
                       <button
                         type="button"
-                        className={'sidebar-platform-tab' + (searchPlatform === 'ph' ? ' active' : '')}
+                        role="tab"
+                        aria-selected={searchPlatform === 'ph'}
+                        className={'seg-btn' + (searchPlatform === 'ph' ? ' active' : '')}
                         onClick={() => {
                           setSearchPlatform('ph');
                           if (ytSearchQuery) executeSearch(ytSearchQuery, 'ph');
                         }}
                       >
-                        🔞 Pornhub
+                        18+
                       </button>
                     )}
                   </div>
+                ) : (
+                  <span className="queue-toolbar-label">Add by link</span>
+                )}
+                <button
+                  type="button"
+                  className={'qt-icon-btn' + (queueTabMode === 'url' ? ' active' : '')}
+                  onClick={() => setQueueTabMode(queueTabMode === 'url' ? 'search' : 'url')}
+                  aria-pressed={queueTabMode === 'url'}
+                  title={queueTabMode === 'url' ? 'Back to search' : 'Paste a link instead'}
+                >
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                </button>
+                <button
+                  type="button"
+                  className="qt-icon-btn"
+                  onClick={() => setYtSearchModalOpen(true)}
+                  title="Open the full search window"
+                >
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                </button>
+              </div>
 
-                  {searchPlatform === 'tmdb' && (
-                    <div className="sidebar-subfilters">
-                      {[
-                        { id: 'all', label: '🌟 All' },
-                        { id: 'movie', label: '🎬 Movies' },
-                        { id: 'tv', label: '📺 Series' },
-                        { id: 'anime', label: '⛩️ Anime' },
-                        { id: 'kdrama', label: '🌸 K-Drama' },
-                      ].map((f) => (
-                        <button
-                          key={f.id}
-                          type="button"
-                          className={'sidebar-filter-chip' + (tmdbFilter === f.id ? ' active' : '')}
-                          onClick={() => {
-                            setTmdbFilter(f.id);
-                            executeSearch(ytSearchQuery, 'tmdb', f.id);
-                          }}
-                        >
-                          {f.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
+              {queueTabMode === 'search' ? (
+                <div className="queue-search-section">
                   <div className="queue-search-input-wrap">
                     <input
                       type="text"
@@ -4720,14 +4783,30 @@ export default function Room() {
                       </button>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    className="queue-modal-trigger-btn"
-                    onClick={() => setYtSearchModalOpen(true)}
-                  >
-                    <span>Browse in full search window</span>
-                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
-                  </button>
+
+                  {searchPlatform === 'tmdb' && (
+                    <div className="sidebar-subfilters">
+                      {[
+                        { id: 'all', label: 'All' },
+                        { id: 'movie', label: 'Movies' },
+                        { id: 'tv', label: 'Series' },
+                        { id: 'anime', label: 'Anime' },
+                        { id: 'kdrama', label: 'K-Drama' },
+                      ].map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          className={'sidebar-filter-chip' + (tmdbFilter === f.id ? ' active' : '')}
+                          onClick={() => {
+                            setTmdbFilter(f.id);
+                            executeSearch(ytSearchQuery, 'tmdb', f.id);
+                          }}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {ytSearchResults.length > 0 && (
                     <div className="queue-search-results">
@@ -4920,7 +4999,7 @@ export default function Room() {
                 )}
               </div>
 
-              <div className="reaction-bar" style={{ marginTop: 'auto', borderTop: '1px solid var(--border)' }}>
+              <div className="reaction-bar queue-reactions">
                 {['🍿', '😂', '🔥', '😱', '💀', '❤️', '🤌', '👀'].map((emoji) => {
                   const appleUrl = getAppleEmojiUrl(emoji);
                   return (
