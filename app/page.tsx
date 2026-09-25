@@ -269,6 +269,37 @@ export default function LandingPage(): React.JSX.Element {
         </div>
       </section>
 
+      <section className="lp-section" id="sources">
+        <div className="lp-section-head">
+          <p className="lp-section-eyebrow">Three ways to watch</p>
+          <h2 className="lp-section-title">Bring a file, or just pick something</h2>
+        </div>
+        <div className="lp-sources">
+          <article className="lp-source">
+            <div className="lp-source-icon"><EmojiImg char="💾" size={22} /></div>
+            <h3 className="lp-source-title">Your own files</h3>
+            <p className="lp-source-desc">Everyone opens their copy of the same MP4, MKV or WebM. Full quality, and the video itself never touches our servers.</p>
+            <ul className="lp-source-tags"><li>MP4 · MKV · WebM</li><li>Embedded subs</li><li>Audio tracks</li></ul>
+          </article>
+          <article className="lp-source">
+            <div className="lp-source-icon"><EmojiImg char="🎬" size={22} /></div>
+            <h3 className="lp-source-title">Movies &amp; series</h3>
+            <p className="lp-source-desc">Search movies, series, anime and K-dramas and stream them together — no download. Browse seasons and jump to any episode.</p>
+            <ul className="lp-source-tags"><li>Trending &amp; search</li><li>Episodes</li><li>Next-episode</li></ul>
+            <p className="lp-source-note">
+              <span aria-hidden="true">ⓘ</span>
+              Streams come from third-party sources, so a title can occasionally be unavailable or slow to load. If one doesn’t play, try another server or title.
+            </p>
+          </article>
+          <article className="lp-source">
+            <div className="lp-source-icon"><EmojiImg char="▶️" size={22} /></div>
+            <h3 className="lp-source-title">YouTube</h3>
+            <p className="lp-source-desc">Search YouTube or paste any link. Trailers, music, podcasts — synced for the room, with captions and quality you pick.</p>
+            <ul className="lp-source-tags"><li>Search or paste</li><li>Captions</li><li>Shared queue</li></ul>
+          </article>
+        </div>
+      </section>
+
       <section className="lp-section" id="features">
         <div className="lp-section-head">
           <p className="lp-section-eyebrow">Why ReelSync</p>

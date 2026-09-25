@@ -5452,7 +5452,7 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   transform: translateY(-1px);
 }
 
-.embed-btn.resume {
+.embed-btn.embed-resume {
   background: linear-gradient(135deg, #16A34A, #4ADE80);
   color: #06120A;
   font-size: 14px;
@@ -5460,7 +5460,7 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   padding: 12px 24px;
   box-shadow: 0 4px 16px rgba(34, 197, 94, 0.4);
 }
-.embed-btn.resume:hover {
+.embed-btn.embed-resume:hover {
   background: linear-gradient(135deg, #15803D, #22C55E);
   transform: translateY(-1px);
   box-shadow: 0 6px 20px rgba(34, 197, 94, 0.6);
@@ -7024,3 +7024,109 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   .tmdb-ep-actions .btn { padding: 6px 8px; font-size: 11.5px; }
 }
 .tmdb-genre-tag { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.12); color: var(--dim); }
+
+/* ── player fullscreen that keeps ReelSync overlays (chat pop-ups, reactions) ── */
+.screen-fs-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fff;
+  opacity: 0.85;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.screen-fs-btn:hover { opacity: 1; background: rgba(0, 0, 0, 0.8); }
+
+/* the stream's info bar: leave room for the fullscreen button, and only
+   its buttons take taps so the player underneath stays usable */
+.room-tv-overlay { padding-right: 60px; pointer-events: none; }
+.room-tv-overlay button { pointer-events: auto; }
+@media (hover: none) {
+  .room-tv-overlay { opacity: 1; height: 50px; }
+  .room-tv-overlay .yt-top-title-wrap { display: none; }
+  .room-tv-overlay .yt-top-actions { margin-left: 0; gap: 6px; }
+}
+
+/* iPhone fallback: fill the viewport instead of the (unavailable) Fullscreen API */
+.screen.pseudo-fs {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 2000;
+  width: 100vw;
+  height: 100vh !important;
+  height: 100dvh !important;
+  max-height: none !important;
+  aspect-ratio: auto !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+.screen.pseudo-fs .screen-fs-btn { top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); }
+.screen.pseudo-fs .floating-bubbles-layer { bottom: max(16px, env(safe-area-inset-bottom)); }
+
+/* ── landing: three ways to watch ── */
+.lp-sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.lp-source {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px;
+  background: var(--theme-surface);
+  border: 1px solid var(--theme-border);
+  border-radius: var(--radius-lg);
+}
+.lp-source-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  margin-bottom: 4px;
+}
+.lp-source-title { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+.lp-source-desc { margin: 0; font-size: 14px; line-height: 1.55; color: var(--theme-text-muted); }
+.lp-source-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0; padding: 0; list-style: none; }
+.lp-source-tags li {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-surface-2);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--theme-text-muted);
+}
+.lp-source-note {
+  display: flex;
+  gap: 8px;
+  margin: auto 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--theme-text-muted);
+}
+.lp-source-note span { color: var(--warn); font-weight: 700; }
+@media (max-width: 960px) { .lp-sources { grid-template-columns: 1fr; } }
+@media (max-width: 640px) {
+  .lp-sources { gap: 10px; }
+  .lp-source { padding: 16px; gap: 8px; border-radius: var(--radius); }
+  .lp-source-icon { width: 38px; height: 38px; border-radius: 10px; }
+  .lp-source-title { font-size: 16px; }
+  .lp-source-desc { font-size: 13.5px; }
+}
+.embed-paused-overlay { background: rgba(0, 0, 0, 0.6); }
+.embed-paused-card { background: var(--surface); border-color: var(--border-mid); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6); }
+.embed-paused-card .embed-btn { margin: 0 auto; }

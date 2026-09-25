@@ -163,6 +163,11 @@ export default function Room() {
   const [audioPanelOpen, setAudioPanelOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // iPhone Safari can't fullscreen a <div>, only its own native video player
+  // (which hides our chat/reaction overlays), so we fill the viewport instead.
+  const [pseudoFs, setPseudoFs] = useState(false);
+  const pseudoFsRef = useRef(false);
+  const iframeFsTipShownRef = useRef(false);
   const [pipOn, setPipOn] = useState(false);
   const [pipSupported, setPipSupported] = useState(false);
   const [zoomUiVisible, setZoomUiVisible] = useState(false);
@@ -1355,7 +1360,7 @@ export default function Room() {
       }
       // transient popup, bottom-right of the screen — the way you actually
       // notice a text mid-movie (fullscreen / chat collapsed / phone)
-      if (!msg.system && (!chatOpenRef.current || document.fullscreenElement || window.innerWidth <= 768)) {
+      if (!msg.system && (!chatOpenRef.current || document.fullscreenElement || pseudoFsRef.current || window.innerWidth <= 768)) {
         const bId = Date.now() + Math.random();
         setFloatingBubbles((prev) => [...prev.slice(-2), { id: bId, text: msg.text, name: msg.name, color: msg.color }]);
         setTimeout(() => {
@@ -1633,8 +1638,15 @@ export default function Room() {
     } catch { /* ignore */ }
 
     const onFsChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-      if (!document.fullscreenElement) setZoomUiVisible(false);
+      const el = document.fullscreenElement;
+      setIsFullscreen(!!el);
+      if (!el) setZoomUiVisible(false);
+      // The stream's own fullscreen button fullscreens just its iframe, which
+      // leaves our chat pop-ups and reactions outside. Point people at ours.
+      if (el && el.tagName === 'IFRAME' && !iframeFsTipShownRef.current) {
+        iframeFsTipShownRef.current = true;
+        setTimeout(() => toast('Tip: use ReelSync’s ⛶ button (top-right of the player) to keep chat pop-ups visible in fullscreen'), 0);
+      }
     };
     document.addEventListener('fullscreenchange', onFsChange);
 
@@ -1675,6 +1687,7 @@ export default function Room() {
     const onResize = () => maybeClearUnread();
     // hotkeys: space = play/pause, left/right = seek 5s
     const onKey = (e) => {
+      if (e.key === 'Escape' && pseudoFsRef.current) { setPseudo(false); return; }
       const tag = (e.target && e.target.tagName) || '';
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -3287,9 +3300,27 @@ export default function Room() {
     setGifPickerOpen(false);
   };
 
+  const setPseudo = (on) => {
+    pseudoFsRef.current = on;
+    setPseudoFs(on);
+  };
+
   const fullscreen = () => {
-    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
-    if (screenRef.current.requestFullscreen) screenRef.current.requestFullscreen().catch(() => {});
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      try { const p = exit.call(document); if (p && p.catch) p.catch(() => {}); } catch { /* ignore */ }
+      return;
+    }
+    if (pseudoFsRef.current) { setPseudo(false); return; }
+    const el = screenRef.current;
+    const req = el && (el.requestFullscreen || el.webkitRequestFullscreen);
+    if (!req) { setPseudo(true); return; }
+    try {
+      const p = req.call(el);
+      if (p && p.catch) p.catch(() => setPseudo(true));
+    } catch {
+      setPseudo(true);
+    }
   };
 
   const togglePip = async () => {
@@ -3537,7 +3568,7 @@ export default function Room() {
             </button>
           )}
 
-          <div className="screen" ref={screenRef}>
+          <div className={'screen' + (pseudoFs ? ' pseudo-fs' : '')} ref={screenRef}>
             <video
               ref={videoRef}
               playsInline
@@ -3548,6 +3579,22 @@ export default function Room() {
             ></video>
             <audio ref={extAudioRef} playsInline style={{ display: 'none' }}></audio>
             <div ref={voiceAudioRef} style={{ display: 'none' }} aria-hidden="true"></div>
+
+            {(source?.type === 'embed' || pseudoFs) && (
+              <button
+                type="button"
+                className={'screen-fs-btn' + (source?.type === 'embed' ? ' always' : '')}
+                onClick={fullscreen}
+                title={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Fullscreen (keeps chat pop-ups visible)'}
+                aria-label={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Fullscreen'}
+              >
+                {isFullscreen || pseudoFs ? (
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M15 20v-5h5M9 20v-5H4" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                )}
+              </button>
+            )}
 
             {source?.type === 'embed' && (
               <div className="web-embed-wrap" style={{ transform: `scale(${zoom})` }}>
@@ -3704,7 +3751,7 @@ export default function Room() {
                       </p>
                       <button
                         type="button"
-                        className="embed-btn resume"
+                        className="embed-btn embed-resume"
                         onClick={togglePlay}
                       >
                         ▶️ Resume Playback
