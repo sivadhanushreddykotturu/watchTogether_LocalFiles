@@ -360,6 +360,19 @@ function attach(io) {
         return;
       }
 
+      // A "play" while the room is already rolling carries the sender's local
+      // position — typically a late joiner still sitting near 0:00. The room
+      // doesn't need restarting; honouring it would yank everyone back.
+      if (action === 'play' && room.state.playing) return;
+
+      // Pausing freezes the room where the room is. Only trust the sender's
+      // clock when it roughly agrees with ours (a user who is still loading
+      // must not be able to pause everyone at their own 0:00).
+      if (action === 'pause' && room.state.playing) {
+        const pos = currentPosition(room.state);
+        if (Math.abs(time - pos) > 5) time = pos;
+      }
+
       room.state.time = time;
       room.state.updatedAt = Date.now();
       if (action === 'play') room.state.playing = true;
@@ -380,15 +393,14 @@ function attach(io) {
       const room = rooms.get(socket.data.room);
       if (!room) return;
       const t = Number(time) || 0;
-      if (socket.id === room.host) {
-        // Prevent fresh/buffering streams at 0s from wiping out an active room's position
-        const roomAhead = room.state.time > 5;
-        const freshZero = t < 2;
-        if (!roomAhead || !freshZero) {
-          if (t > 0 || room.state.time < 5) {
-            room.state.time = t;
-            room.state.updatedAt = Date.now();
-          }
+      // The host's heartbeat only trims clock drift (buffering stalls etc.).
+      // Real jumps arrive as explicit 'seek' events — so a host whose player is
+      // still loading, or reports a stale position, can't drag the room.
+      if (socket.id === room.host && room.state.playing && t > 0) {
+        const pos = currentPosition(room.state);
+        if (Math.abs(t - pos) <= 5) {
+          room.state.time = t;
+          room.state.updatedAt = Date.now();
         }
       }
       socket.to(room.code).emit('peer-time', { id: socket.id, time: t });
