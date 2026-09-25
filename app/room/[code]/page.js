@@ -7,7 +7,6 @@ import { v4 as uuidv4 } from 'uuid';
 import AppleEmojiPicker from '../../components/AppleEmojiPicker';
 import KlipyGifPicker from '../../components/KlipyGifPicker';
 import AuthButton from '../../components/AuthButton';
-import ThemeToggle from '../../components/ThemeToggle';
 import { getSocket } from '../../../lib/socket';
 import { detectMediaTracks, parseExternalSubtitle, parseSrtOrVtt } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
@@ -3384,11 +3383,6 @@ export default function Room() {
                   <span className={'min-switch sm' + (adultMode ? ' on' : '')} aria-hidden="true"><span className="switch-dot" /></span>
                 </button>
               )}
-
-              <div className="room-menu-row">
-                <span>Theme</span>
-                <ThemeToggle />
-              </div>
 
               <div className="room-menu-row">
                 <span>Account</span>

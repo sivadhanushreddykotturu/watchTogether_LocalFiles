@@ -3,7 +3,7 @@
    - White & Light Slate Gray Mode
    - Sleek Charcoal & Dark Zinc Mode */
 
-:root, [data-theme="dark"] {
+:root {
   /* Base surfaces */
   --bg:          #0A0D0C;
   --surface:     #121513;
@@ -81,66 +81,6 @@
   color-scheme: dark;
 }
 
-[data-theme="light"] {
-  /* Minimal White & Gray surfaces */
-  --bg:          #F8FAFC;
-  --surface:     #FFFFFF;
-  --surface-2:   #F1F5F9;
-  --surface-3:   #E7E9E2;
-  --border:      rgba(15, 23, 20, 0.08);
-  --border-mid:  rgba(15, 23, 20, 0.15);
-  --border-focus:#14532D;
-
-  /* Legacy aliases */
-  --theater:    #F7F8F3;
-  --panel:      #FFFFFF;
-  --panel-2:    #F0F2EC;
-  --line:       rgba(15, 23, 20, 0.08);
-
-  /* Accent — forest green */
-  --accent:      #15803D;
-  --accent-glow: #22C55E;
-  --accent-soft: rgba(21, 128, 61, 0.10);
-  --accent-hover:#166534;
-
-  /* Status */
-  --live:  #16A34A;
-  --warn:  #D97706;
-  --error: #DC2626;
-
-  /* Typography */
-  --ink:   #10201A;
-  --dim:   #5B6862;
-  --muted: #8A968F;
-
-  /* Theme semantic elements */
-  --theme-bg:             #F7F8F3;
-  --theme-surface:        #FFFFFF;
-  --theme-surface-2:      #F0F2EC;
-  --theme-surface-3:      #E7E9E2;
-  --theme-border:         rgba(15, 23, 20, 0.08);
-  --theme-border-subtle:  rgba(15, 23, 20, 0.04);
-  --theme-border-hover:   rgba(15, 23, 20, 0.18);
-  --theme-border-focus:   #14532D;
-  --theme-text:           #10201A;
-  --theme-text-muted:     #4B5B53;
-  --theme-text-dim:       #8A968F;
-  --theme-card-shadow:    0 16px 40px rgba(16, 32, 26, 0.06), 0 1px 3px rgba(16, 32, 26, 0.04), 0 0 0 1px rgba(16, 32, 26, 0.06);
-  --theme-btn-primary-bg: #14532D;
-  --theme-btn-primary-text:#FFFFFF;
-  --theme-btn-primary-hover:#1B6B3A;
-  --theme-input-bg:       #F0F2EC;
-  --theme-pill-bg:        rgba(20, 83, 45, 0.08);
-  --theme-pill-text:      #14532D;
-
-  /* Compatibility aliases used by later components */
-  --surface-1:     var(--surface);
-  --border-subtle: rgba(15, 23, 20, 0.04);
-  --accent-light:  #4ADE80;
-  --ink-dim:       #5B6862;
-
-  color-scheme: light;
-}
 
 /* ── smooth scrolling & font rendering ── */
 html {
@@ -4427,38 +4367,6 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   .hero-title { font-size: 38px; }
 }
 
-/* --- Theme Toggle Switcher --- */
-.theme-toggle-container {
-  display: inline-flex;
-  align-items: center;
-}
-
-.theme-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--theme-surface-2);
-  border: 1px solid var(--theme-border);
-  color: var(--theme-text);
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  user-select: none;
-}
-
-.theme-toggle-btn:hover {
-  background: var(--theme-surface-3);
-  border-color: var(--theme-border-hover);
-  transform: translateY(-1px);
-}
-
-.theme-toggle-btn:active {
-  transform: translateY(0);
-}
-
 /* --- Minimal Tabs & Pills --- */
 .tab-pill {
   background: var(--theme-pill-bg);
@@ -5990,7 +5898,6 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 /* phones: copy → form immediately; features become compact rows */
 @media (max-width: 640px) {
   .lp-nav { padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top)); }
-  .lp-nav .theme-toggle-btn { padding: 6px 10px; }
   .lp-hero { padding: 28px 16px 32px; gap: 24px; }
   .lp-eyebrow-pill { margin-bottom: 14px; }
   .lp-hero-title { font-size: 48px; margin-bottom: 14px; }

@@ -28,10 +28,7 @@ export const viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: [
-    { media: '(prefers-color-scheme: dark)', color: '#0A0D0C' },
-    { media: '(prefers-color-scheme: light)', color: '#F7F8F3' },
-  ],
+  themeColor: '#0A0D0C',
 };
 
 export default function RootLayout({
@@ -41,13 +38,8 @@ export default function RootLayout({
 }): React.JSX.Element {
   return (
     <ClerkProvider>
-      <html lang="en" suppressHydrationWarning className={`${display.variable} ${body.variable} ${mono.variable}`}>
+      <html lang="en" data-theme="dark" suppressHydrationWarning className={`${display.variable} ${body.variable} ${mono.variable}`}>
         <body>
-          <script
-            dangerouslySetInnerHTML={{
-              __html: `(function(){try{var t=localStorage.getItem('reelsync:theme')||'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`,
-            }}
-          />
           {children}
         </body>
       </html>

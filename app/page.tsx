@@ -4,7 +4,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser, SignInButton } from '@clerk/nextjs';
 import { getSocket } from '../lib/socket';
-import { ThemeToggle } from './components/ThemeToggle';
 import { EmojiImg } from './components/AppleEmoji';
 
 export default function LandingPage(): React.JSX.Element {
@@ -136,7 +135,6 @@ export default function LandingPage(): React.JSX.Element {
           <span>REELSYNC</span>
         </div>
         <div className="lp-nav-actions">
-          <ThemeToggle />
           <SignInButton mode="modal">
             <button type="button" className="min-btn ghost lp-nav-signin">Sign in</button>
           </SignInButton>

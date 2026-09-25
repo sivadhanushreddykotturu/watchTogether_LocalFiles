@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { useUser, useAuth, UserButton } from '@clerk/nextjs';
 import { getSocket } from '../../lib/socket';
 import { UserRoom } from '../../types/realtime';
-import { ThemeToggle } from '../components/ThemeToggle';
 import { EmojiImg } from '../components/AppleEmoji';
 
 export default function DashboardPage(): React.JSX.Element {
@@ -152,7 +151,6 @@ export default function DashboardPage(): React.JSX.Element {
           <span>REELSYNC</span>
         </button>
         <div className="lp-nav-actions">
-          <ThemeToggle />
           <div className="app-nav-user">
             <UserButton />
             <span className="app-nav-name">{displayName}</span>
