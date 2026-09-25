@@ -204,6 +204,38 @@ async function main() {
   s.emit('leave-room');
   s.close();
 
+  // --- regression: a late joiner (or reloading host) must not drag the room back ---
+  const h = io(URL), w = io(URL), late = io(URL);
+  await wait(300);
+  const lr = await new Promise((res) => h.emit('create-room', 'Host', res));
+  await new Promise((res) => w.emit('join-room', { code: lr.code, name: 'Watcher' }, res));
+  h.emit('playback', { action: 'seek', time: 2400 });
+  h.emit('playback', { action: 'play', time: 2400 });
+  await wait(200);
+  const wSeen = [];
+  w.on('playback', (m) => wSeen.push(m));
+  await new Promise((res) => late.emit('join-room', { code: lr.code, name: 'Late' }, res));
+  late.emit('playback', { action: 'play', time: 0.4 });
+  await wait(200);
+  let at = await new Promise((res) => w.emit('time-update', 2400, res));
+  check('late joiner "play" at 0:00 is not broadcast', wSeen.length === 0);
+  check('late joiner "play" at 0:00 keeps room position', at.expected > 2399);
+
+  late.emit('playback', { action: 'pause', time: 1.2 });
+  await wait(200);
+  at = await new Promise((res) => w.emit('time-update', 2400, res));
+  check('pause from a far-off client freezes at room position', at.playing === false && at.expected > 2399);
+
+  h.emit('playback', { action: 'play', time: at.expected });
+  await wait(100);
+  await new Promise((res) => h.emit('time-update', 4.2, res));
+  at = await new Promise((res) => w.emit('time-update', 2400, res));
+  check('host heartbeat far from room position is ignored', at.expected > 2399);
+  await new Promise((res) => h.emit('time-update', at.expected + 1, res));
+  at = await new Promise((res) => w.emit('time-update', 2400, res));
+  check('host heartbeat still trims small drift', at.expected > 2400);
+  h.close(); w.close(); late.close();
+
   a.close(); b.close(); c.close(); e.close(); e2.close();
   console.log(failures === 0 ? '\nAll tests passed.' : `\n${failures} test(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
