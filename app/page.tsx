@@ -108,43 +108,50 @@ export default function LandingPage(): React.JSX.Element {
     );
   }
 
+  const features = [
+    { icon: '🔒', title: 'Files stay local', desc: 'Everyone streams their own copy of the file straight from their device — nothing is uploaded to a server.' },
+    { icon: '⏱️', title: 'Frame-perfect sync', desc: 'Play, pause and seek propagate instantly, so nobody is ever a beat behind the group.' },
+    { icon: '💬', title: 'Live chat & reactions', desc: 'React in real time, drop GIFs and emoji, and keep the conversation going alongside the film.' },
+    { icon: '🎬', title: 'Subtitles built in', desc: 'Load your own subtitle track and adjust timing per-viewer without breaking sync for anyone else.' },
+    { icon: '🖥️', title: 'Screen & tab share', desc: 'No local file? Share a browser tab or your whole screen and watch that together instead.' },
+    { icon: '🔑', title: 'Host controls', desc: 'Lock playback control to the host, approve knock requests, and manage who’s in the room.' },
+  ];
+
   return (
-    <main className="minimal-landing">
-      <div className="minimal-container" style={{ maxWidth: '520px' }}>
-        {/* Top Header */}
-        <header className="minimal-header">
-          <div className="minimal-brand">
-            <span className="mb-icon">✦</span>
-            <span>REELSYNC</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <ThemeToggle />
-            <SignInButton mode="modal">
-              <button type="button" className="min-btn ghost" style={{ fontSize: '13px', padding: '6px 14px' }}>
-                Sign in
-              </button>
-            </SignInButton>
-          </div>
-        </header>
+    <main className="lp-page">
+      {/* Nav */}
+      <header className="lp-nav">
+        <div className="minimal-brand">
+          <span className="mb-icon">✦</span>
+          <span>REELSYNC</span>
+        </div>
+        <div className="lp-nav-actions">
+          <ThemeToggle />
+          <SignInButton mode="modal">
+            <button type="button" className="min-btn ghost" style={{ fontSize: '13px', padding: '8px 16px' }}>
+              Sign in
+            </button>
+          </SignInButton>
+        </div>
+      </header>
 
-        {/* Main Landing Hero Card */}
+      {/* Hero */}
+      <section className="lp-hero">
+        <span className="lp-hero-badge tab-pill" style={{ letterSpacing: '0.12em', color: 'var(--accent)', borderColor: 'var(--accent-soft)', background: 'var(--accent-soft)' }}>
+          ✦ SYNCED STREAMING
+        </span>
+        <h1 className="hero-title">
+          Watch Together<br />
+          in <span className="hero-accent">Lockstep</span>
+        </h1>
+        <p className="lp-hero-sub">
+          Everyone opens their own copy of the same video — ReelSync keeps play, pause and seek in perfect sync across every screen. Your files never leave your device.
+        </p>
+      </section>
+
+      {/* CTA card */}
+      <div className="lp-cta-wrap">
         <div className="minimal-card">
-          <div className="minimal-hero" style={{ textAlign: 'left' }}>
-            <div style={{ display: 'inline-flex', marginBottom: '14px' }}>
-              <span className="tab-pill" style={{ letterSpacing: '0.12em', color: 'var(--accent)', borderColor: 'var(--accent-soft)', background: 'var(--accent-soft)' }}>
-                ✦ SYNCED STREAMING
-              </span>
-            </div>
-            <h1 className="hero-title">
-              Watch Together<br />
-              in <span className="hero-accent">Lockstep</span>
-            </h1>
-            <p className="minimal-desc" style={{ maxWidth: '400px' }}>
-              Everyone opens the same video — ReelSync keeps play, pause and seek in perfect sync. Local files never leave your device.
-            </p>
-          </div>
-
-          {/* Guest-first: one name field powers both actions */}
           <div className="minimal-form">
             <div className="min-field">
               <label className="min-label" htmlFor="guest-name">Your name</label>
@@ -221,11 +228,56 @@ export default function LandingPage(): React.JSX.Element {
             </button>
           </SignInButton>
         </div>
-
-        <footer className="minimal-footer">
-          Peer-synchronized streaming. Local video files remain on your device.
-        </footer>
       </div>
+
+      {/* Features */}
+      <section className="lp-section" id="features">
+        <div className="lp-section-head">
+          <p className="lp-section-eyebrow">Why ReelSync</p>
+          <h2 className="lp-section-title">Built for movie nights, not meetings</h2>
+          <p className="lp-section-desc">
+            No uploads, no transcoding queue, no account required to get started — just a room code and a shared moment.
+          </p>
+        </div>
+        <div className="lp-feature-grid">
+          {features.map((f) => (
+            <div className="lp-feature-card" key={f.title}>
+              <div className="lp-feature-icon"><EmojiImg char={f.icon} size={20} /></div>
+              <h3 className="lp-feature-title">{f.title}</h3>
+              <p className="lp-feature-desc">{f.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* How it works */}
+      <section className="lp-section" style={{ paddingTop: 0 }}>
+        <div className="lp-section-head">
+          <p className="lp-section-eyebrow">How it works</p>
+          <h2 className="lp-section-title">Up and running in three steps</h2>
+        </div>
+        <div className="lp-steps">
+          <div className="lp-step">
+            <span className="lp-step-num">1</span>
+            <h3 className="lp-step-title">Start a party</h3>
+            <p className="lp-step-desc">Enter your name and start an instant room — no sign-up needed.</p>
+          </div>
+          <div className="lp-step">
+            <span className="lp-step-num">2</span>
+            <h3 className="lp-step-title">Share the code</h3>
+            <p className="lp-step-desc">Send your 5-letter room code to friends so they can join from any device.</p>
+          </div>
+          <div className="lp-step">
+            <span className="lp-step-num">3</span>
+            <h3 className="lp-step-title">Press play together</h3>
+            <p className="lp-step-desc">Open the same file on each device and ReelSync keeps everyone in lockstep.</p>
+          </div>
+        </div>
+      </section>
+
+      <footer className="lp-footer">
+        Peer-synchronized streaming. Local video files remain on your device.
+      </footer>
     </main>
   );
 }

@@ -3262,7 +3262,7 @@ export default function Room() {
           </button>
         </div>
 
-        <div className="room-live-cluster">
+        <div className="room-live-cluster desktop-only">
           <span className="dash-live-pill">
             <span className="live-pulse-dot" /> LIVE
           </span>
@@ -3277,19 +3277,19 @@ export default function Room() {
         </div>
 
         {isHost && (
-          <span className="host-badge" title="You are the room host">
+          <span className="host-badge desktop-only" title="You are the room host">
             <EmojiImg char="👑" size={11} /> HOST
           </span>
         )}
 
         {pingMs !== null && (
-          <span className={`ping-pill ${pingMs < 80 ? 'green' : pingMs < 200 ? 'yellow' : 'red'}`} title={`Latency: ${pingMs}ms`}>
+          <span className={`ping-pill desktop-only ${pingMs < 80 ? 'green' : pingMs < 200 ? 'yellow' : 'red'}`} title={`Latency: ${pingMs}ms`}>
             <EmojiImg char={pingMs < 80 ? '🟢' : pingMs < 200 ? '🟡' : '🔴'} size={9} /> {pingMs}ms
           </span>
         )}
 
         {fileMatch && (
-          <span className={'file-match-badge' + (fileMatch.match ? '' : ' mismatch')} title={fileMatch.match ? 'Exact file match across participants' : `Duration differs by ${fileMatch.delta}s`}>
+          <span className={'file-match-badge desktop-only' + (fileMatch.match ? '' : ' mismatch')} title={fileMatch.match ? 'Exact file match across participants' : `Duration differs by ${fileMatch.delta}s`}>
             {fileMatch.match ? '✓ Same File' : `⚠️ ${fileMatch.delta}s diff`}
           </span>
         )}

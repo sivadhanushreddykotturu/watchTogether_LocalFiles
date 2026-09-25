@@ -11,6 +11,27 @@ export const metadata = {
   title: 'ReelSync — watch local files together',
   description: 'Everyone opens their own copy of the file. ReelSync keeps every screen in lockstep.',
   referrer: 'no-referrer',
+  manifest: '/manifest.json',
+  icons: {
+    icon: '/icon.svg',
+    apple: '/icon.svg',
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'ReelSync',
+  },
+  formatDetection: { telephone: false },
+};
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: '#0A0D0C' },
+    { media: '(prefers-color-scheme: light)', color: '#F7F8F3' },
+  ],
 };
 
 export default function RootLayout({

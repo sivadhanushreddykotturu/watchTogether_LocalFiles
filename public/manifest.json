@@ -1,0 +1,14 @@
+{
+  "name": "ReelSync",
+  "short_name": "ReelSync",
+  "description": "Watch local video files together — synced playback and chat.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0A0D0C",
+  "theme_color": "#0A0D0C",
+  "orientation": "any",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
