@@ -213,6 +213,7 @@ export default function Room() {
   const peersRef = useRef(new Map());
   const guardRef = useRef({ play: 0, pause: 0, seek: 0 });
   const lastLocalPauseRef = useRef(0);
+  const visibleAtRef = useRef(0);
   const lastLocalSeekRef = useRef(0); // grace window so drift correction can't yank back a fresh local seek
   const wakeLockRef = useRef(null);
   const heartbeatRef = useRef(null);
@@ -552,6 +553,20 @@ export default function Room() {
 
   const setStateLatest = (playing, time) => {
     latestStateRef.current = { playing, time, at: Date.now() };
+  };
+
+  // Players auto-pause (and resume) when their tab is backgrounded. Those are
+  // the browser's doing, not a viewer's — they must never reach the room.
+  const inTabSwitch = () =>
+    typeof document !== 'undefined' &&
+    (document.visibilityState !== 'visible' || Date.now() - visibleAtRef.current < 1500);
+
+  // latestStateRef is a snapshot; a file that took 6s to load must land where
+  // the room is *now*, not where it was when the snapshot was taken.
+  const projectedState = () => {
+    const s = latestStateRef.current;
+    if (!s.playing) return { playing: false, time: s.time };
+    return { playing: true, time: s.time + (Date.now() - s.at) / 1000 };
   };
 
   // ---------- volume control ----------
@@ -1139,6 +1154,19 @@ export default function Room() {
       if (guardRef.current.play > 0) { guardRef.current.play--; return; }
       if (userIntentRef.current) {
         userIntentRef.current = false;
+        // Room already rolling: this is a catch-up (late joiner, autoplay
+        // blocked), not a room action. Jump to the room instead of dragging
+        // the room to us.
+        if (latestStateRef.current.playing) {
+          const target = projectedState().time;
+          if (Math.abs(video.currentTime - target) > 1) {
+            guardRef.current.seek++;
+            video.currentTime = target;
+            if (extAudioRef.current && extAudioRef.current.src) extAudioRef.current.currentTime = target;
+          }
+          setResumeOpen(false);
+          return;
+        }
         emitPlayback('play');
       }
     };
@@ -1625,6 +1653,21 @@ export default function Room() {
     // --- page-level listeners ---
     const onVisibility = () => {
       if (document.visibilityState !== 'visible') return;
+      visibleAtRef.current = Date.now();
+      // If the browser paused our player while hidden, quietly rejoin the room.
+      const room = projectedState();
+      if (room.playing) {
+        const t = sourceRef.current?.type;
+        if (t === 'embed' && !embedPlayingRef.current) {
+          guardRef.current.seek++;
+          seekEmbed(room.time);
+          guardRef.current.play++;
+          playEmbed();
+          setEmbedRoomPaused(false);
+        } else if (t === 'youtube' ? !ytPlayingRef.current : (fileLoadedRef.current && videoRef.current?.paused)) {
+          applyState(room);
+        }
+      }
       beat();
       ensureWakeLock();
       maybeClearUnread();
@@ -1765,6 +1808,15 @@ export default function Room() {
             }
           }
         }
+      } else if ((eventName === 'play' || eventName === 'pause') && inTabSwitch()) {
+        if (eventName === 'play' && latestStateRef.current?.playing === false) {
+          guardRef.current.pause++;
+          pauseEmbed();
+          return;
+        }
+        embedPlayingRef.current = eventName === 'play';
+        setPlaying(eventName === 'play');
+        return;
       } else if (eventName === 'play') {
         embedPlayingRef.current = true;
         // Break the bounce-back loop: if the room is PAUSED, do NOT let un-paused background iframe resume the room!
@@ -1852,7 +1904,6 @@ export default function Room() {
       video.removeEventListener('pause', onPause);
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('ended', onEnded);
-      video.removeEventListener('ratechange', onRateChange);
       video.removeEventListener('timeupdate', onTime);
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
       document.removeEventListener('visibilitychange', onVisibility);
@@ -1956,12 +2007,14 @@ export default function Room() {
               setSyncStatus(true);
               ensureWakeLock();
               if (guardRef.current.play > 0) { guardRef.current.play--; return; }
+              if (inTabSwitch()) return;
               emitPlayback('play');
             } else if (e.data === S.PAUSED) {
               ytPlayingRef.current = false;
               setPlaying(false);
               releaseWakeLock();
               if (guardRef.current.pause > 0) { guardRef.current.pause--; return; }
+              if (inTabSwitch()) return;
               lastLocalPauseRef.current = Date.now();
               emitPlayback('pause');
             } else if (e.data === S.ENDED) {
@@ -2458,7 +2511,13 @@ export default function Room() {
     setPlayDisabled(false);
     setPickerOpen(false);
     toast(`Loaded “${file.name}”`);
-    applyState(latestStateRef.current); // line up with the room
+    // Seeking before metadata exists can be dropped by the browser (leaving
+    // us at 0:00), so line up with the room once the duration is known.
+    if (v && v.readyState < 1) {
+      v.addEventListener('loadedmetadata', () => applyState(projectedState()), { once: true });
+    } else {
+      applyState(projectedState());
+    }
 
     // Auto-detect embedded subtitles & audio tracks from video file
     try {
@@ -2749,6 +2808,16 @@ export default function Room() {
         setYtSearching(false);
       }
     }
+  };
+
+  // Results are shared across sources, so switching must drop the old list
+  // (and cancel any in-flight request) — YouTube stays empty until you type.
+  const switchSearchPlatform = (platform) => {
+    setSearchPlatform(platform);
+    setYtSearchResults([]);
+    setYtSearchError('');
+    clearTimeout(searchDebounceRef.current);
+    executeSearch(ytSearchQuery, platform);
   };
 
   const handleSearchInputChange = (text) => {
@@ -3047,7 +3116,7 @@ export default function Room() {
 
   const resume = () => {
     setResumeOpen(false);
-    applyState(latestStateRef.current);
+    applyState(projectedState());
   };
 
   const handleStartReply = (msg) => {
@@ -4692,10 +4761,7 @@ export default function Room() {
                       role="tab"
                       aria-selected={searchPlatform === 'tmdb'}
                       className={'seg-btn' + (searchPlatform === 'tmdb' ? ' active' : '')}
-                      onClick={() => {
-                        setSearchPlatform('tmdb');
-                        executeSearch(ytSearchQuery, 'tmdb');
-                      }}
+                      onClick={() => switchSearchPlatform('tmdb')}
                     >
                       Movies &amp; TV
                     </button>
@@ -4704,10 +4770,7 @@ export default function Room() {
                       role="tab"
                       aria-selected={searchPlatform === 'youtube'}
                       className={'seg-btn' + (searchPlatform === 'youtube' ? ' active' : '')}
-                      onClick={() => {
-                        setSearchPlatform('youtube');
-                        if (ytSearchQuery) executeSearch(ytSearchQuery, 'youtube');
-                      }}
+                      onClick={() => switchSearchPlatform('youtube')}
                     >
                       YouTube
                     </button>
@@ -4717,10 +4780,7 @@ export default function Room() {
                         role="tab"
                         aria-selected={searchPlatform === 'ph'}
                         className={'seg-btn' + (searchPlatform === 'ph' ? ' active' : '')}
-                        onClick={() => {
-                          setSearchPlatform('ph');
-                          if (ytSearchQuery) executeSearch(ytSearchQuery, 'ph');
-                        }}
+                        onClick={() => switchSearchPlatform('ph')}
                       >
                         18+
                       </button>
@@ -5041,85 +5101,25 @@ export default function Room() {
       </div>
 
       {ytSearchModalOpen && (
-        <div className="yt-search-modal-backdrop" onClick={() => setYtSearchModalOpen(false)}>
-          <div className="yt-search-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="search-platform-tabs">
-              <button
-                type="button"
-                className={'search-platform-tab movies' + (searchPlatform === 'tmdb' ? ' active' : '')}
-                onClick={() => {
-                  setSearchPlatform('tmdb');
-                  executeSearch(ytSearchQuery, 'tmdb');
-                }}
-              >
-                <span className="tab-icon">🎬</span> Movies & Series
-              </button>
-              <button
-                type="button"
-                className={'search-platform-tab' + (searchPlatform === 'youtube' ? ' active' : '')}
-                onClick={() => {
-                  setSearchPlatform('youtube');
-                  if (ytSearchQuery) executeSearch(ytSearchQuery, 'youtube');
-                }}
-              >
-                <span className="tab-icon">🔴</span> YouTube
-              </button>
-              {adultMode && (
-                <button
-                  type="button"
-                  className={'search-platform-tab' + (searchPlatform === 'ph' ? ' active' : '')}
-                  onClick={() => {
-                    setSearchPlatform('ph');
-                    if (ytSearchQuery) executeSearch(ytSearchQuery, 'ph');
-                  }}
-                >
-                  <span className="tab-icon">🔞</span> Pornhub
-                </button>
-              )}
-            </div>
-
-            {searchPlatform === 'tmdb' && (
-              <div className="tmdb-subfilters">
-                {[
-                  { id: 'all', label: '🌟 All' },
-                  { id: 'movie', label: '🎬 Movies' },
-                  { id: 'tv', label: '📺 TV Series' },
-                  { id: 'anime', label: '⛩️ Anime' },
-                  { id: 'kdrama', label: '🌸 K-Drama' },
-                ].map((f) => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    className={'tmdb-filter-chip' + (tmdbFilter === f.id ? ' active' : '')}
-                    onClick={() => {
-                      setTmdbFilter(f.id);
-                      executeSearch(ytSearchQuery, 'tmdb', f.id);
-                    }}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div className="yt-search-header">
-              <div className="yt-search-input-wrap">
-                <svg className="yt-search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+        <div className="sm-backdrop" onClick={() => setYtSearchModalOpen(false)}>
+          <div className="sm" role="dialog" aria-modal="true" aria-label="Search" onClick={(e) => e.stopPropagation()}>
+            <div className="sm-head">
+              <div className="sm-search">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
                   <circle cx="11" cy="11" r="8" />
                   <path d="M21 21l-4.35-4.35" />
                 </svg>
                 <input
                   type="text"
-                  className="yt-search-input"
+                  className="sm-input"
                   placeholder={
                     searchPlatform === 'tmdb'
-                      ? 'Search movies, TV shows, anime, K-dramas (e.g. Inception, Squid Game, Solo Leveling)…'
-                      : searchPlatform === 'spotify'
-                      ? 'Search Spotify songs, artists, albums…'
+                      ? 'Search movies, series, anime…'
                       : searchPlatform === 'ph'
-                      ? 'Search Pornhub videos by title or tags…'
-                      : 'Search YouTube videos (e.g. songs, trailers, podcasts)…'
+                      ? 'Search by title or tag…'
+                      : 'Search YouTube…'
                   }
+                  aria-label="Search"
                   value={ytSearchQuery}
                   autoFocus
                   onChange={(e) => handleSearchInputChange(e.target.value)}
@@ -5132,199 +5132,191 @@ export default function Room() {
                   }}
                 />
                 {ytSearching ? (
-                  <div className="yt-search-spinner" />
+                  <span className="sm-spinner" aria-label="Searching" />
                 ) : ytSearchQuery ? (
-                  <button className="yt-search-clear" onClick={() => handleSearchInputChange('')} title="Clear">
-                    ✕
+                  <button type="button" className="sm-clear" onClick={() => handleSearchInputChange('')} aria-label="Clear search">
+                    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/></svg>
                   </button>
                 ) : null}
               </div>
-              <button className="sub-close-btn" onClick={() => setYtSearchModalOpen(false)} title="Close (Esc)">
-                <svg viewBox="0 0 24 24" width="18" height="18"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
+              <button type="button" className="sm-close" onClick={() => setYtSearchModalOpen(false)} aria-label="Close search (Esc)">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
               </button>
+
+              <div className="sm-controls">
+                <div className="seg-control sm-seg" role="tablist" aria-label="Search source">
+                  <button type="button" role="tab" aria-selected={searchPlatform === 'tmdb'} className={'seg-btn' + (searchPlatform === 'tmdb' ? ' active' : '')} onClick={() => switchSearchPlatform('tmdb')}>
+                    Movies &amp; TV
+                  </button>
+                  <button type="button" role="tab" aria-selected={searchPlatform === 'youtube'} className={'seg-btn' + (searchPlatform === 'youtube' ? ' active' : '')} onClick={() => switchSearchPlatform('youtube')}>
+                    YouTube
+                  </button>
+                  {adultMode && (
+                    <button type="button" role="tab" aria-selected={searchPlatform === 'ph'} className={'seg-btn' + (searchPlatform === 'ph' ? ' active' : '')} onClick={() => switchSearchPlatform('ph')}>
+                      18+
+                    </button>
+                  )}
+                </div>
+                {searchPlatform === 'tmdb' ? (
+                  <div className="sm-chips" role="group" aria-label="Filter">
+                    {[
+                      { id: 'all', label: 'All' },
+                      { id: 'movie', label: 'Movies' },
+                      { id: 'tv', label: 'Series' },
+                      { id: 'anime', label: 'Anime' },
+                      { id: 'kdrama', label: 'K-Drama' },
+                    ].map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        aria-pressed={tmdbFilter === f.id}
+                        className={'sidebar-filter-chip' + (tmdbFilter === f.id ? ' active' : '')}
+                        onClick={() => {
+                          setTmdbFilter(f.id);
+                          executeSearch(ytSearchQuery, 'tmdb', f.id);
+                        }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : !ytSearchQuery ? (
+                  <div className="sm-chips" role="group" aria-label="Suggestions">
+                    {(searchPlatform === 'ph'
+                      ? ['Trending', 'Japanese', 'Anime', 'VR', '4K', 'Cosplay']
+                      : ['Movie trailers', 'Lofi hip hop', 'Podcasts', 'Stand-up comedy', 'Music videos', 'Gaming']
+                    ).map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        className="sidebar-filter-chip"
+                        onClick={() => {
+                          setYtSearchQuery(tag);
+                          executeSearch(tag);
+                        }}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </div>
 
-            {!ytSearchQuery && (
-              <div className="yt-search-suggestions">
-                <span className="yt-sug-label">Popular topics:</span>
-                {(searchPlatform === 'tmdb'
-                  ? ['Inception', 'Squid Game', 'Demon Slayer', 'Solo Leveling', 'Attack on Titan', 'Game of Thrones', 'Interstellar', 'Queen of Tears']
-                  : searchPlatform === 'spotify'
-                  ? ['Top Global Hits', 'Lofi & Chill Beats', 'Pop Rising', 'Hip-Hop Vibes', 'Acoustic Chill', 'Rock Classics', 'R&B / Soul']
-                  : searchPlatform === 'ph'
-                  ? ['Trending', 'Popular With Women', 'Japanese', 'Anime', 'VR', '4K', 'Cosplay']
-                  : ['Lofi Hip Hop', 'Synthwave', 'Movie Trailers', 'Chill Beats', 'Podcasts', 'Gaming', 'Top Music Hits']
-                ).map((tag) => (
-                  <button
-                    key={tag}
-                    type="button"
-                    className="yt-sug-chip"
-                    onClick={() => {
-                      setYtSearchQuery(tag);
-                      executeSearch(tag);
-                    }}
-                  >
-                    {tag}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div className="yt-search-body">
+            <div className="sm-body">
+              {searchPlatform === 'tmdb' && !ytSearchQuery && ytSearchResults.length > 0 && (
+                <p className="sm-section-label">Trending this week</p>
+              )}
               {ytSearching && ytSearchResults.length === 0 ? (
-                <div className="yt-search-loading-state">
-                  <div className="yt-search-spinner-lg" />
-                  <p>
-                    {searchPlatform === 'tmdb'
-                      ? 'Fetching from TMDB…'
-                      : searchPlatform === 'spotify'
-                      ? 'Searching Spotify…'
-                      : searchPlatform === 'ph'
-                      ? 'Searching Pornhub...'
-                      : 'Searching YouTube...'}
-                  </p>
-                </div>
-              ) : ytSearchError ? (
-                <div className="yt-search-error-state">
-                  <p>{ytSearchError}</p>
-                  <button className="btn ghost sm" onClick={() => executeSearch(ytSearchQuery)}>Retry</button>
-                </div>
-              ) : ytSearchResults.length > 0 ? (
-                <div className="yt-search-grid">
-                  {ytSearchResults.map((video) => (
-                    video.platform === 'TMDB' || video.mediaType ? (
-                      <div key={video.id || video.tmdbId} className="yt-card tmdb-card">
-                        <div
-                          className="tmdb-card-poster-wrap"
-                          onClick={() => handleSelectSearchResult(video, true)}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          {video.poster ? (
-                            <img src={video.poster} alt={video.title} className="tmdb-card-poster" referrerPolicy="no-referrer" loading="lazy" />
-                          ) : (
-                            <div className="tmdb-ep-thumb placeholder" style={{ height: '100%' }}>
-                              <span>{video.title}</span>
-                            </div>
-                          )}
-                          <div className="tmdb-card-badges">
-                            <span className={'tmdb-badge-chip ' + (video.subType || video.mediaType)}>
-                              {video.subType === 'anime' ? 'Anime' : video.subType === 'kdrama' ? 'K-Drama' : video.mediaType === 'tv' ? 'Series' : 'Movie'}
-                            </span>
-                            {video.year && <span className="tmdb-badge-chip" style={{ background: 'rgba(0,0,0,0.6)' }}>{video.year}</span>}
-                          </div>
-                          {video.rating && <div className="tmdb-card-rating">⭐ {video.rating}</div>}
-                        </div>
-                        <div className="tmdb-card-content">
-                          <div className="tmdb-card-title" title={video.title}>{video.title}</div>
-                          {video.originalTitle && video.originalTitle !== video.title && (
-                            <div className="tmdb-card-meta">{video.originalTitle}</div>
-                          )}
-                          <p className="tmdb-card-overview">{video.overview || 'No synopsis available.'}</p>
-                          <div className="yt-card-actions">
-                            {video.mediaType === 'tv' ? (
-                              <>
-                                <button
-                                  type="button"
-                                  className="btn primary sm"
-                                  onClick={() => handleSelectSearchResult(video, true)}
-                                  title="Browse seasons & episodes"
-                                >
-                                  📑 Episodes
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn ghost sm"
-                                  onClick={() => {
-                                    handleSelectEpisode({
-                                      tmdbId: video.tmdbId || video.id,
-                                      season: 1,
-                                      episode: 1,
-                                      episodeTitle: 'Episode 1',
-                                      showTitle: video.title,
-                                      poster: video.poster,
-                                      backdrop: video.backdrop,
-                                      title: `${video.title} · S1:E1`,
-                                    }, false);
-                                  }}
-                                  title="Add Season 1 Episode 1 to queue"
-                                >
-                                  + Queue S1:E1
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <button
-                                  type="button"
-                                  className="btn primary sm"
-                                  onClick={() => handleSelectSearchResult(video, true)}
-                                  title="Play movie now for the room"
-                                >
-                                  ▶ Play Now
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn ghost sm"
-                                  onClick={() => handleSelectSearchResult(video, false)}
-                                  title="Add movie to shared queue"
-                                >
-                                  + Queue
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div key={video.id || video.viewkey} className="yt-card">
-                        <div className="yt-card-thumb-wrap">
-                          <img src={video.thumbnail} alt={video.title} className="yt-card-thumb" referrerPolicy="no-referrer" loading="lazy" />
-                          {video.duration && <span className="yt-card-duration">{video.duration}</span>}
-                        </div>
-                        <div className="yt-card-info">
-                          <div className="yt-card-title" title={video.title}>{video.title}</div>
-                          <div className="yt-card-meta">
-                            {video.author && <span className="yt-card-author">{video.author}</span>}
-                            {video.views && <span className="yt-card-views">{video.author ? ' · ' : ''}{video.views}</span>}
-                          </div>
-                          <div className="yt-card-actions">
-                            <button
-                              type="button"
-                              className="btn primary sm"
-                              onClick={() => handleSelectSearchResult(video, true)}
-                              title="Play now for the whole room"
-                            >
-                              ▶ Play Now
-                            </button>
-                            <button
-                              type="button"
-                              className="btn ghost sm"
-                              onClick={() => handleSelectSearchResult(video, false)}
-                              title="Add to shared queue"
-                            >
-                              + Queue
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )
+                <div className={'sm-grid ' + (searchPlatform === 'tmdb' ? 'posters' : 'videos')} aria-busy="true">
+                  {Array.from({ length: searchPlatform === 'tmdb' ? 12 : 6 }).map((_, i) => (
+                    <div key={i} className="sm-skel" />
                   ))}
                 </div>
+              ) : ytSearchError ? (
+                <div className="sm-state">
+                  <p className="sm-state-title">{ytSearchError}</p>
+                  <button type="button" className="min-btn ghost" onClick={() => executeSearch(ytSearchQuery)}>Try again</button>
+                </div>
+              ) : ytSearchResults.length > 0 ? (
+                searchPlatform === 'tmdb' ? (
+                  <div className="sm-grid posters">
+                    {ytSearchResults.map((video) => (
+                      <article key={video.id || video.tmdbId} className="sm-poster">
+                        <button
+                          type="button"
+                          className="sm-poster-art"
+                          onClick={() => handleSelectSearchResult(video, true)}
+                          title={video.overview || video.title}
+                          aria-label={video.mediaType === 'tv' ? `Browse episodes of ${video.title}` : `Play ${video.title} for the room`}
+                        >
+                          {video.poster ? (
+                            <img src={video.poster} alt="" referrerPolicy="no-referrer" loading="lazy" />
+                          ) : (
+                            <span className="sm-poster-fallback">{video.title}</span>
+                          )}
+                          {video.rating ? <span className="sm-rating">★ {video.rating}</span> : null}
+                          <span className="sm-poster-hover" aria-hidden="true">
+                            {video.mediaType === 'tv' ? 'Episodes' : '▶ Play'}
+                          </span>
+                        </button>
+                        <div className="sm-poster-info">
+                          <div className="sm-title" title={video.title}>{video.title}</div>
+                          <div className="sm-meta">
+                            {video.subType === 'anime' ? 'Anime' : video.subType === 'kdrama' ? 'K-Drama' : video.mediaType === 'tv' ? 'Series' : 'Movie'}
+                            {video.year ? ` · ${video.year}` : ''}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="sm-queue-btn"
+                          onClick={() => {
+                            if (video.mediaType === 'tv') {
+                              handleSelectEpisode({
+                                tmdbId: video.tmdbId || video.id,
+                                season: 1,
+                                episode: 1,
+                                episodeTitle: 'Episode 1',
+                                showTitle: video.title,
+                                poster: video.poster,
+                                backdrop: video.backdrop,
+                                title: `${video.title} · S1:E1`,
+                              }, false);
+                            } else {
+                              handleSelectSearchResult(video, false);
+                            }
+                          }}
+                          title={video.mediaType === 'tv' ? 'Add S1:E1 to the queue' : 'Add to the queue'}
+                          aria-label={video.mediaType === 'tv' ? `Queue ${video.title} S1:E1` : `Queue ${video.title}`}
+                        >
+                          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"/></svg>
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="sm-grid videos">
+                    {ytSearchResults.map((video) => (
+                      <article key={video.id || video.viewkey} className="sm-video">
+                        <button type="button" className="sm-video-thumb" onClick={() => handleSelectSearchResult(video, true)} aria-label={`Play ${video.title} for the room`}>
+                          <img src={video.thumbnail} alt="" referrerPolicy="no-referrer" loading="lazy" />
+                          {video.duration && <span className="sm-duration">{video.duration}</span>}
+                          <span className="sm-poster-hover" aria-hidden="true">▶ Play</span>
+                        </button>
+                        <div className="sm-video-row">
+                          <div className="sm-video-text">
+                            <div className="sm-title two-line" title={video.title}>{video.title}</div>
+                            <div className="sm-meta">
+                              {video.author}
+                              {video.author && video.views ? ' · ' : ''}
+                              {video.views}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="sm-queue-btn inline"
+                            onClick={() => handleSelectSearchResult(video, false)}
+                            title="Add to the queue"
+                            aria-label={`Queue ${video.title}`}
+                          >
+                            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"/></svg>
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )
               ) : ytSearchQuery ? (
-                <div className="yt-search-empty-state">
-                  <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <circle cx="11" cy="11" r="8" />
-                    <path d="M21 21l-4.35-4.35" />
-                  </svg>
-                  <p>No results found for &ldquo;{ytSearchQuery}&rdquo;</p>
-                  <span>Try another search query or check the spelling.</span>
+                <div className="sm-state">
+                  <p className="sm-state-title">Nothing found for “{ytSearchQuery}”</p>
+                  <p className="sm-state-sub">Check the spelling or try a different title.</p>
                 </div>
               ) : (
-                <div className="yt-search-placeholder-state">
-                  <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor">
-                    <path d="M22 12s0-3.3-.42-4.8a2.5 2.5 0 0 0-1.76-1.77C18.25 5 12 5 12 5s-6.25 0-7.82.43A2.5 2.5 0 0 0 2.42 7.2C2 8.7 2 12 2 12s0 3.3.42 4.8c.23.86.9 1.53 1.76 1.77C5.75 19 12 19 12 19s6.25 0 7.82-.43a2.5 2.5 0 0 0 1.76-1.77C22 15.3 22 12 22 12zM10 15.5v-7l6 3.5-6 3.5z" />
-                  </svg>
-                  <p>Search {searchPlatform === 'tmdb' ? 'Movies, TV Shows & Anime' : searchPlatform === 'ph' ? 'Pornhub' : 'YouTube'} to watch together</p>
-                  <span>Type a search query above or pick one of the popular topics to get started.</span>
+                <div className="sm-state">
+                  <p className="sm-state-title">
+                    {searchPlatform === 'ph' ? 'Search to get started' : 'Search YouTube to watch together'}
+                  </p>
+                  <p className="sm-state-sub">Type above or pick a suggestion. Results play for the whole room.</p>
                 </div>
               )}
             </div>

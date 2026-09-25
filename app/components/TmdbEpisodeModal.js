@@ -120,7 +120,7 @@ export default function TmdbEpisodeModal({
         <div
           className="tmdb-modal-hero"
           style={{
-            backgroundImage: showBackdrop ? `linear-gradient(to bottom, rgba(17, 20, 29, 0.4), #11141d 95%), url("${showBackdrop}")` : undefined,
+            backgroundImage: showBackdrop ? `linear-gradient(to bottom, rgba(18, 21, 19, 0.35), #121513 92%), url("${showBackdrop}")` : undefined,
           }}
         >
           <button className="tmdb-modal-close" onClick={onClose} title="Close (Esc)">
