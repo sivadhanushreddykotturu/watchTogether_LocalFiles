@@ -3,6 +3,7 @@
 // the app runs fine with zero persistence. Sockets never wait on these calls.
 
 const { MongoClient } = require('mongodb');
+const chatCrypto = require('./chatCrypto');
 
 const DB_NAME = 'reelsync';
 const CHAT_TTL_SECONDS = 30 * 24 * 60 * 60; // chat auto-deletes after 30 days
@@ -23,6 +24,9 @@ async function connect() {
     await db.collection('messages').createIndex({ roomCode: 1, at: 1 });
     await db.collection('messages').createIndex({ at: 1 }, { expireAfterSeconds: CHAT_TTL_SECONDS });
     console.log('MongoDB connected.');
+    if (!chatCrypto.isEnabled()) {
+      console.warn('CHAT_ENCRYPTION_KEY not set — chat history will NOT be saved (messages stay live-only).');
+    }
   } catch (err) {
     console.error('MongoDB connection failed — running without persistence:', err.message);
     db = null;
@@ -100,20 +104,57 @@ async function deleteRoom(code, ownerId) {
 
 // ---- chat ----
 
+// Message content (text, display names, quoted replies) is encrypted before
+// it reaches Mongo; without a key we don't persist chat at all rather than
+// fall back to plaintext.
 function addMessage(code, { id, sender, name, color, text, replyTo }) {
-  if (!db) return;
-  db.collection('messages')
-    .insertOne({
+  if (!db || !chatCrypto.isEnabled()) return;
+  let doc;
+  try {
+    doc = {
       msgId: id || null,
       roomCode: code,
       sender,
-      name,
+      name: chatCrypto.encrypt(name, code),
       color,
-      text,
-      replyTo: replyTo || null,
+      text: chatCrypto.encrypt(text, code),
+      replyTo: replyTo
+        ? {
+            id: replyTo.id,
+            color: replyTo.color,
+            name: chatCrypto.encrypt(replyTo.name, code),
+            text: chatCrypto.encrypt(replyTo.text, code),
+          }
+        : null,
       at: new Date(),
-    })
+    };
+  } catch (err) {
+    console.error('addMessage encrypt failed:', err.message);
+    return;
+  }
+  db.collection('messages')
+    .insertOne(doc)
     .catch((err) => console.error('addMessage failed:', err.message));
+}
+
+function readMessage(code, m) {
+  const reply = m.replyTo
+    ? {
+        ...m.replyTo,
+        name: chatCrypto.decrypt(m.replyTo.name, code),
+        text: chatCrypto.decrypt(m.replyTo.text, code),
+      }
+    : null;
+  return {
+    id: m.msgId || String(m._id),
+    system: false,
+    sender: m.sender,
+    name: chatCrypto.decrypt(m.name, code),
+    color: m.color,
+    text: chatCrypto.decrypt(m.text, code),
+    replyTo: reply,
+    at: new Date(m.at).getTime(),
+  };
 }
 
 async function getHistory(code, limit = 50) {
@@ -124,16 +165,17 @@ async function getHistory(code, limit = 50) {
       .sort({ at: -1 })
       .limit(limit)
       .toArray();
-    return docs.reverse().map((m) => ({
-      id: m.msgId || String(m._id),
-      system: false,
-      sender: m.sender,
-      name: m.name,
-      color: m.color,
-      text: m.text,
-      replyTo: m.replyTo || null,
-      at: new Date(m.at).getTime(),
-    }));
+    const out = [];
+    let unreadable = 0;
+    for (const m of docs.reverse()) {
+      try {
+        out.push(readMessage(code, m));
+      } catch {
+        unreadable++; // wrong/rotated key or tampered row — drop it, keep the rest
+      }
+    }
+    if (unreadable) console.warn(`getHistory(${code}): skipped ${unreadable} message(s) that failed to decrypt`);
+    return out;
   } catch { return []; }
 }
 

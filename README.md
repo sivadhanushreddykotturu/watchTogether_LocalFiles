@@ -5,7 +5,7 @@
 - Rooms with 5-letter join codes — anyone in the room can drive playback
 - Drift correction, reconnect-and-catch-up, presence ticks showing where everyone is
 - Mobile is a chat-first companion (unread badge, wake lock, now-playing strip)
-- Rooms and chat persist in MongoDB (rooms never expire, chat auto-deletes after 30 days)
+- Rooms and chat persist in MongoDB (rooms never expire, chat auto-deletes after 30 days); chat is encrypted at rest (AES-256-GCM)
 
 ## Stack
 
@@ -29,6 +29,17 @@ npm run build && npm start   # in one terminal
 npm test                     # in another — 26 end-to-end realtime checks
 ```
 
+```bash
+npm run test:crypto          # chat encryption unit tests, no server needed
+```
+
+Encrypting chat saved before `CHAT_ENCRYPTION_KEY` was set (one-off, safe to re-run):
+
+```bash
+MONGODB_URI=... CHAT_ENCRYPTION_KEY=... npm run encrypt-existing-chat -- --dry-run
+MONGODB_URI=... CHAT_ENCRYPTION_KEY=... npm run encrypt-existing-chat
+```
+
 ## Deploy: Render
 
 The app is one long-running Node service — pages and WebSockets same-origin — so it deploys to Render as a single unit. (Vercel's serverless model can't hold WebSocket connections, which is why this isn't a Vercel app.)
@@ -36,7 +47,7 @@ The app is one long-running Node service — pages and WebSockets same-origin �
 1. New **Web Service** → this repo (or use **Blueprint** — `render.yaml` is included)
 2. Build: `npm install && npm run build` · Start: `npm start`
 3. Pick the region closest to your viewers — it's the biggest latency lever
-4. Env var: `MONGODB_URI` = your Atlas connection string (Network Access: allow `0.0.0.0/0`)
+4. Env vars: `MONGODB_URI` = your Atlas connection string (Network Access: allow `0.0.0.0/0`), and `CHAT_ENCRYPTION_KEY` (see below)
 5. **UptimeRobot**: HTTP monitor on `https://<app>.onrender.com/health`, 5-min interval — keeps the free tier awake 24/7
 
 ## Environment variables
@@ -44,6 +55,7 @@ The app is one long-running Node service — pages and WebSockets same-origin �
 | Var | Where | Purpose |
 |---|---|---|
 | `MONGODB_URI` | Render / `.env` | Atlas connection string (optional — app runs without it, no persistence) |
+| `CHAT_ENCRYPTION_KEY` | Render / `.env` | 32-byte key that encrypts chat before it's stored. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Without it, chat still works live but isn't saved. Keep it secret and don't change it — messages saved under an old key can't be read with a new one. |
 | `PORT` | Render auto | Server port (default 3000) |
 | `LEAVE_GRACE_MS` | optional | Delay before "X left" is announced (default 45000) |
 | `LIVEKIT_URL` | Render / `.env` | LiveKit Cloud project URL — enables voice chat (optional; app runs fine without it) |
