@@ -65,3 +65,20 @@ export function getServerTime(): number {
 export function getClockOffset(): number {
   return serverClockOffsetMs;
 }
+
+// Stable per-browser identity (reconnect dedup, knock approvals, and proving
+// you created a room). Created on first use so first-time visitors have one
+// before they create a room.
+export function getSessionId(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    let id = localStorage.getItem('reelsync:sessionId');
+    if (!id) {
+      id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem('reelsync:sessionId', id);
+    }
+    return id;
+  } catch {
+    return null;
+  }
+}

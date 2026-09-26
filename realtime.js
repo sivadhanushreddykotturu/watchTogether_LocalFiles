@@ -58,6 +58,10 @@ function currentPosition(state) {
   return state.time + ((Date.now() - state.updatedAt) / 1000) * rate;
 }
 
+const E2E_PREFIX = 'e2e:v1:';
+const E2E_KEY_ID = /^[A-Za-z0-9_-]{16,64}$/;
+const E2E_B64U = /^[A-Za-z0-9_-]+$/;
+
 function roomUsers(room) {
   return Array.from(room.users.entries()).map(([id, u]) => ({ id, name: u.name, color: u.color }));
 }
@@ -78,6 +82,7 @@ function freshRoom(code, state) {
     hostSessionId: null, // persistent sessionId of room creator / host
     controlLock: false, // only host can control video + guests must knock to join
     adultMode: false, // enables adult content
+    e2eeKeyId: null, // one-way fingerprint of the room's chat key; the key itself never reaches us
     state: state || { playing: false, time: 0, updatedAt: Date.now(), subOffset: 0, source: null },
   };
 }
@@ -194,6 +199,8 @@ function joinRoom(io, socket, code, name, { rejoin = false, history } = {}, cb) 
         host: room.host,
         adultMode: room.adultMode,
         controlLock: room.controlLock,
+        e2eeKeyId: room.e2eeKeyId || null,
+        canResetE2ee: !!room.creatorSessionId && room.creatorSessionId === sessionId,
         state: {
           playing: room.state.playing,
           time: currentPosition(room.state),
@@ -261,9 +268,12 @@ function attach(io) {
       room.title = String(title || `${cleanName(name)}'s Watch Party`).slice(0, 80);
       room.controlLock = controlLock;
       room.ownerId = ownerId;
+      // Stable creator identity (host passes to whoever is present, so it
+      // can't gate destructive actions like replacing the chat key).
+      room.creatorSessionId = socket.data.sessionId || null;
       rooms.set(code, room);
 
-      db.saveRoom(code, room.state, { title: room.title, ownerId, ownerName: cleanName(name), controlLock: room.controlLock });
+      db.saveRoom(code, room.state, { title: room.title, ownerId, ownerName: cleanName(name), controlLock: room.controlLock, creatorSessionId: room.creatorSessionId });
       joinRoom(io, socket, code, name, { history: [] }, cb);
       room.host = socket.id;
       if (socket.data.sessionId) room.hostSessionId = socket.data.sessionId;
@@ -328,6 +338,8 @@ function attach(io) {
         }
         room = freshRoom(code, saved.state ? { subOffset: 0, source: null, queue: [], ...saved.state } : undefined);
         room.controlLock = Boolean(saved.controlLock);
+        room.e2eeKeyId = saved.e2eeKeyId || null;
+        room.creatorSessionId = saved.creatorSessionId || null;
         rooms.set(code, room);
       }
 
@@ -428,8 +440,21 @@ function attach(io) {
           };
         }
       }
-      text = String(text || '').trim().slice(0, 500);
+      // End-to-end encrypted text is opaque to us: only its size is bounded.
+      // Once a room has a chat key, readable text is refused outright.
+      const isE2E = (v) => typeof v === 'string' && v.startsWith(E2E_PREFIX);
+      if (isE2E(text)) {
+        text = text.length <= 4096 ? text : '';
+      } else {
+        if (room.e2eeKeyId) return;
+        text = String(text || '').trim().slice(0, 500);
+      }
       if (!text) return;
+      if (replyTo && payload.replyTo && isE2E(payload.replyTo.text)) {
+        replyTo.text = payload.replyTo.text.length <= 1024 ? payload.replyTo.text : '';
+      } else if (replyTo && room.e2eeKeyId) {
+        replyTo.text = '';
+      }
       const sessionId = socket.data.sessionId || null;
       const msg = {
         id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
@@ -448,6 +473,50 @@ function attach(io) {
       };
       io.to(room.code).emit('chat', msg);
       db.addMessage(room.code, msg); // background write
+    });
+
+    // --- end-to-end chat encryption: fingerprints + key hand-off relay ---
+    // The first member with a key claims the room's fingerprint; later members
+    // compare against it. We never see the key — only relay sealed hand-offs.
+    socket.on('e2ee-claim', ({ keyId } = {}, cb) => {
+      const room = rooms.get(socket.data.room);
+      if (!room || typeof cb !== 'function') return;
+      if (!E2E_KEY_ID.test(String(keyId || ''))) return cb({ ok: false, keyId: room.e2eeKeyId });
+      if (!room.e2eeKeyId) {
+        room.e2eeKeyId = keyId;
+        db.saveRoom(room.code, room.state, { e2eeKeyId: keyId });
+        socket.to(room.code).emit('e2ee-key-id', { keyId });
+      }
+      cb({ ok: room.e2eeKeyId === keyId, keyId: room.e2eeKeyId });
+    });
+
+    // Creator-only escape hatch when nobody holding the old key is left. Not
+    // "host": a stranger who walks into an empty room becomes host.
+    socket.on('e2ee-reset', ({ keyId } = {}, cb) => {
+      const room = rooms.get(socket.data.room);
+      const isCreator = !!room && !!room.creatorSessionId && room.creatorSessionId === socket.data.sessionId;
+      if (!room || !isCreator || !E2E_KEY_ID.test(String(keyId || ''))) {
+        if (typeof cb === 'function') cb({ ok: false });
+        return;
+      }
+      room.e2eeKeyId = keyId;
+      db.saveRoom(room.code, room.state, { e2eeKeyId: keyId });
+      socket.to(room.code).emit('e2ee-key-id', { keyId, reset: true });
+      if (typeof cb === 'function') cb({ ok: true, keyId });
+    });
+
+    socket.on('e2ee-key-request', ({ pub } = {}) => {
+      const room = rooms.get(socket.data.room);
+      if (!room || !E2E_B64U.test(String(pub || '')) || pub.length > 200) return;
+      socket.to(room.code).emit('e2ee-key-request', { from: socket.id, pub });
+    });
+
+    socket.on('e2ee-key-share', ({ to, pub, iv, sealed, keyId } = {}) => {
+      const room = rooms.get(socket.data.room);
+      if (!room || !room.users.has(to) || to === socket.id) return;
+      const ok = [pub, iv, sealed, keyId].every((v) => E2E_B64U.test(String(v || '')) && String(v).length <= 200);
+      if (!ok) return;
+      io.to(to).emit('e2ee-key-share', { from: socket.id, pub, iv, sealed, keyId });
     });
 
     // --- subtitle delay: room-wide (it affects sync), persisted with the room ---

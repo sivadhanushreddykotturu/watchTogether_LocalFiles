@@ -5,7 +5,9 @@
 - Rooms with 5-letter join codes — anyone in the room can drive playback
 - Drift correction, reconnect-and-catch-up, presence ticks showing where everyone is
 - Mobile is a chat-first companion (unread badge, wake lock, now-playing strip)
-- Rooms and chat persist in MongoDB (rooms never expire, chat auto-deletes after 30 days); chat is encrypted at rest (AES-256-GCM)
+- Rooms and chat persist in MongoDB (rooms never expire, chat auto-deletes after 30 days)
+- **End-to-end encrypted chat**: each room has a key generated in the browser (AES-256-GCM, Web Crypto). The server and MongoDB only ever see ciphertext plus a one-way key fingerprint. The key reaches people via the invite link's `#fragment` (never sent to servers), is remembered per room in the browser, and is handed from any member who has it to someone who joined by typed code (ephemeral ECDH P-256). Members can compare a security code in the room menu. See `lib/e2ee.js`.
+- Chat is also encrypted at rest on the server (`CHAT_ENCRYPTION_KEY`), which additionally covers display names and anything stored before E2EE
 
 ## Stack
 

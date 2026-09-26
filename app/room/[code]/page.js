@@ -8,6 +8,7 @@ import AppleEmojiPicker from '../../components/AppleEmojiPicker';
 import KlipyGifPicker from '../../components/KlipyGifPicker';
 import AuthButton from '../../components/AuthButton';
 import { getSocket } from '../../../lib/socket';
+import * as e2ee from '../../../lib/e2ee';
 import { detectMediaTracks, parseExternalSubtitle, parseSrtOrVtt } from '../../../lib/subtitles';
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
@@ -68,6 +69,22 @@ export default function Room() {
   const [mentionIndex, setMentionIndex] = useState(0);
   const [users, setUsers] = useState([]);
   const [messages, setMessages] = useState([]);
+
+  // ---------- end-to-end encrypted chat ----------
+  // 'pending' until joined; 'ready' once we hold the room key; 'waiting' while
+  // asking members for it; 'locked' when nobody answered; 'unsupported' without Web Crypto.
+  const [chatLock, setChatLockState] = useState('pending');
+  const chatLockRef = useRef('pending');
+  const setChatLock = (v) => { chatLockRef.current = v; setChatLockState(v); };
+  const [securityCode, setSecurityCode] = useState('');
+  const [canResetKey, setCanResetKey] = useState(false); // room creator only
+  const e2eeKeyRef = useRef(null);      // CryptoKey for the room
+  const e2eeRawRef = useRef(null);      // same key, base64url (for sharing)
+  const myKeyIdRef = useRef(null);      // fingerprint of the key we hold
+  const roomKeyIdRef = useRef(null);    // fingerprint the room expects
+  const ephemeralRef = useRef(null);    // our ECDH keypair while waiting for a hand-off
+  const lastKeyRequestRef = useRef(0);
+  const chatQueueRef = useRef(Promise.resolve());
   const [toasts, setToasts] = useState([]);
   const [tab, setTabState] = useState('chat');
   const [pickerOpen, setPickerOpen] = useState(true);
@@ -559,6 +576,144 @@ export default function Room() {
   const setStateLatest = (playing, time) => {
     latestStateRef.current = { playing, time, at: Date.now() };
   };
+
+  // ---------- end-to-end chat: key lifecycle ----------
+  // Turn a message from the wire into what we render. Ciphertext we can't
+  // open yet is kept aside (cipher/replyCipher) and retried once a key lands.
+  async function openMsg(msg) {
+    if (!msg || msg.system) return msg;
+    const t = msg.text;
+    const rt = msg.replyTo ? msg.replyTo.text : undefined;
+    if (!e2ee.isE2E(t) && !e2ee.isE2E(rt)) return msg;
+    const key = e2eeKeyRef.current;
+    if (key) {
+      try {
+        const text = await e2ee.decryptText(key, t, code);
+        const replyText = rt ? await e2ee.decryptText(key, rt, code) : rt;
+        return { ...msg, text, replyTo: msg.replyTo ? { ...msg.replyTo, text: replyText } : null, locked: false, cipher: undefined, replyCipher: undefined };
+      } catch { /* different key (reset) or tampered — fall through to locked */ }
+    }
+    return {
+      ...msg,
+      locked: true,
+      cipher: t,
+      replyCipher: rt,
+      text: e2ee.isE2E(t) ? '' : t,
+      replyTo: msg.replyTo ? { ...msg.replyTo, text: e2ee.isE2E(rt) ? '' : rt } : null,
+    };
+  }
+
+  async function activateKey(raw) {
+    const kid = await e2ee.keyIdOf(raw);
+    e2eeKeyRef.current = await e2ee.importRoomKey(raw);
+    e2eeRawRef.current = raw;
+    myKeyIdRef.current = kid;
+    ephemeralRef.current = null;
+    e2ee.storeKey(code, raw);
+    setSecurityCode(e2ee.securityCode(kid));
+    setChatLock('ready');
+  }
+
+  function dropKey() {
+    e2eeKeyRef.current = null;
+    e2eeRawRef.current = null;
+    myKeyIdRef.current = null;
+    setSecurityCode('');
+  }
+
+  async function requestKey() {
+    if (e2eeKeyRef.current || !e2ee.isSupported()) return;
+    const socket = getSocket();
+    if (!socket.connected) return;
+    if (Date.now() - lastKeyRequestRef.current < 2500) return;
+    lastKeyRequestRef.current = Date.now();
+    if (!ephemeralRef.current) ephemeralRef.current = await e2ee.makeEphemeral();
+    socket.emit('e2ee-key-request', { pub: ephemeralRef.current.pub });
+    if (chatLockRef.current !== 'ready') setChatLock('waiting');
+    setTimeout(() => {
+      if (!e2eeKeyRef.current && chatLockRef.current === 'waiting') setChatLock('locked');
+    }, 5000);
+  }
+
+  function claimKey(raw) {
+    return new Promise((resolve) => {
+      e2ee.keyIdOf(raw).then((kid) => {
+        getSocket().emit('e2ee-claim', { keyId: kid }, async (res) => {
+          if (res && res.ok) {
+            roomKeyIdRef.current = kid;
+            await activateKey(raw);
+          } else {
+            // Someone else claimed first — get their key instead.
+            roomKeyIdRef.current = res ? res.keyId : null;
+            dropKey();
+            await requestKey();
+          }
+          resolve();
+        });
+      });
+    });
+  }
+
+  // Called with the room's fingerprint on every (re)join.
+  async function setupE2ee(roomKeyId) {
+    roomKeyIdRef.current = roomKeyId || null;
+    if (!e2ee.isSupported()) { setChatLock('unsupported'); return; }
+    const raw = e2eeRawRef.current || e2ee.loadStoredKey(code);
+    if (raw) {
+      const kid = await e2ee.keyIdOf(raw);
+      if (!roomKeyId) return claimKey(raw);
+      if (kid === roomKeyId) return activateKey(raw);
+      dropKey(); // stale key from an older link or before a reset
+    }
+    if (!roomKeyId) return claimKey(e2ee.generateRoomKey());
+    setChatLock('waiting');
+    return requestKey();
+  }
+
+  // Host escape hatch: nobody holding the old key is around. Old messages stay unreadable.
+  async function resetChatKey() {
+    const raw = e2ee.generateRoomKey();
+    const kid = await e2ee.keyIdOf(raw);
+    getSocket().emit('e2ee-reset', { keyId: kid }, async (res) => {
+      if (!res || !res.ok) { toast('Only the person who created this room can start a new chat key'); return; }
+      roomKeyIdRef.current = kid;
+      await activateKey(raw);
+      toast('New chat key created — share the invite link again');
+    });
+  }
+
+  // Encrypts outgoing chat; returns false when we don't hold the key yet.
+  async function emitChat(payload) {
+    const key = e2eeKeyRef.current;
+    if (!key) return false;
+    const out = { ...payload };
+    delete out.title; // GIF titles are content too — don't leak them in the clear
+    out.text = await e2ee.encryptText(key, payload.text, code);
+    if (out.replyTo) {
+      out.replyTo = { ...out.replyTo, text: out.replyTo.text ? await e2ee.encryptText(key, out.replyTo.text, code) : '' };
+    }
+    getSocket().emit('chat', out);
+    return true;
+  }
+
+  // Whenever we hold a key, retry anything still locked. Runs on every message
+  // change too, so history that lands after the key (or before) both unlock.
+  const unlockTriedRef = useRef(new Set());
+  useEffect(() => {
+    if (chatLock !== 'ready') return;
+    const kid = myKeyIdRef.current;
+    const todo = messages.filter((m) => m.locked && !unlockTriedRef.current.has(m.id + '|' + kid));
+    if (!todo.length) return;
+    todo.forEach((m) => unlockTriedRef.current.add(m.id + '|' + kid));
+    Promise.all(todo.map((m) => openMsg({
+      ...m,
+      text: m.cipher ?? m.text,
+      replyTo: m.replyTo ? { ...m.replyTo, text: m.replyCipher ?? m.replyTo.text } : null,
+    }))).then((opened) => {
+      const byId = new Map(opened.filter((m) => !m.locked).map((m) => [m.id, m]));
+      if (byId.size) setMessages((prev) => prev.map((m) => byId.get(m.id) || m));
+    });
+  }, [messages, chatLock]);
 
   // Players auto-pause (and resume) when their tab is backgrounded. Those are
   // the browser's doing, not a viewer's — they must never reach the room.
@@ -1069,6 +1224,14 @@ export default function Room() {
 
   // ---------- main effect: join, wire everything, clean up on leave ----------
   useEffect(() => {
+    // Invite links carry the chat key after '#'. Save it before anything can
+    // redirect, then take it out of the address bar so it isn't shared by accident.
+    const keyFromLink = e2ee.readKeyFromHash();
+    if (keyFromLink) {
+      e2ee.storeKey(code, keyFromLink);
+      try { window.history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* ignore */ }
+    }
+
     const name = (clerkUser && (clerkUser.firstName || clerkUser.username)) || sessionStorage.getItem('reelsync:name');
     if (!name) {
       router.replace(`/?room=${code}`);
@@ -1123,6 +1286,8 @@ export default function Room() {
       setUsers(res.users);
       setPeerVoice(res.voice || {});
       setMessages(Array.isArray(res.history) ? res.history : []);
+      setCanResetKey(!!res.canResetE2ee);
+      setupE2ee(res.e2eeKeyId);
       if (res.state.playing) {
         setPickerHint(`The room is already watching — at ${fmt(res.state.time)} and rolling.`);
       }
@@ -1317,6 +1482,11 @@ export default function Room() {
     };
     const onUsers = (list) => {
       setUsers(list);
+      // Someone who holds the chat key may have just come online.
+      if (!e2eeKeyRef.current && (chatLockRef.current === 'locked' || chatLockRef.current === 'waiting') && list.length > 1) {
+        lastKeyRequestRef.current = 0;
+        requestKey();
+      }
       const next = new Map();
       const ids = new Set(list.map((u) => u.id));
       for (const u of list) {
@@ -1332,7 +1502,11 @@ export default function Room() {
       });
       renderTicks();
     };
+    // Decrypt in arrival order, then hand to the renderer.
     const onChat = (msg) => {
+      chatQueueRef.current = chatQueueRef.current.then(() => openMsg(msg)).then(handleChat).catch(() => {});
+    };
+    const handleChat = (msg) => {
       if (msg.sender) {
         setTypingUsers((prev) => {
           if (!prev[msg.sender]) return prev;
@@ -1350,7 +1524,8 @@ export default function Room() {
       } else {
         setMessages((prev) => [...prev.slice(-499), msg]);
       }
-      if (!msg.system && danmakuEnabledRef.current) {
+      const readable = !msg.system && !msg.locked && !!msg.text;
+      if (readable && danmakuEnabledRef.current) {
         const dId = Date.now() + Math.random();
         const topPct = 8 + Math.floor(Math.random() * 42);
         setDanmakuList((prev) => [...prev.slice(-12), { id: dId, text: msg.text, top: topPct }]);
@@ -1360,7 +1535,7 @@ export default function Room() {
       }
       // transient popup, bottom-right of the screen — the way you actually
       // notice a text mid-movie (fullscreen / chat collapsed / phone)
-      if (!msg.system && (!chatOpenRef.current || document.fullscreenElement || pseudoFsRef.current || window.innerWidth <= 768)) {
+      if (readable && (!chatOpenRef.current || document.fullscreenElement || pseudoFsRef.current || window.innerWidth <= 768)) {
         const bId = Date.now() + Math.random();
         setFloatingBubbles((prev) => [...prev.slice(-2), { id: bId, text: msg.text, name: msg.name, color: msg.color }]);
         setTimeout(() => {
@@ -1374,6 +1549,12 @@ export default function Room() {
     // of the live messages (deduped by id so reconnects never double-print).
     const onChatHistory = (history) => {
       if (!Array.isArray(history) || history.length === 0) return;
+      chatQueueRef.current = chatQueueRef.current
+        .then(() => Promise.all(history.map(openMsg)))
+        .then(mergeHistory)
+        .catch(() => {});
+    };
+    const mergeHistory = (history) => {
       setMessages((prev) => {
         const seen = new Set(prev.map((m) => m.id));
         const fresh = history.filter((m) => m && m.id && !seen.has(m.id));
@@ -1429,6 +1610,8 @@ export default function Room() {
         }
         setStateLatest(res.state.playing, res.state.time);
         setUsers(res.users);
+        setCanResetKey(!!res.canResetE2ee);
+        setupE2ee(res.e2eeKeyId);
         if (Array.isArray(res.state.queue)) {
           setQueue(res.state.queue);
           queueRef.current = res.state.queue;
@@ -1447,9 +1630,10 @@ export default function Room() {
           const pending = [...outboxRef.current];
           outboxRef.current = [];
           setOutboxMessages([]);
-          for (const msg of pending) {
-            socket.emit('chat', msg);
-          }
+          // Encrypt at send time: the outbox only ever holds plaintext locally.
+          chatQueueRef.current = chatQueueRef.current.then(async () => {
+            for (const msg of pending) await emitChat(msg);
+          }).catch(() => {});
         }
         toast('Reconnected');
       });
@@ -1567,6 +1751,39 @@ export default function Room() {
     socket.on('knock-pending', onKnockPending);
     socket.on('knock-rejected', onKnockRejected);
     socket.on('join-room-ack', onJoinRoomAck);
+
+    // --- end-to-end chat key hand-off ---
+    const onE2eeKeyRequest = async ({ from, pub } = {}) => {
+      const raw = e2eeRawRef.current;
+      if (!raw || !from || myKeyIdRef.current !== roomKeyIdRef.current) return;
+      try {
+        const sealed = await e2ee.sealRoomKeyFor(pub, raw, code);
+        socket.emit('e2ee-key-share', { to: from, keyId: myKeyIdRef.current, ...sealed });
+      } catch { /* malformed request — ignore */ }
+    };
+    const onE2eeKeyShare = async (share = {}) => {
+      const eph = ephemeralRef.current;
+      if (e2eeKeyRef.current || !eph || share.keyId !== roomKeyIdRef.current) return;
+      try {
+        const raw = await e2ee.openRoomKey(eph, share, code);
+        if ((await e2ee.keyIdOf(raw)) !== roomKeyIdRef.current) return; // not the room's key
+        await activateKey(raw);
+      } catch { /* sealed for someone else, or tampered */ }
+    };
+    const onE2eeKeyId = ({ keyId, reset } = {}) => {
+      roomKeyIdRef.current = keyId || null;
+      if (myKeyIdRef.current === keyId) return;
+      dropKey();
+      if (reset) {
+        e2ee.forgetKey(code);
+        toast('The host started a new chat key');
+      }
+      setChatLock('waiting');
+      requestKey();
+    };
+    socket.on('e2ee-key-request', onE2eeKeyRequest);
+    socket.on('e2ee-key-share', onE2eeKeyShare);
+    socket.on('e2ee-key-id', onE2eeKeyId);
 
     // --- NTP Millisecond Sync ---
     const doNtpSync = () => {
@@ -1913,6 +2130,9 @@ export default function Room() {
       socket.off('knock-pending', onKnockPending);
       socket.off('knock-rejected', onKnockRejected);
       socket.off('join-room-ack', onJoinRoomAck);
+      socket.off('e2ee-key-request', onE2eeKeyRequest);
+      socket.off('e2ee-key-share', onE2eeKeyShare);
+      socket.off('e2ee-key-id', onE2eeKeyId);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('seeked', onSeeked);
@@ -2384,8 +2604,9 @@ export default function Room() {
     };
   }, [roomMenuOpen]);
 
+  // Includes the chat key after '#' so the invitee can read chat straight away.
   const copyInviteLink = async () => {
-    const url = `${window.location.origin}/room/${code}`;
+    const url = e2ee.inviteLink(window.location.origin, code);
     try {
       await navigator.clipboard.writeText(url);
       toast('Invite link copied');
@@ -3193,10 +3414,18 @@ export default function Room() {
     }
   };
 
+  const chatLockedHint = () => {
+    const state = chatLockRef.current;
+    if (state === 'unsupported') return 'Encrypted chat needs a secure (https) connection';
+    if (state === 'pending') return 'Joining the room…';
+    return 'Chat is locked until you have the room key — open the invite link or wait for a member';
+  };
+
   const sendChat = (e) => {
     if (e && e.preventDefault) e.preventDefault();
     const text = chatInputRef.current ? chatInputRef.current.value.trim() : '';
     if (!text) return;
+    if (chatLockRef.current !== 'ready') { toast(chatLockedHint()); return; }
     const socket = getSocket();
     const optimisticId = 'opt_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
     const optimisticMsg = {
@@ -3232,7 +3461,7 @@ export default function Room() {
     };
 
     if (socket.connected) {
-      socket.emit('chat', payload);
+      chatQueueRef.current = chatQueueRef.current.then(() => emitChat(payload)).catch(() => {});
       if (isTypingLocalRef.current) {
         socket.emit('typing', false);
         isTypingLocalRef.current = false;
@@ -3251,6 +3480,7 @@ export default function Room() {
 
   const handleSendGif = (gif) => {
     if (!gif || !gif.url) return;
+    if (chatLockRef.current !== 'ready') { toast(chatLockedHint()); return; }
     const socket = getSocket();
     const optimisticId = 'opt_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
     const optimisticMsg = {
@@ -3287,7 +3517,7 @@ export default function Room() {
     };
 
     if (socket.connected) {
-      socket.emit('chat', payload);
+      chatQueueRef.current = chatQueueRef.current.then(() => emitChat(payload)).catch(() => {});
       if (isTypingLocalRef.current) {
         socket.emit('typing', false);
         isTypingLocalRef.current = false;
@@ -3487,6 +3717,19 @@ export default function Room() {
               <div className="room-menu-row">
                 <span>Account</span>
                 <AuthButton />
+              </div>
+
+              <div className="room-menu-e2ee">
+                <div className="rme-head">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                  <span>{chatLock === 'ready' ? 'Chat is end-to-end encrypted' : 'Chat key not available yet'}</span>
+                </div>
+                {securityCode && (
+                  <>
+                    <div className="rme-code" aria-label="Security code">{securityCode}</div>
+                    <p className="rme-hint">Everyone in the room should see this same code. If someone’s differs, their chat isn’t private.</p>
+                  </>
+                )}
               </div>
 
               <button type="button" className="room-menu-item danger mobile-only" role="menuitem" onClick={leave}>
@@ -4575,11 +4818,17 @@ export default function Room() {
                                 <span className="mr-author" style={{ color: m.replyTo.color || 'var(--accent-glow)' }}>
                                   {m.replyTo.name}
                                 </span>
-                                <span className="mr-snippet">{renderChatText(m.replyTo.text, true)}</span>
+                                <span className="mr-snippet">{m.locked && !m.replyTo.text ? '🔒 Encrypted' : renderChatText(m.replyTo.text, true)}</span>
                               </div>
                             )}
                             <div className="m-bubble">
-                              <div className="m-text">{renderChatText(m.text)}</div>
+                              <div className="m-text">
+                                {m.locked ? (
+                                  <span className="m-locked">🔒 Encrypted message — {chatLock === 'ready' ? 'sent with an older key' : 'waiting for the room key'}</span>
+                                ) : (
+                                  renderChatText(m.text)
+                                )}
+                              </div>
                             </div>
                             <button
                               type="button"
@@ -4717,6 +4966,28 @@ export default function Room() {
                 </div>
               )}
 
+              {chatLock !== 'ready' && chatLock !== 'pending' && (
+                <div className={'chat-lock-banner ' + chatLock} role="status">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                  <div className="clb-text">
+                    {chatLock === 'waiting' && <><b>Getting the chat key…</b><span>Asking people in the room to share it securely.</span></>}
+                    {chatLock === 'locked' && <><b>Chat is locked</b><span>Open the invite link, or it unlocks automatically when someone who has the key is online.</span></>}
+                    {chatLock === 'unsupported' && <><b>Encrypted chat unavailable</b><span>This browser or connection doesn’t support it (needs https).</span></>}
+                  </div>
+                  {chatLock === 'locked' && canResetKey && (
+                    <button
+                      type="button"
+                      className="clb-btn"
+                      onClick={() => {
+                        if (window.confirm('Start a new chat key? Messages sent with the old key will stay unreadable, and others will need the new invite link or to get the key from you.')) resetChatKey();
+                      }}
+                    >
+                      New key
+                    </button>
+                  )}
+                </div>
+              )}
+
               <form className="chat-form" onSubmit={sendChat} style={{ position: 'relative' }}>
                 {mentionOpen && (
                   <div className="mention-dropdown">
@@ -4783,7 +5054,8 @@ export default function Room() {
                 <input
                   ref={chatInputRef}
                   type="text"
-                  placeholder={replyingTo ? `Replying to ${replyingTo.name}…` : "Say something (use @ to tag)…"}
+                  placeholder={chatLock !== 'ready' ? 'Chat is locked' : replyingTo ? `Replying to ${replyingTo.name}…` : 'Say something (use @ to tag)…'}
+                  disabled={chatLock !== 'ready'}
                   maxLength={500}
                   autoComplete="off"
                   onChange={handleChatInputChange}

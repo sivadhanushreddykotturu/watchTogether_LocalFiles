@@ -3,7 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser, useAuth, UserButton } from '@clerk/nextjs';
-import { getSocket } from '../../lib/socket';
+import { getSocket, getSessionId } from '../../lib/socket';
+import { inviteLink } from '../../lib/e2ee';
 import { UserRoom } from '../../types/realtime';
 import { EmojiImg } from '../components/AppleEmoji';
 
@@ -75,7 +76,7 @@ export default function DashboardPage(): React.JSX.Element {
         title,
         authToken: await getToken(),
         controlLock: isPrivateMode,
-        sessionId: typeof window !== 'undefined' ? localStorage.getItem('reelsync:sessionId') : null,
+        sessionId: getSessionId(),
       },
       enter
     );
@@ -99,7 +100,7 @@ export default function DashboardPage(): React.JSX.Element {
       {
         code,
         name: displayName,
-        sessionId: typeof window !== 'undefined' ? localStorage.getItem('reelsync:sessionId') : null,
+        sessionId: getSessionId(),
       },
       enter
     );
@@ -121,7 +122,8 @@ export default function DashboardPage(): React.JSX.Element {
 
   const copyRoomLink = (code: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const url = `${window.location.origin}/room/${code}`;
+    // Carries this browser's chat key (if it has one) after '#'.
+    const url = inviteLink(window.location.origin, code);
     navigator.clipboard.writeText(url).then(() => {
       setCopiedCode(code);
       setTimeout(() => setCopiedCode(null), 2000);

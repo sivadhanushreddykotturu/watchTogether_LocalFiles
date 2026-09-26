@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser, SignInButton } from '@clerk/nextjs';
-import { getSocket } from '../lib/socket';
+import { getSocket, getSessionId } from '../lib/socket';
 import { EmojiImg } from './components/AppleEmoji';
 
 export default function LandingPage(): React.JSX.Element {
@@ -66,7 +66,7 @@ export default function LandingPage(): React.JSX.Element {
         title: `${trimmedName}'s Instant Party`,
         ownerId: null,
         controlLock: false,
-        sessionId: typeof window !== 'undefined' ? localStorage.getItem('reelsync:sessionId') : null,
+        sessionId: getSessionId(),
       },
       enter
     );
@@ -90,7 +90,7 @@ export default function LandingPage(): React.JSX.Element {
       {
         code: joinCode,
         name: trimmedName,
-        sessionId: typeof window !== 'undefined' ? localStorage.getItem('reelsync:sessionId') : null,
+        sessionId: getSessionId(),
       },
       enter
     );
