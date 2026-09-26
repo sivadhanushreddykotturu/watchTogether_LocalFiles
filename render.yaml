@@ -12,3 +12,5 @@ services:
         value: "22"
       - key: MONGODB_URI
         sync: false # set in the dashboard — your Atlas connection string
+      - key: CHAT_ENCRYPTION_KEY
+        sync: false # set in the dashboard — 32-byte base64 key; never change it once set

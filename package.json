@@ -7,7 +7,9 @@
     "dev": "cross-env NODE_ENV=development node server.js",
     "build": "next build",
     "start": "cross-env NODE_ENV=production node server.js",
-    "test": "node test-sync.js"
+    "test": "node test-sync.js",
+    "test:crypto": "node test-chat-crypto.js",
+    "encrypt-existing-chat": "node scripts/encrypt-existing-chat.js"
   },
   "engines": {
     "node": ">=18"
