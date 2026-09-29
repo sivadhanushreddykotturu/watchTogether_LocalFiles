@@ -14,7 +14,7 @@ import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
 import { searchSpotify, resolveSpotifyTrack } from '../../../lib/spotify';
 import { parseMediaUrl, resolveMediaUrl, searchPornhub } from '../../../lib/mediaEmbeds';
-import { buildVidloveUrl, searchTmdb, fetchTmdbTrending, fetchTmdbTvDetails, fetchTmdbSeason, fetchTmdbSources } from '../../../lib/tmdb';
+import { buildVidfastUrl, buildVidloveUrl, searchTmdb, fetchTmdbTrending, fetchTmdbTvDetails, fetchTmdbSeason, fetchTmdbSources } from '../../../lib/tmdb';
 import TmdbEpisodeModal from '../../components/TmdbEpisodeModal';
 import { VoiceSession } from '../../../lib/voice';
 import { getAppleEmojiUrl } from '../../../lib/emoji';
@@ -282,25 +282,60 @@ export default function Room() {
   const seekEmbed = (seconds) => {
     if (embedIframeRef.current?.contentWindow) {
       try {
+        const sec = Math.max(0, Math.floor(seconds));
+        // VidFast Watch Party API
+        embedIframeRef.current.contentWindow.postMessage({ command: 'seek', time: sec }, '*');
+        // Legacy fallback
         embedIframeRef.current.contentWindow.postMessage({ type: 'seek', time: seconds }, '*');
       } catch {}
     }
   };
 
-  const playEmbed = () => {
+  const playEmbed = (time) => {
     if (embedIframeRef.current?.contentWindow) {
       try {
+        const t = time !== undefined ? Math.max(0, Math.floor(time)) : undefined;
+        // VidFast Watch Party API
+        embedIframeRef.current.contentWindow.postMessage(t !== undefined ? { command: 'play', time: t } : { command: 'play' }, '*');
+        // Legacy fallback
         embedIframeRef.current.contentWindow.postMessage({ type: 'play' }, '*');
       } catch {}
     }
   };
 
-  const pauseEmbed = () => {
+  const pauseEmbed = (time) => {
     if (embedIframeRef.current?.contentWindow) {
       try {
+        const t = time !== undefined ? Math.max(0, Math.floor(time)) : undefined;
+        // VidFast Watch Party API
+        embedIframeRef.current.contentWindow.postMessage(t !== undefined ? { command: 'pause', time: t } : { command: 'pause' }, '*');
+        // Legacy fallback
         embedIframeRef.current.contentWindow.postMessage({ type: 'pause' }, '*');
       } catch {}
     }
+  };
+
+  const getStatusEmbed = () => {
+    if (embedIframeRef.current?.contentWindow) {
+      try {
+        embedIframeRef.current.contentWindow.postMessage({ command: 'getStatus' }, '*');
+      } catch {}
+    }
+  };
+
+  const getEmbedSrc = () => {
+    if (!source?.embedUrl) return '';
+    let url = source.embedUrl;
+    // Inject startAt parameter for watch party catch-up if not already present
+    const roomPos = latestStateRef.current?.playing
+      ? (latestStateRef.current.time || 0) + (Date.now() - (latestStateRef.current.at || Date.now())) / 1000
+      : (latestStateRef.current?.time || 0);
+
+    if (roomPos > 2 && !url.includes('startAt=')) {
+      const sep = url.includes('?') ? '&' : '?';
+      url += `${sep}startAt=${Math.floor(roomPos)}`;
+    }
+    return url;
   };
 
   const handleUnmuteEmbed = () => {
@@ -358,7 +393,7 @@ export default function Room() {
           }
         })
         .catch(() => {});
-    } else if (s?.type === 'embed' && (s?.tmdbId || s?.platform === 'Vidlove')) {
+    } else if (s?.type === 'embed' && (s?.tmdbId || s?.platform === 'VidFast' || s?.platform === 'Vidlove')) {
       embedInitialSyncedRef.current = false;
       embedSyncingRef.current = false;
       embedTimeRef.current = 0;
@@ -2098,6 +2133,16 @@ export default function Room() {
           latestStateRef.current.time = t;
           emitPlayback('seek');
         }
+      } else if (eventName === 'playerstatus') {
+        if (e.data?.data && typeof e.data.data.playing === 'boolean') {
+          const isPlaying = e.data.data.playing;
+          embedPlayingRef.current = isPlaying;
+          setPlaying(isPlaying);
+        }
+      } else if (eventName === 'ended') {
+        if (sourceRef.current?.mediaType === 'tv') {
+          handlePlayNextEpisode();
+        }
       }
     };
 
@@ -3081,12 +3126,12 @@ export default function Room() {
       }
 
       // Movie
-      const embedUrl = buildVidloveUrl({ tmdbId: item.tmdbId || item.id, type: 'movie' });
+      const embedUrl = buildVidfastUrl({ tmdbId: item.tmdbId || item.id, type: 'movie' });
       const payload = {
         type: 'embed',
         embedUrl,
         title: item.title,
-        platform: 'Vidlove',
+        platform: 'VidFast',
         mediaType: 'movie',
         tmdbId: item.tmdbId || item.id,
         poster: item.poster,
@@ -3174,7 +3219,7 @@ export default function Room() {
     const socket = getSocket();
     if (!socket.connected) return;
 
-    const embedUrl = buildVidloveUrl({
+    const embedUrl = buildVidfastUrl({
       tmdbId: epPayload.tmdbId,
       type: 'tv',
       season: epPayload.season,
@@ -3185,7 +3230,7 @@ export default function Room() {
       type: 'embed',
       embedUrl,
       title: epPayload.title,
-      platform: 'Vidlove',
+      platform: 'VidFast',
       mediaType: 'tv',
       tmdbId: epPayload.tmdbId,
       season: epPayload.season,
@@ -3215,7 +3260,7 @@ export default function Room() {
 
     const nextEp = (Number(source.episode) || 1) + 1;
     const season = Number(source.season) || 1;
-    const embedUrl = buildVidloveUrl({
+    const embedUrl = buildVidfastUrl({
       tmdbId: source.tmdbId,
       type: 'tv',
       season,
@@ -3227,6 +3272,7 @@ export default function Room() {
       ...source,
       type: 'embed',
       embedUrl,
+      platform: 'VidFast',
       season,
       episode: nextEp,
       episodeTitle: `Episode ${nextEp}`,
@@ -4006,7 +4052,7 @@ export default function Room() {
                 <iframe
                   key={embedKey}
                   ref={embedIframeRef}
-                  src={source.embedUrl}
+                  src={getEmbedSrc()}
                   className="web-embed-iframe"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
                   allowFullScreen
