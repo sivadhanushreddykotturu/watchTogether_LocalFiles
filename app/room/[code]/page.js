@@ -277,8 +277,15 @@ export default function Room() {
   const [embedRoomPaused, setEmbedRoomPaused] = useState(false);
   const [embedPausedActor, setEmbedPausedActor] = useState('');
   const [embedKey, setEmbedKey] = useState(0);
+  const lastEmbedSeekRef = useRef(0);
+  const embedPauseTimerRef = useRef(null);
 
   const seekEmbed = (seconds) => {
+    lastEmbedSeekRef.current = Date.now();
+    if (embedPauseTimerRef.current) {
+      clearTimeout(embedPauseTimerRef.current);
+      embedPauseTimerRef.current = null;
+    }
     if (embedIframeRef.current?.contentWindow) {
       try {
         const sec = Math.max(0, Math.floor(seconds));
@@ -2060,13 +2067,11 @@ export default function Room() {
         setPlaying(eventName === 'play');
         return;
       } else if (eventName === 'play') {
-        embedPlayingRef.current = true;
-        // Break the bounce-back loop: if the room is PAUSED, do NOT let un-paused background iframe resume the room!
-        if (latestStateRef.current?.playing === false) {
-          setPlaying(false);
-          setEmbedRoomPaused(true);
-          return;
+        if (embedPauseTimerRef.current) {
+          clearTimeout(embedPauseTimerRef.current);
+          embedPauseTimerRef.current = null;
         }
+        embedPlayingRef.current = true;
         setPlaying(true);
         setEmbedRoomPaused(false);
         if (guardRef.current.play > 0) {
@@ -2075,16 +2080,38 @@ export default function Room() {
           emitPlayback('play');
         }
       } else if (eventName === 'pause') {
-        embedPlayingRef.current = false;
-        setPlaying(false);
-        setEmbedRoomPaused(true);
-        if (guardRef.current.pause > 0) {
-          guardRef.current.pause--;
-        } else if (embedInitialSyncedRef.current && !embedSyncingRef.current) {
-          lastLocalPauseRef.current = Date.now();
-          emitPlayback('pause');
+        if (embedPauseTimerRef.current) {
+          clearTimeout(embedPauseTimerRef.current);
+          embedPauseTimerRef.current = null;
+        }
+        // If we recently seeked/fast-forwarded (within 1000ms), or are syncing, ignore internal buffering pauses!
+        if (Date.now() - lastEmbedSeekRef.current < 1000 || embedSyncingRef.current || !embedInitialSyncedRef.current) {
+          return;
+        }
+        embedPauseTimerRef.current = setTimeout(() => {
+          if (Date.now() - lastEmbedSeekRef.current < 1000) return;
+          embedPlayingRef.current = false;
+          setPlaying(false);
+          setEmbedRoomPaused(true);
+          if (guardRef.current.pause > 0) {
+            guardRef.current.pause--;
+          } else if (embedInitialSyncedRef.current && !embedSyncingRef.current) {
+            lastLocalPauseRef.current = Date.now();
+            emitPlayback('pause');
+          }
+        }, 350);
+      } else if (eventName === 'seeking') {
+        lastEmbedSeekRef.current = Date.now();
+        if (embedPauseTimerRef.current) {
+          clearTimeout(embedPauseTimerRef.current);
+          embedPauseTimerRef.current = null;
         }
       } else if (eventName === 'seeked') {
+        lastEmbedSeekRef.current = Date.now();
+        if (embedPauseTimerRef.current) {
+          clearTimeout(embedPauseTimerRef.current);
+          embedPauseTimerRef.current = null;
+        }
         updateTimeline();
         updateSubtitles();
         if (embedSyncingRef.current) {
@@ -2131,6 +2158,7 @@ export default function Room() {
 
     // --- cleanup: leave the room, drop everything ---
     return () => {
+      if (embedPauseTimerRef.current) clearTimeout(embedPauseTimerRef.current);
       window.removeEventListener('message', onMessage);
       socket.emit('leave-room');
       socket.off('playback', onPlayback);
@@ -3846,10 +3874,10 @@ export default function Room() {
             <audio ref={extAudioRef} playsInline style={{ display: 'none' }}></audio>
             <div ref={voiceAudioRef} style={{ display: 'none' }} aria-hidden="true"></div>
 
-            {(source?.type === 'embed' || pseudoFs) && (
+            {source?.type !== 'embed' && pseudoFs && (
               <button
                 type="button"
-                className={'screen-fs-btn' + (source?.type === 'embed' ? ' always' : '')}
+                className="screen-fs-btn"
                 onClick={fullscreen}
                 title={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Fullscreen (keeps chat pop-ups visible)'}
                 aria-label={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Fullscreen'}
@@ -3865,17 +3893,9 @@ export default function Room() {
             {source?.type === 'embed' && (
               <div className="web-embed-wrap" style={{ transform: `scale(${zoom})` }}>
                 {source.tmdbId && (
-                  <div className="room-tv-overlay">
-                    <div className="yt-top-title-wrap">
-                      <span style={{ fontSize: '18px' }}>{source.mediaType === 'tv' ? '📺' : '🎬'}</span>
-                      <span className="yt-top-title">
-                        {source.mediaType === 'tv'
-                          ? `${source.showTitle || source.title} · S${source.season || 1}:E${source.episode || 1} ${source.episodeTitle ? `"${source.episodeTitle}"` : ''}`
-                          : (source.title || 'Movie Stream')}
-                      </span>
-                    </div>
+                  <div className="room-tv-overlay" style={{ justifyContent: 'flex-end' }}>
                     <div className="yt-top-actions">
-                      {source.mediaType === 'tv' ? (
+                      {source.mediaType === 'tv' && (
                         <>
                           <button
                             type="button"
@@ -3903,18 +3923,6 @@ export default function Room() {
                             ⏭️ Next Ep
                           </button>
                         </>
-                      ) : (
-                        <button
-                          type="button"
-                          className="room-tv-btn"
-                          onClick={() => {
-                            setSearchPlatform('tmdb');
-                            setYtSearchModalOpen(true);
-                          }}
-                          title="Browse and search movies"
-                        >
-                          🔍 Browse
-                        </button>
                       )}
                       <button
                         type="button"
@@ -3995,24 +4003,6 @@ export default function Room() {
                   </div>
                 )}
 
-                {embedRoomPaused && !embedOffline && (
-                  <div className="embed-paused-overlay" onClick={togglePlay}>
-                    <div className="embed-paused-card" onClick={(e) => e.stopPropagation()}>
-                      <div className="embed-paused-icon">⏸️</div>
-                      <h3 className="embed-paused-title">Stream Paused</h3>
-                      <p className="embed-paused-desc">
-                        {embedPausedActor ? `${embedPausedActor} paused the movie` : 'Playback is paused across the room'} at {fmt(embedTimeRef.current || 0)}.
-                      </p>
-                      <button
-                        type="button"
-                        className="embed-btn embed-resume"
-                        onClick={togglePlay}
-                      >
-                        ▶️ Resume Playback
-                      </button>
-                    </div>
-                  </div>
-                )}
 
                 <iframe
                   key={embedKey}
@@ -4220,7 +4210,7 @@ export default function Room() {
               </div>
             )}
 
-            {isFullscreen && (
+            {isFullscreen && source?.type !== 'embed' && (
               <div className={'zoom-controls' + (zoomUiVisible ? ' show' : '')}>
                 <button type="button" onClick={() => nudgeZoom(0.25)} title="Zoom in (crops black bars)">+</button>
                 <button type="button" className="zoom-level" onClick={() => setZoom(1)} title="Reset zoom">{Math.round(zoom * 100)}%</button>

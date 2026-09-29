@@ -7049,7 +7049,7 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 
 /* the stream's info bar: leave room for the fullscreen button, and only
    its buttons take taps so the player underneath stays usable */
-.room-tv-overlay { padding-right: 60px; pointer-events: none; }
+.room-tv-overlay { padding-right: 16px; pointer-events: none; }
 .room-tv-overlay button { pointer-events: auto; }
 @media (hover: none) {
   .room-tv-overlay { opacity: 1; height: 50px; }
