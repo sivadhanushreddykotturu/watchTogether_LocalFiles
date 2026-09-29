@@ -14,10 +14,15 @@ jobs:
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         run: |
-          TOKEN="${DEPLOY_TOKEN:-458781cb2d2b581f9d1122306b9d84495ecc2c2a6f57cd93}"
+          if [ -z "$DEPLOY_TOKEN" ]; then
+            echo "Error: DEPLOY_TOKEN secret is not configured in GitHub repository settings."
+            echo "Please go to Repo Settings -> Secrets and variables -> Actions -> New repository secret -> DEPLOY_TOKEN"
+            exit 1
+          fi
+
           RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST "https://reelsync.duckdns.org/api/deploy-webhook" \
             -H "Content-Type: application/json" \
-            -H "X-Deploy-Token: $TOKEN" \
+            -H "X-Deploy-Token: $DEPLOY_TOKEN" \
             -d '{"ref":"refs/heads/main"}')
           
           HTTP_BODY=$(echo "$RESPONSE" | sed -e '$d')
