@@ -274,6 +274,7 @@ export default function Room() {
   const [embedOffline, setEmbedOffline] = useState(false);
   const [embedRoomPaused, setEmbedRoomPaused] = useState(false);
   const [embedPausedActor, setEmbedPausedActor] = useState('');
+  const [peerSyncData, setPeerSyncData] = useState({}); // { socketId: { name, color, time, playing } }
   const [embedKey, setEmbedKey] = useState(0);
   const lastEmbedSeekRef = useRef(0);
   const embedPauseTimerRef = useRef(null);
@@ -1483,6 +1484,18 @@ export default function Room() {
           setEmbedRoomPaused(false);
           setEmbedPausedActor('');
         }
+        // Update peer sync awareness
+        const peers = peersRef.current;
+        // We know the actor name but not their socket id directly, so we find by name match
+        for (const [pid, pdata] of peers) {
+          if (pdata.name === actor) {
+            setPeerSyncData(prev => ({
+              ...prev,
+              [pid]: { ...prev[pid], name: pdata.name, color: pdata.color, time, playing: p }
+            }));
+            break;
+          }
+        }
       }
       applyState({ playing: p, time });
       if (!fileLoadedRef.current && sourceRef.current?.type !== 'embed' && sourceRef.current?.type !== 'youtube') {
@@ -1506,6 +1519,15 @@ export default function Room() {
         next.set(u.id, { name: u.name, color: u.color, time: prev ? prev.time : undefined });
       }
       peersRef.current = next;
+      if (sourceRef.current?.type === 'embed') {
+        setPeerSyncData(prev => {
+          const cleaned = {};
+          for (const [id, d] of Object.entries(prev)) {
+            if (ids.has(id)) cleaned[id] = d;
+          }
+          return cleaned;
+        });
+      }
       setPeerVoice((prev) => {
         return Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(id)));
       });
@@ -1602,6 +1624,14 @@ export default function Room() {
     const onPeerTime = ({ id, time }) => {
       const p = peersRef.current.get(id);
       if (p) { p.time = time; renderTicks(); }
+      // Update sync awareness state for embed mode
+      if (sourceRef.current?.type === 'embed') {
+        setPeerSyncData(prev => {
+          const existing = prev[id];
+          if (existing && existing.time === time) return prev;
+          return { ...prev, [id]: { ...existing, name: p?.name || 'Someone', color: p?.color || '#8A93A6', time } };
+        });
+      }
     };
     const onConnect = () => {
       if (!joinedRef.current) return; // initial join handles first connect
@@ -3965,7 +3995,62 @@ export default function Room() {
                     </div>
                   </div>
                 )}
-
+                
+                {/* ── Sync Awareness Strip ── */}
+                {users.length > 1 && (
+                  <div className="embed-sync-strip">
+                    {users.filter(u => u.id !== meId).map(u => {
+                      const pd = peerSyncData[u.id];
+                      const peerTime = pd?.time || 0;
+                      const myTime = embedTimeRef.current || 0;
+                      const diff = peerTime - myTime;
+                      const absDiff = Math.abs(diff);
+                      const showDrift = absDiff > 5;
+                      return (
+                        <div key={u.id} className="embed-sync-peer">
+                          <span className="embed-sync-dot" style={{ background: u.color }} />
+                          <span className="embed-sync-name">{u.name}</span>
+                          <span className="embed-sync-time">{fmt(peerTime)}</span>
+                          {pd?.playing === false ? (
+                            <svg className="embed-sync-icon paused" viewBox="0 0 16 16" width="12" height="12"><rect x="3" y="2" width="4" height="12" rx="1" fill="currentColor"/><rect x="9" y="2" width="4" height="12" rx="1" fill="currentColor"/></svg>
+                          ) : (
+                            <svg className="embed-sync-icon playing" viewBox="0 0 16 16" width="12" height="12"><path d="M4 2l10 6-10 6z" fill="currentColor"/></svg>
+                          )}
+                          {showDrift && (
+                            <span className={`embed-sync-drift ${diff > 0 ? 'ahead' : 'behind'}`}>
+                              {diff > 0 ? (
+                                <><svg viewBox="0 0 12 12" width="10" height="10"><path d="M6 2l4 4H2z" fill="currentColor"/></svg>{Math.floor(absDiff)}s ahead</>
+                              ) : (
+                                <><svg viewBox="0 0 12 12" width="10" height="10"><path d="M6 10L2 6h8z" fill="currentColor"/></svg>{Math.floor(absDiff)}s behind</>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      className="embed-sync-btn"
+                      onClick={() => {
+                        const rState = latestStateRef.current;
+                        const targetPos = rState?.playing
+                          ? ((rState?.time || 0) + (Date.now() - (rState?.at || Date.now())) / 1000)
+                          : (rState?.time || 0);
+                        seekEmbed(targetPos);
+                        if (rState?.playing === false) {
+                          pauseEmbed();
+                        } else {
+                          playEmbed();
+                        }
+                        toast('Synced to room position');
+                      }}
+                      title="Jump your player to the room's current position"
+                    >
+                      <svg viewBox="0 0 16 16" width="13" height="13"><path d="M1 8a7 7 0 0114 0A7 7 0 011 8zm7-5a5 5 0 100 10A5 5 0 008 3z" fill="currentColor" fillRule="evenodd"/><path d="M8 4v4l3 1.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/></svg>
+                      Sync
+                    </button>
+                  </div>
+                )}
 
                 <iframe
                   key={embedKey}
