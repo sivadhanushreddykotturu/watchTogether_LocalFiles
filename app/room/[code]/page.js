@@ -278,6 +278,7 @@ export default function Room() {
   const lastEmbedSeekRef = useRef(0);
   const embedPauseTimerRef = useRef(null);
   const lastRemoteCommandAt = useRef(0);
+  const embedReadyRef = useRef(false);
 
   const seekEmbed = (seconds) => {
     lastEmbedSeekRef.current = Date.now();
@@ -289,15 +290,12 @@ export default function Room() {
     if (embedIframeRef.current?.contentWindow) {
       try {
         const sec = Math.max(0, Math.floor(seconds));
-        // VidFast Watch Party API
         embedIframeRef.current.contentWindow.postMessage({ command: 'seek', time: sec }, '*');
-        // Legacy fallback
-        embedIframeRef.current.contentWindow.postMessage({ type: 'seek', time: seconds }, '*');
       } catch {}
     }
   };
 
-  const playEmbed = (time) => {
+  const playEmbed = () => {
     lastRemoteCommandAt.current = Date.now();
     if (embedPauseTimerRef.current) {
       clearTimeout(embedPauseTimerRef.current);
@@ -305,16 +303,12 @@ export default function Room() {
     }
     if (embedIframeRef.current?.contentWindow) {
       try {
-        const t = time !== undefined ? Math.max(0, Math.floor(time)) : undefined;
-        // VidFast Watch Party API
-        embedIframeRef.current.contentWindow.postMessage(t !== undefined ? { command: 'play', time: t } : { command: 'play' }, '*');
-        // Legacy fallback
-        embedIframeRef.current.contentWindow.postMessage({ type: 'play' }, '*');
+        embedIframeRef.current.contentWindow.postMessage({ command: 'play' }, '*');
       } catch {}
     }
   };
 
-  const pauseEmbed = (time) => {
+  const pauseEmbed = () => {
     lastRemoteCommandAt.current = Date.now();
     if (embedPauseTimerRef.current) {
       clearTimeout(embedPauseTimerRef.current);
@@ -322,11 +316,7 @@ export default function Room() {
     }
     if (embedIframeRef.current?.contentWindow) {
       try {
-        const t = time !== undefined ? Math.max(0, Math.floor(time)) : undefined;
-        // VidFast Watch Party API
-        embedIframeRef.current.contentWindow.postMessage(t !== undefined ? { command: 'pause', time: t } : { command: 'pause' }, '*');
-        // Legacy fallback
-        embedIframeRef.current.contentWindow.postMessage({ type: 'pause' }, '*');
+        embedIframeRef.current.contentWindow.postMessage({ command: 'pause' }, '*');
       } catch {}
     }
   };
@@ -388,6 +378,7 @@ export default function Room() {
         })
         .catch(() => {});
     } else if (s?.type === 'embed' && (s?.tmdbId || s?.platform === 'VidFast' || s?.platform === 'Vidlove')) {
+      embedReadyRef.current = false;
       embedTimeRef.current = 0;
       embedDurationRef.current = 0;
       setEmbedTime(0);
@@ -1206,6 +1197,10 @@ export default function Room() {
         if (playing && Math.abs(drift) > 3.5 && expected > 2 && Date.now() - lastLocalSeekRef.current > 4000) {
           lastLocalSeekRef.current = Date.now();
           seekEmbed(expected);
+        } else if (!playing && Math.abs(drift) > 2.0 && Date.now() - lastLocalSeekRef.current > 4000) {
+          lastLocalSeekRef.current = Date.now();
+          seekEmbed(expected);
+          pauseEmbed();
         }
       });
       return;
@@ -2017,6 +2012,27 @@ export default function Room() {
       if (dur !== null && dur > 0) {
         embedDurationRef.current = dur;
         setEmbedDuration(dur);
+      }
+
+      // First handshake: VidFast has booted, hydrated its scripts, and sent its first message!
+      if (!embedReadyRef.current) {
+        embedReadyRef.current = true;
+        const rState = latestStateRef.current;
+        const targetPos = rState?.playing
+          ? ((rState?.time || 0) + (Date.now() - (rState?.at || Date.now())) / 1000)
+          : (rState?.time || 0);
+
+        if (targetPos > 2 && Math.abs((curTime || 0) - targetPos) > 2.5) {
+          seekEmbed(targetPos);
+        }
+
+        if (rState?.playing === false) {
+          pauseEmbed();
+          setPlaying(false);
+        } else if (rState?.playing === true) {
+          playEmbed();
+          setPlaying(true);
+        }
       }
 
       if (eventName === 'timeupdate') {
