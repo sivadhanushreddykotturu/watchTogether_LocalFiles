@@ -276,7 +276,6 @@ export default function Room() {
   const [embedOffline, setEmbedOffline] = useState(false);
   const [embedRoomPaused, setEmbedRoomPaused] = useState(false);
   const [embedPausedActor, setEmbedPausedActor] = useState('');
-  const [embedMutedHint, setEmbedMutedHint] = useState(false);
   const [embedKey, setEmbedKey] = useState(0);
 
   const seekEmbed = (seconds) => {
@@ -324,13 +323,6 @@ export default function Room() {
   };
 
 
-  const handleUnmuteEmbed = () => {
-    setEmbedMutedHint(false);
-    try {
-      embedIframeRef.current?.focus();
-    } catch {}
-    toast("Audio unmuted! (Click player or press 'M' inside video to toggle)");
-  };
 
   const handleRetryEmbed = () => {
     embedInitialSyncedRef.current = false;
@@ -389,7 +381,6 @@ export default function Room() {
       setEmbedOffline(false);
       setEmbedRoomPaused(latestStateRef.current?.playing === false);
       setEmbedPausedActor('');
-      setEmbedMutedHint(true);
       subsOnRef.current = false;
       setSubsOn(false);
       setSubText('');
@@ -3935,18 +3926,6 @@ export default function Room() {
                       </button>
                     </div>
                   </div>
-                )}
-
-                {embedMutedHint && (
-                  <button
-                    type="button"
-                    className="embed-unmute-pill"
-                    onClick={handleUnmuteEmbed}
-                    title="Click to unmute audio"
-                  >
-                    <span className="unmute-icon">🔊</span>
-                    <span>Tap to Unmute Audio</span>
-                  </button>
                 )}
 
                 {embedOffline && (
