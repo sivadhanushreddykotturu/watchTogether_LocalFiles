@@ -323,20 +323,6 @@ export default function Room() {
     }
   };
 
-  const getEmbedSrc = () => {
-    if (!source?.embedUrl) return '';
-    let url = source.embedUrl;
-    // Inject startAt parameter for watch party catch-up if not already present
-    const roomPos = latestStateRef.current?.playing
-      ? (latestStateRef.current.time || 0) + (Date.now() - (latestStateRef.current.at || Date.now())) / 1000
-      : (latestStateRef.current?.time || 0);
-
-    if (roomPos > 2 && !url.includes('startAt=')) {
-      const sep = url.includes('?') ? '&' : '?';
-      url += `${sep}startAt=${Math.floor(roomPos)}`;
-    }
-    return url;
-  };
 
   const handleUnmuteEmbed = () => {
     setEmbedMutedHint(false);
@@ -4052,7 +4038,7 @@ export default function Room() {
                 <iframe
                   key={embedKey}
                   ref={embedIframeRef}
-                  src={getEmbedSrc()}
+                  src={source.embedUrl}
                   className="web-embed-iframe"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
                   allowFullScreen
