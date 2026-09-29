@@ -269,8 +269,6 @@ export default function Room() {
   const embedTimeRef = useRef(0);
   const embedDurationRef = useRef(0);
   const embedPlayingRef = useRef(false);
-  const embedInitialSyncedRef = useRef(false);
-  const embedSyncingRef = useRef(false);
   const [embedTime, setEmbedTime] = useState(0);
   const [embedDuration, setEmbedDuration] = useState(0);
   const [embedOffline, setEmbedOffline] = useState(false);
@@ -279,9 +277,11 @@ export default function Room() {
   const [embedKey, setEmbedKey] = useState(0);
   const lastEmbedSeekRef = useRef(0);
   const embedPauseTimerRef = useRef(null);
+  const lastRemoteCommandAt = useRef(0);
 
   const seekEmbed = (seconds) => {
     lastEmbedSeekRef.current = Date.now();
+    lastRemoteCommandAt.current = Date.now();
     if (embedPauseTimerRef.current) {
       clearTimeout(embedPauseTimerRef.current);
       embedPauseTimerRef.current = null;
@@ -298,6 +298,11 @@ export default function Room() {
   };
 
   const playEmbed = (time) => {
+    lastRemoteCommandAt.current = Date.now();
+    if (embedPauseTimerRef.current) {
+      clearTimeout(embedPauseTimerRef.current);
+      embedPauseTimerRef.current = null;
+    }
     if (embedIframeRef.current?.contentWindow) {
       try {
         const t = time !== undefined ? Math.max(0, Math.floor(time)) : undefined;
@@ -310,6 +315,11 @@ export default function Room() {
   };
 
   const pauseEmbed = (time) => {
+    lastRemoteCommandAt.current = Date.now();
+    if (embedPauseTimerRef.current) {
+      clearTimeout(embedPauseTimerRef.current);
+      embedPauseTimerRef.current = null;
+    }
     if (embedIframeRef.current?.contentWindow) {
       try {
         const t = time !== undefined ? Math.max(0, Math.floor(time)) : undefined;
@@ -332,7 +342,6 @@ export default function Room() {
 
 
   const handleRetryEmbed = () => {
-    embedInitialSyncedRef.current = false;
     setEmbedOffline(false);
     setEmbedKey((k) => k + 1);
     toast("Retrying stream server...");
@@ -379,8 +388,6 @@ export default function Room() {
         })
         .catch(() => {});
     } else if (s?.type === 'embed' && (s?.tmdbId || s?.platform === 'VidFast' || s?.platform === 'Vidlove')) {
-      embedInitialSyncedRef.current = false;
-      embedSyncingRef.current = false;
       embedTimeRef.current = 0;
       embedDurationRef.current = 0;
       setEmbedTime(0);
@@ -392,27 +399,17 @@ export default function Room() {
       setSubsOn(false);
       setSubText('');
 
-      // Fallback: if stream hasn't hit ~1.5s of playback within 6s (e.g. autoplay blocked), jump to room position
-      setTimeout(() => {
-        if (!embedInitialSyncedRef.current && sourceRef.current?.type === 'embed') {
-          const roomPos = latestStateRef.current?.playing
-            ? ((latestStateRef.current.time || 0) + (Date.now() - (latestStateRef.current.at || Date.now())) / 1000)
-            : (latestStateRef.current?.time || 0);
-          if (roomPos > 2) {
-            embedSyncingRef.current = true;
-            guardRef.current.seek += 3;
-            seekEmbed(roomPos);
-            setTimeout(() => {
-              embedInitialSyncedRef.current = true;
-              embedSyncingRef.current = false;
-              toast(`Synced with room at ${fmt(roomPos)}`);
-            }, 1000);
-          } else {
-            embedInitialSyncedRef.current = true;
-            embedSyncingRef.current = false;
-          }
-        }
-      }, 6000);
+      const roomPos = latestStateRef.current?.playing
+        ? ((latestStateRef.current.time || 0) + (Date.now() - (latestStateRef.current.at || Date.now())) / 1000)
+        : (latestStateRef.current?.time || 0);
+
+      if (roomPos > 2 && s.embedUrl && !s.embedUrl.includes('startAt=')) {
+        try {
+          const u = new URL(s.embedUrl);
+          u.searchParams.set('startAt', String(Math.floor(roomPos)));
+          s.embedUrl = u.toString();
+        } catch {}
+      }
 
       fetchTmdbSources({
         id: s.tmdbId,
@@ -1069,24 +1066,20 @@ export default function Room() {
 
     // Embed mode: drive the iframe player instead of the <video> element.
     if (sourceRef.current?.type === 'embed') {
-      const guard = guardRef.current;
       const cur = embedTimeRef.current || 0;
-      if (Math.abs(cur - state.time) > 1.5) {
-        guard.seek++;
+      if (Math.abs(cur - state.time) > 2.0) {
         seekEmbed(state.time);
       }
       if (state.playing) {
         setEmbedRoomPaused(false);
         setPlaying(true);
         embedPlayingRef.current = true;
-        guard.play++;
-        playEmbed();
+        playEmbed(state.time);
       } else {
         setEmbedRoomPaused(true);
         setPlaying(false);
         embedPlayingRef.current = false;
-        guard.pause++;
-        pauseEmbed();
+        pauseEmbed(state.time);
       }
       updateTimeline();
       return;
@@ -1203,7 +1196,6 @@ export default function Room() {
 
     // Embed mode heartbeat
     if (sourceRef.current?.type === 'embed') {
-      if (!embedInitialSyncedRef.current || embedSyncingRef.current) return;
       const cur = embedTimeRef.current || 0;
       if (!socket.connected) return;
       socket.emit('time-update', cur, ({ expected, playing } = {}) => {
@@ -1211,9 +1203,8 @@ export default function Room() {
         setStateLatest(playing, expected);
         const drift = expected - cur;
 
-        if (embedInitialSyncedRef.current && !embedSyncingRef.current && playing && Math.abs(drift) > 3.0 && expected > 2 && Date.now() - lastLocalSeekRef.current > 5000) {
+        if (playing && Math.abs(drift) > 3.5 && expected > 2 && Date.now() - lastLocalSeekRef.current > 4000) {
           lastLocalSeekRef.current = Date.now();
-          guardRef.current.seek += 2;
           seekEmbed(expected);
         }
       });
@@ -1287,6 +1278,13 @@ export default function Room() {
       setStateLatest(res.state.playing, res.state.time);
       offsetRef.current = res.state.subOffset || 0;
       setSubOffset(offsetRef.current);
+      if (res.state.source?.type === 'embed' && res.state.time > 2 && res.state.source.embedUrl) {
+        try {
+          const u = new URL(res.state.source.embedUrl);
+          u.searchParams.set('startAt', String(Math.floor(res.state.time)));
+          res.state.source.embedUrl = u.toString();
+        } catch {}
+      }
       setSourceState(res.state.source || null);
       if (Array.isArray(res.state.queue)) {
         setQueue(res.state.queue);
@@ -1907,10 +1905,8 @@ export default function Room() {
       if (room.playing) {
         const t = sourceRef.current?.type;
         if (t === 'embed' && !embedPlayingRef.current) {
-          guardRef.current.seek++;
           seekEmbed(room.time);
-          guardRef.current.play++;
-          playEmbed();
+          playEmbed(room.time);
           setEmbedRoomPaused(false);
         } else if (t === 'youtube' ? !ytPlayingRef.current : (fileLoadedRef.current && videoRef.current?.paused)) {
           applyState(room);
@@ -1942,7 +1938,6 @@ export default function Room() {
         if (e.code === 'ArrowRight') {
           e.preventDefault();
           const target = (embedTimeRef.current || 0) + 5;
-          guardRef.current.seek++;
           seekEmbed(target);
           latestStateRef.current.time = target;
           emitPlayback('seek');
@@ -1950,7 +1945,6 @@ export default function Room() {
         if (e.code === 'ArrowLeft') {
           e.preventDefault();
           const target = Math.max(0, (embedTimeRef.current || 0) - 5);
-          guardRef.current.seek++;
           seekEmbed(target);
           latestStateRef.current.time = target;
           emitPlayback('seek');
@@ -2029,44 +2023,23 @@ export default function Room() {
         updateTimeline();
         updateSubtitles();
         setEmbedOffline(false);
-        if (!embedInitialSyncedRef.current) {
-          const roomPos = latestStateRef.current?.playing
-            ? ((latestStateRef.current.time || 0) + (Date.now() - (latestStateRef.current.at || Date.now())) / 1000)
-            : (latestStateRef.current?.time || 0);
+        return;
+      }
 
-          if (roomPos <= 3) {
-            // Room is at the beginning, no jump needed
-            if (curTime >= 0.5) {
-              embedInitialSyncedRef.current = true;
-              embedSyncingRef.current = false;
-            }
-          } else if (curTime >= 1.5 && !embedSyncingRef.current) {
-            // Stream has loaded and played stably for ~1.5 seconds; now jump to room position!
-            embedSyncingRef.current = true;
-            guardRef.current.seek += 3;
-            seekEmbed(roomPos);
-            toast(`Syncing with room at ${fmt(roomPos)}…`);
-          } else if (embedSyncingRef.current && curTime >= roomPos - 3) {
-            // Seek has landed at the target room position!
-            embedInitialSyncedRef.current = true;
-            embedSyncingRef.current = false;
-            toast(`Synced with room at ${fmt(roomPos)}`);
-            if (latestStateRef.current?.playing === false) {
-              setEmbedRoomPaused(true);
-              pauseEmbed();
-            }
-          }
-        }
-      } else if ((eventName === 'play' || eventName === 'pause') && inTabSwitch()) {
+      if ((eventName === 'play' || eventName === 'pause') && inTabSwitch()) {
         if (eventName === 'play' && latestStateRef.current?.playing === false) {
-          guardRef.current.pause++;
           pauseEmbed();
           return;
         }
         embedPlayingRef.current = eventName === 'play';
         setPlaying(eventName === 'play');
         return;
-      } else if (eventName === 'play') {
+      }
+
+      // Check if this event was triggered by an incoming remote command
+      const isEcho = Date.now() - lastRemoteCommandAt.current < 900;
+
+      if (eventName === 'play') {
         if (embedPauseTimerRef.current) {
           clearTimeout(embedPauseTimerRef.current);
           embedPauseTimerRef.current = null;
@@ -2074,9 +2047,7 @@ export default function Room() {
         embedPlayingRef.current = true;
         setPlaying(true);
         setEmbedRoomPaused(false);
-        if (guardRef.current.play > 0) {
-          guardRef.current.play--;
-        } else if (embedInitialSyncedRef.current && !embedSyncingRef.current) {
+        if (!isEcho) {
           emitPlayback('play');
         }
       } else if (eventName === 'pause') {
@@ -2084,8 +2055,8 @@ export default function Room() {
           clearTimeout(embedPauseTimerRef.current);
           embedPauseTimerRef.current = null;
         }
-        // If we recently seeked/fast-forwarded (within 1000ms), or are syncing, ignore internal buffering pauses!
-        if (Date.now() - lastEmbedSeekRef.current < 1000 || embedSyncingRef.current || !embedInitialSyncedRef.current) {
+        // If we recently seeked/fast-forwarded (within 1000ms), ignore internal buffering pauses!
+        if (Date.now() - lastEmbedSeekRef.current < 1000) {
           return;
         }
         embedPauseTimerRef.current = setTimeout(() => {
@@ -2093,9 +2064,7 @@ export default function Room() {
           embedPlayingRef.current = false;
           setPlaying(false);
           setEmbedRoomPaused(true);
-          if (guardRef.current.pause > 0) {
-            guardRef.current.pause--;
-          } else if (embedInitialSyncedRef.current && !embedSyncingRef.current) {
+          if (!isEcho) {
             lastLocalPauseRef.current = Date.now();
             emitPlayback('pause');
           }
@@ -2114,24 +2083,7 @@ export default function Room() {
         }
         updateTimeline();
         updateSubtitles();
-        if (embedSyncingRef.current) {
-          const roomPos = latestStateRef.current?.playing
-            ? ((latestStateRef.current.time || 0) + (Date.now() - (latestStateRef.current.at || Date.now())) / 1000)
-            : (latestStateRef.current?.time || 0);
-          if (curTime !== null && curTime >= roomPos - 3) {
-            embedInitialSyncedRef.current = true;
-            embedSyncingRef.current = false;
-            toast(`Synced with room at ${fmt(roomPos)}`);
-            if (latestStateRef.current?.playing === false) {
-              setEmbedRoomPaused(true);
-              pauseEmbed();
-            }
-          }
-          return; // Suppress outgoing seek during initial sync!
-        }
-        if (guardRef.current.seek > 0) {
-          guardRef.current.seek--;
-        } else if (embedInitialSyncedRef.current && !embedSyncingRef.current) {
+        if (!isEcho) {
           lastLocalSeekRef.current = Date.now();
           const t = curTime !== null ? curTime : (embedTimeRef.current || 0);
           latestStateRef.current.time = t;
@@ -2863,22 +2815,17 @@ export default function Room() {
     }
     if (sourceRef.current?.type === 'embed') {
       userIntentRef.current = true;
-      const isCurrentlyPlaying = playing || embedPlayingRef.current || !embedRoomPaused;
+      const isCurrentlyPlaying = playing || embedPlayingRef.current;
       if (isCurrentlyPlaying) {
-        setEmbedRoomPaused(true);
         setPlaying(false);
         embedPlayingRef.current = false;
-        guardRef.current.pause++;
         pauseEmbed();
         emitPlayback('pause');
       } else {
-        setEmbedRoomPaused(false);
         setPlaying(true);
         embedPlayingRef.current = true;
         const resumePos = latestStateRef.current?.time || embedTimeRef.current || 0;
-        guardRef.current.seek++;
         seekEmbed(resumePos);
-        guardRef.current.play++;
         playEmbed();
         emitPlayback('play');
       }
