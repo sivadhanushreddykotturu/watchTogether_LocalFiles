@@ -3512,6 +3512,7 @@ export default function Room() {
             episode: epPayload.episode,
             tmdbId: epPayload.tmdbId,
             mediaType: 'tv',
+            year: epPayload.year || selectedSeriesForEpisodes?.year || selectedSeriesForEpisodes?.releaseYear,
           }),
         });
         const data = await res.json();

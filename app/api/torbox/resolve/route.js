@@ -47,6 +47,52 @@ async function searchPirateBay(query) {
   }
 }
 
+function cleanShowName(str) {
+  return (str || '')
+    .toLowerCase()
+    .replace(/^\[[^\]]+\]\s*/, '') // remove leading bracket tags like [HorribleSubs] or [Force-Works]
+    .replace(/\([^\)]+\)/g, ' ')   // remove parenthesis content
+    .replace(/[\._\-:,]/g, ' ')     // replace separators with space
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function matchesShowTitle(torrentName, candidateTitles) {
+  if (!torrentName) return false;
+
+  const rawName = torrentName.replace(/^\[[^\]]+\]\s*/, '');
+  const normTorrent = rawName.toLowerCase().replace(/[\._\-:,]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // Find where the season / episode / year specifier starts
+  const markerRegex = /\b(?:s\d{1,2}|season\s*\d{1,2}|\d{1,2}x\d{1,2}|(?:19|20)\d{2})\b/i;
+  const match = normTorrent.match(markerRegex);
+  const prefix = match ? normTorrent.slice(0, match.index).trim() : normTorrent;
+
+  for (const rawCandidate of candidateTitles) {
+    if (!rawCandidate) continue;
+    const cleanCand = cleanShowName(rawCandidate);
+    if (!cleanCand) continue;
+
+    // 1. If prefix matches candidate exactly
+    if (prefix === cleanCand) return true;
+
+    // 2. If prefix is "iron man anime" and candidate is "iron man"
+    if (prefix.startsWith(cleanCand)) {
+      const remainder = prefix.slice(cleanCand.length).trim();
+      if (!remainder || /^(?:anime|tv|series|us|uk|japan)$/i.test(remainder)) {
+        return true;
+      }
+    }
+
+    // 3. Handle optional leading "the "
+    const noThePrefix = prefix.replace(/^the\s+/, '');
+    const noTheCand = cleanCand.replace(/^the\s+/, '');
+    if (noThePrefix && noThePrefix === noTheCand) return true;
+  }
+
+  return false;
+}
+
 export async function POST(req) {
   try {
     const { title, year, imdbId, tmdbId, mediaType, season, episode } = await req.json();
@@ -69,6 +115,11 @@ export async function POST(req) {
 
       // Candidate search titles (include alternative titles / native names like Nan Hong)
       const candidateTitles = [title];
+      if (year) {
+        candidateTitles.push(`${title} ${year}`);
+        candidateTitles.push(`${title} (${year})`);
+      }
+
       if (tmdbId) {
         try {
           const tmdbApiKey = process.env.TMDB_API_KEY || 'baf435afe9fef24b14b2a137359e4124';
@@ -87,6 +138,10 @@ export async function POST(req) {
 
       // Search PirateBay prioritizing exact episode & season packs in parallel
       const queries = [];
+      if (year) {
+        queries.push(`${title} ${year} S${sStr}E${eStr}`);
+        queries.push(`${title} ${year}`);
+      }
       candidateTitles.forEach((t) => {
         queries.push(`${t} S${sStr}E${eStr}`);
         queries.push(`${t} S${sStr}`);
@@ -94,7 +149,7 @@ export async function POST(req) {
         queries.push(t);
       });
 
-      const uniqueQueries = [...new Set(queries)].slice(0, 4);
+      const uniqueQueries = [...new Set(queries)].slice(0, 5);
       const searchResults = await Promise.all(uniqueQueries.map((q) => searchPirateBay(q)));
       const pbTorrents = [];
       const seenHashes = new Set();
@@ -140,12 +195,15 @@ export async function POST(req) {
       const epRegex = new RegExp(`(?:s${sStr}e${eStr}|${sNum}x${eStr}|episode\\s*0?${eNum}\\b)`, 'i');
       const seasonRegex = new RegExp(`(?:s${sStr}\\b|season\\s*0?${sNum}\\b)`, 'i');
 
+      // Filter cached torrents strictly matching the show title first
+      const validCached = cachedList.filter((c) => matchesShowTitle(c.name || '', candidateTitles));
+
       // 1. Look for exact episode torrent (e.g. S01E02)
-      let targetTorrent = cachedList.find((c) => epRegex.test(c.name || ''));
+      let targetTorrent = validCached.find((c) => epRegex.test(c.name || ''));
 
       // 2. Or complete season pack (e.g. S01 Complete)
       if (!targetTorrent) {
-        targetTorrent = cachedList.find((c) => seasonRegex.test(c.name || '') && !/s\d+e\d+/i.test(c.name || ''));
+        targetTorrent = validCached.find((c) => seasonRegex.test(c.name || '') && !/s\d+e\d+/i.test(c.name || ''));
       }
 
       // Strictly fail if neither exists so we NEVER play a wrong episode
