@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
+const execFileAsync = promisify(execFile);
 const YTS_DOMAINS = ['yts.am', 'yts.pm', 'yts.do', 'yts.rs'];
 
 async function searchYts(query, imdbId) {
@@ -25,17 +28,21 @@ async function searchYts(query, imdbId) {
 
 async function searchPirateBay(query) {
   try {
-    const res = await fetch(`https://apibay.org/q.php?q=${encodeURIComponent(query)}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        Accept: 'application/json',
-      },
-      signal: AbortSignal.timeout(4000),
-    });
-    if (!res.ok) return [];
-    const json = await res.json();
+    const url = `https://apibay.org/q.php?q=${encodeURIComponent(query)}`;
+    const { stdout } = await execFileAsync(
+      'curl',
+      [
+        '-s',
+        '-H',
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        url,
+      ],
+      { timeout: 6000 }
+    );
+    const json = JSON.parse(stdout);
     return Array.isArray(json) ? json.filter((t) => t.info_hash && t.info_hash !== '0000000000000000000000000000000000000000') : [];
-  } catch {
+  } catch (err) {
+    console.warn('PirateBay search error:', err.message);
     return [];
   }
 }
