@@ -7,6 +7,10 @@ async function searchYts(query, imdbId) {
     try {
       const searchTerm = imdbId || query;
       const res = await fetch(`https://${domain}/api/v2/list_movies.json?query_term=${encodeURIComponent(searchTerm)}`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          Accept: 'application/json',
+        },
         signal: AbortSignal.timeout(4000),
       });
       if (!res.ok) continue;
@@ -22,6 +26,10 @@ async function searchYts(query, imdbId) {
 async function searchPirateBay(query) {
   try {
     const res = await fetch(`https://apibay.org/q.php?q=${encodeURIComponent(query)}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        Accept: 'application/json',
+      },
       signal: AbortSignal.timeout(4000),
     });
     if (!res.ok) return [];
