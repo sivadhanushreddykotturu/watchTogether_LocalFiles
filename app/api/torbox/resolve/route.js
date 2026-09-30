@@ -264,8 +264,9 @@ export async function POST(req) {
       const listJson = await listRes.json();
       const files = listJson.data?.files || [];
 
-      // Match exact episode file
-      const epFile = files.find((f) => epRegex.test(f.name));
+      // Filter out non-video files first (skip screenshots, nfo, sample, cover.jpg)
+      const videoFiles = files.filter((f) => /\.(mp4|mkv|m4v|avi|webm|mov)$/i.test(f.name) && !/\/screenshots\//i.test(f.name) && !/\bsample\b/i.test(f.name));
+      const epFile = videoFiles.find((f) => epRegex.test(f.name)) || files.find((f) => epRegex.test(f.name));
 
       if (!epFile) {
         return NextResponse.json({ success: false, cached: false, reason: `Episode S${sStr}E${eStr} file not found in torrent` });
@@ -275,44 +276,68 @@ export async function POST(req) {
       let directUrl = null;
       let hlsUrl = null;
 
-      const hlsPromise = fetch(
-        `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${epFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=null`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(7000),
-        }
-      ).then(async (r) => (r.ok ? (await r.json())?.data?.hls_url : null)).catch(() => null);
-
-      const dlPromise = fetch(
-        `https://api.torbox.app/v1/api/torrents/requestdl?token=${token}&torrent_id=${torrentId}&file_id=${epFile.id}&redirect=false`,
-        { signal: AbortSignal.timeout(6000) }
-      ).then(async (r) => (r.ok ? (await r.json())?.data : null)).catch(() => null);
-
-      const [resHls, resDl] = await Promise.all([hlsPromise, dlPromise]);
-      hlsUrl = resHls;
-      directUrl = resDl;
-
-      if (!hlsUrl && directUrl) hlsUrl = directUrl;
-      if (!directUrl && hlsUrl) directUrl = hlsUrl;
-
-      if (!hlsUrl && !directUrl) {
-        return NextResponse.json({ success: false, cached: false, reason: 'Could not generate stream URL' });
+      if (canDirect) {
+        // Universal web video (standard MP4): fast direct CDN pipe
+        try {
+          const dlRes = await fetch(
+            `https://api.torbox.app/v1/api/torrents/requestdl?token=${token}&torrent_id=${torrentId}&file_id=${epFile.id}&redirect=false`,
+            { signal: AbortSignal.timeout(6000) }
+          );
+          if (dlRes.ok) {
+            directUrl = (await dlRes.json())?.data || null;
+          }
+        } catch {}
+      } else {
+        // MKV / HEVC: Requires TorBox HLS live transcoding
+        try {
+          const hlsRes = await fetch(
+            `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${epFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=null`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              signal: AbortSignal.timeout(12000),
+            }
+          );
+          if (hlsRes.ok) {
+            const hlsData = await hlsRes.json();
+            hlsUrl = hlsData?.data?.hls_url || null;
+          }
+        } catch {}
       }
 
-      const streamType = (canDirect && directUrl) ? 'direct' : 'hls';
-      const streamUrl = streamType === 'direct' ? directUrl : hlsUrl;
+      if (canDirect && directUrl) {
+        return NextResponse.json({
+          success: true,
+          cached: true,
+          streamType: 'direct',
+          streamUrl: directUrl,
+          directUrl,
+          hlsUrl: null,
+          canDirect: true,
+          title: `${title} S${sStr}:E${eStr}`,
+          fileName: epFile.name,
+          quality: '1080p',
+        });
+      }
+
+      if (hlsUrl) {
+        return NextResponse.json({
+          success: true,
+          cached: true,
+          streamType: 'hls',
+          streamUrl: hlsUrl,
+          directUrl: null,
+          hlsUrl,
+          canDirect: false,
+          title: `${title} S${sStr}:E${eStr}`,
+          fileName: epFile.name,
+          quality: '1080p',
+        });
+      }
 
       return NextResponse.json({
-        success: true,
-        cached: true,
-        streamType,
-        streamUrl,
-        directUrl,
-        hlsUrl,
-        canDirect: Boolean(canDirect && directUrl),
-        title: `${title} S${sStr}:E${eStr}`,
-        fileName: epFile.name,
-        quality: '1080p',
+        success: false,
+        cached: false,
+        reason: 'Live HLS transcode unavailable for this MKV release',
       });
     }
 
@@ -412,45 +437,68 @@ export async function POST(req) {
     let directUrl = null;
     let hlsUrl = null;
 
-    const hlsPromise = fetch(
-      `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${videoFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=null`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(7000),
-      }
-    ).then(async (r) => (r.ok ? (await r.json())?.data?.hls_url : null)).catch(() => null);
-
-    const dlPromise = fetch(
-      `https://api.torbox.app/v1/api/torrents/requestdl?token=${token}&torrent_id=${torrentId}&file_id=${videoFile.id}&redirect=false`,
-      { signal: AbortSignal.timeout(6000) }
-    ).then(async (r) => (r.ok ? (await r.json())?.data : null)).catch(() => null);
-
-    const [resHls, resDl] = await Promise.all([hlsPromise, dlPromise]);
-    hlsUrl = resHls;
-    directUrl = resDl;
-
-    if (!hlsUrl && directUrl) hlsUrl = directUrl;
-    if (!directUrl && hlsUrl) directUrl = hlsUrl;
-
-    if (!hlsUrl && !directUrl) {
-      return NextResponse.json({ success: false, cached: false, reason: 'Could not generate stream URL' });
+    if (canDirect) {
+      try {
+        const dlRes = await fetch(
+          `https://api.torbox.app/v1/api/torrents/requestdl?token=${token}&torrent_id=${torrentId}&file_id=${videoFile.id}&redirect=false`,
+          { signal: AbortSignal.timeout(6000) }
+        );
+        if (dlRes.ok) {
+          directUrl = (await dlRes.json())?.data || null;
+        }
+      } catch {}
+    } else {
+      try {
+        const hlsRes = await fetch(
+          `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${videoFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=null`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(12000),
+          }
+        );
+        if (hlsRes.ok) {
+          const hlsData = await hlsRes.json();
+          hlsUrl = hlsData?.data?.hls_url || null;
+        }
+      } catch {}
     }
 
-    const streamType = (canDirect && directUrl) ? 'direct' : 'hls';
-    const streamUrl = streamType === 'direct' ? directUrl : hlsUrl;
+    if (canDirect && directUrl) {
+      return NextResponse.json({
+        success: true,
+        cached: true,
+        streamType: 'direct',
+        streamUrl: directUrl,
+        directUrl,
+        hlsUrl: null,
+        canDirect: true,
+        quality: bestTorrent.quality || '1080p',
+        fileSize: videoFile.size,
+        fileName: videoFile.name,
+        title: movie?.title || title,
+      });
+    }
+
+    if (hlsUrl) {
+      return NextResponse.json({
+        success: true,
+        cached: true,
+        streamType: 'hls',
+        streamUrl: hlsUrl,
+        directUrl: null,
+        hlsUrl,
+        canDirect: false,
+        quality: bestTorrent.quality || '1080p',
+        fileSize: videoFile.size,
+        fileName: videoFile.name,
+        title: movie?.title || title,
+      });
+    }
 
     return NextResponse.json({
-      success: true,
-      cached: true,
-      streamType,
-      streamUrl,
-      directUrl,
-      hlsUrl,
-      canDirect: Boolean(canDirect && directUrl),
-      quality: bestTorrent.quality || '1080p',
-      fileSize: videoFile.size,
-      fileName: videoFile.name,
-      title: movie?.title || title,
+      success: false,
+      cached: false,
+      reason: 'Could not generate stream for this movie release',
     });
   } catch (err) {
     console.error('TorBox resolve error:', err);
