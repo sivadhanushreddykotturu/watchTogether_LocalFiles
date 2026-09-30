@@ -590,7 +590,7 @@ function attach(io) {
 
     // --- source switch: local files <-> YouTube <-> HLS / PH Stream <-> Web Embed <-> Direct Stream. Resetting the source also
     // resets the playhead; everyone (including the setter) applies it uniformly.
-    socket.on('source', ({ type, videoId, embedUrl, url, title, platform, viewkey, playing = true, tmdbId, mediaType, season, episode, episodeTitle, showTitle, poster, backdrop, subtitleUrl, subtitles } = {}) => {
+    socket.on('source', ({ type, videoId, embedUrl, url, hlsUrl, directUrl, canDirect, streamType, title, platform, viewkey, playing = true, tmdbId, mediaType, season, episode, episodeTitle, showTitle, poster, backdrop, subtitleUrl, subtitles } = {}) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
       if (room.controlLock && room.host !== socket.id) return; // locked: host only
@@ -602,6 +602,10 @@ function attach(io) {
         room.state.source = {
           type,
           url: String(url),
+          hlsUrl: hlsUrl ? String(hlsUrl) : null,
+          directUrl: directUrl ? String(directUrl) : null,
+          canDirect: Boolean(canDirect),
+          streamType: streamType || type,
           title: String(title || 'Video Stream').slice(0, 150),
           platform: String(platform || 'Stream').slice(0, 50),
           viewkey: viewkey || null,
@@ -656,7 +660,7 @@ function attach(io) {
     });
 
     // --- queue management ---
-    socket.on('queue-add', ({ videoId, type, embedUrl, url, title, platform, viewkey, playNow, tmdbId, mediaType, season, episode, episodeTitle, showTitle, poster, backdrop } = {}, cb) => {
+    socket.on('queue-add', ({ videoId, type, embedUrl, url, hlsUrl, directUrl, canDirect, streamType, title, platform, viewkey, playNow, tmdbId, mediaType, season, episode, episodeTitle, showTitle, poster, backdrop, subtitleUrl, subtitles } = {}, cb) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
       if (room.controlLock && room.host !== socket.id) return; // locked: host only
@@ -670,6 +674,10 @@ function attach(io) {
         videoId: videoId || null,
         embedUrl: embedUrl || null,
         url: url || null,
+        hlsUrl: hlsUrl ? String(hlsUrl) : null,
+        directUrl: directUrl ? String(directUrl) : null,
+        canDirect: Boolean(canDirect),
+        streamType: streamType || itemType,
         viewkey: viewkey || null,
         tmdbId: tmdbId || null,
         mediaType: mediaType || null,
@@ -679,6 +687,8 @@ function attach(io) {
         showTitle: showTitle ? String(showTitle).slice(0, 200) : null,
         poster: poster ? String(poster).slice(0, 500) : null,
         backdrop: backdrop ? String(backdrop).slice(0, 500) : null,
+        subtitleUrl: subtitleUrl || null,
+        subtitles: Array.isArray(subtitles) ? subtitles : [],
         title: String(title || (itemType === 'youtube' ? 'YouTube Video' : 'Web Video')).slice(0, 200),
         platform: String(platform || (itemType === 'youtube' ? 'YouTube' : 'Web Video')).slice(0, 50),
         addedBy: socket.id,
@@ -693,6 +703,10 @@ function attach(io) {
           videoId: item.videoId,
           embedUrl: item.embedUrl,
           url: item.url,
+          hlsUrl: item.hlsUrl,
+          directUrl: item.directUrl,
+          canDirect: item.canDirect,
+          streamType: item.streamType,
           viewkey: item.viewkey,
           title: item.title,
           platform: item.platform,
@@ -704,6 +718,8 @@ function attach(io) {
           showTitle: item.showTitle,
           poster: item.poster,
           backdrop: item.backdrop,
+          subtitleUrl: item.subtitleUrl,
+          subtitles: item.subtitles,
         };
         room.state.time = 0;
         room.state.playing = true;
@@ -753,6 +769,11 @@ function attach(io) {
         videoId: item.videoId,
         embedUrl: item.embedUrl,
         url: item.url,
+        hlsUrl: item.hlsUrl,
+        directUrl: item.directUrl,
+        canDirect: item.canDirect,
+        streamType: item.streamType,
+        viewkey: item.viewkey,
         title: item.title,
         platform: item.platform,
         tmdbId: item.tmdbId || null,
@@ -763,6 +784,8 @@ function attach(io) {
         showTitle: item.showTitle || null,
         poster: item.poster || null,
         backdrop: item.backdrop || null,
+        subtitleUrl: item.subtitleUrl || null,
+        subtitles: item.subtitles || [],
       };
       room.state.time = 0;
       room.state.playing = true;
@@ -794,6 +817,11 @@ function attach(io) {
         videoId: item.videoId,
         embedUrl: item.embedUrl,
         url: item.url,
+        hlsUrl: item.hlsUrl,
+        directUrl: item.directUrl,
+        canDirect: item.canDirect,
+        streamType: item.streamType,
+        viewkey: item.viewkey,
         title: item.title,
         platform: item.platform,
         tmdbId: item.tmdbId || null,
@@ -804,6 +832,8 @@ function attach(io) {
         showTitle: item.showTitle || null,
         poster: item.poster || null,
         backdrop: item.backdrop || null,
+        subtitleUrl: item.subtitleUrl || null,
+        subtitles: item.subtitles || [],
       };
       room.state.time = 0;
       room.state.playing = true;

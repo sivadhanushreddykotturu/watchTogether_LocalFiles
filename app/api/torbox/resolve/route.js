@@ -93,6 +93,22 @@ function matchesShowTitle(torrentName, candidateTitles) {
   return false;
 }
 
+/**
+ * Checks whether a video file in a torrent can be played natively across all browsers
+ * (Chrome, Safari, Firefox, Edge, iOS, Android) via standard HTML5 video byte-range requests
+ * without requiring live server-side transcoding.
+ */
+function isUniversalWebVideo(fileName) {
+  if (!fileName) return false;
+  const lower = fileName.toLowerCase();
+  const isMp4 = lower.endsWith('.mp4') || lower.endsWith('.m4v');
+  if (!isMp4) return false; // MKV, AVI, etc. cannot be played natively in all browsers
+  // If filename indicates heavy/incompatible codecs that basic browsers choke on:
+  const incompatible = /hevc|x265|h\.?265|10bit|10-bit|hdr|dts|truehd|atmos|ac3|eac3|av1/i;
+  if (incompatible.test(lower)) return false;
+  return true;
+}
+
 export async function POST(req) {
   try {
     const { title, year, imdbId, tmdbId, mediaType, season, episode } = await req.json();
@@ -255,36 +271,45 @@ export async function POST(req) {
         return NextResponse.json({ success: false, cached: false, reason: `Episode S${sStr}E${eStr} file not found in torrent` });
       }
 
-      // Generate HLS Stream
-      const streamRes = await fetch(
+      const canDirect = isUniversalWebVideo(epFile.name);
+      let directUrl = null;
+      let hlsUrl = null;
+
+      const hlsPromise = fetch(
         `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${epFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=null`,
         {
           headers: { Authorization: `Bearer ${token}` },
           signal: AbortSignal.timeout(7000),
         }
-      );
+      ).then(async (r) => (r.ok ? (await r.json())?.data?.hls_url : null)).catch(() => null);
 
-      let hlsUrl = null;
-      if (streamRes.ok) {
-        const streamJson = await streamRes.json();
-        hlsUrl = streamJson.data?.hls_url;
+      const dlPromise = fetch(
+        `https://api.torbox.app/v1/api/torrents/requestdl?token=${token}&torrent_id=${torrentId}&file_id=${epFile.id}&redirect=false`,
+        { signal: AbortSignal.timeout(6000) }
+      ).then(async (r) => (r.ok ? (await r.json())?.data : null)).catch(() => null);
+
+      const [resHls, resDl] = await Promise.all([hlsPromise, dlPromise]);
+      hlsUrl = resHls;
+      directUrl = resDl;
+
+      if (!hlsUrl && directUrl) hlsUrl = directUrl;
+      if (!directUrl && hlsUrl) directUrl = hlsUrl;
+
+      if (!hlsUrl && !directUrl) {
+        return NextResponse.json({ success: false, cached: false, reason: 'Could not generate stream URL' });
       }
 
-      if (!hlsUrl) {
-        const dlRes = await fetch(
-          `https://api.torbox.app/v1/api/torrents/requestdl?token=${token}&torrent_id=${torrentId}&file_id=${epFile.id}&redirect=false`,
-          { signal: AbortSignal.timeout(5000) }
-        );
-        if (dlRes.ok) {
-          const dlJson = await dlRes.json();
-          hlsUrl = dlJson.data;
-        }
-      }
+      const streamType = (canDirect && directUrl) ? 'direct' : 'hls';
+      const streamUrl = streamType === 'direct' ? directUrl : hlsUrl;
 
       return NextResponse.json({
         success: true,
         cached: true,
+        streamType,
+        streamUrl,
+        directUrl,
         hlsUrl,
+        canDirect: Boolean(canDirect && directUrl),
         title: `${title} S${sStr}:E${eStr}`,
         fileName: epFile.name,
         quality: '1080p',
@@ -383,39 +408,45 @@ export async function POST(req) {
       return NextResponse.json({ success: false, cached: false, reason: 'No video file found in torrent' });
     }
 
-    const streamRes = await fetch(
+    const canDirect = isUniversalWebVideo(videoFile.name);
+    let directUrl = null;
+    let hlsUrl = null;
+
+    const hlsPromise = fetch(
       `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${videoFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=null`,
       {
         headers: { Authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(7000),
       }
-    );
+    ).then(async (r) => (r.ok ? (await r.json())?.data?.hls_url : null)).catch(() => null);
 
-    let hlsUrl = null;
-    if (streamRes.ok) {
-      const streamJson = await streamRes.json();
-      hlsUrl = streamJson.data?.hls_url;
-    }
+    const dlPromise = fetch(
+      `https://api.torbox.app/v1/api/torrents/requestdl?token=${token}&torrent_id=${torrentId}&file_id=${videoFile.id}&redirect=false`,
+      { signal: AbortSignal.timeout(6000) }
+    ).then(async (r) => (r.ok ? (await r.json())?.data : null)).catch(() => null);
 
-    if (!hlsUrl) {
-      const dlRes = await fetch(
-        `https://api.torbox.app/v1/api/torrents/requestdl?token=${token}&torrent_id=${torrentId}&file_id=${videoFile.id}&redirect=false`,
-        { signal: AbortSignal.timeout(5000) }
-      );
-      if (dlRes.ok) {
-        const dlJson = await dlRes.json();
-        hlsUrl = dlJson.data;
-      }
-    }
+    const [resHls, resDl] = await Promise.all([hlsPromise, dlPromise]);
+    hlsUrl = resHls;
+    directUrl = resDl;
 
-    if (!hlsUrl) {
+    if (!hlsUrl && directUrl) hlsUrl = directUrl;
+    if (!directUrl && hlsUrl) directUrl = hlsUrl;
+
+    if (!hlsUrl && !directUrl) {
       return NextResponse.json({ success: false, cached: false, reason: 'Could not generate stream URL' });
     }
+
+    const streamType = (canDirect && directUrl) ? 'direct' : 'hls';
+    const streamUrl = streamType === 'direct' ? directUrl : hlsUrl;
 
     return NextResponse.json({
       success: true,
       cached: true,
+      streamType,
+      streamUrl,
+      directUrl,
       hlsUrl,
+      canDirect: Boolean(canDirect && directUrl),
       quality: bestTorrent.quality || '1080p',
       fileSize: videoFile.size,
       fileName: videoFile.name,

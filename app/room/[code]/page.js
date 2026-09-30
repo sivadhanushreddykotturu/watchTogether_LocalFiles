@@ -1390,20 +1390,20 @@ export default function Room() {
 
     const video = videoRef.current;
     if ((!fileLoadedRef.current && !sourceRef.current?.url) || !video || !socket.connected) return;
-    if (video.seeking) return; // Do not drift correct while hardware/network seek is in progress
+    if (video.seeking || video.readyState < 3 || midBuffering) return; // Do not drift correct while hardware/network seek or buffering is in progress
 
     socket.emit('time-update', video.currentTime, ({ expected, playing } = {}) => {
       if (typeof expected !== 'number') return;
       setStateLatest(playing, expected);
       const drift = expected - video.currentTime;
 
-      if (playing && !video.paused && !video.seeking && Math.abs(drift) > 2.0 && Date.now() - lastLocalSeekRef.current > 4000) {
+      if (playing && !video.paused && !video.seeking && video.readyState >= 3 && !midBuffering && Math.abs(drift) > 2.0 && Date.now() - lastLocalSeekRef.current > 4000) {
         guardRef.current.seek++;
         video.currentTime = expected;
         if (extAudioRef.current && extAudioRef.current.src) {
           extAudioRef.current.currentTime = expected;
         }
-      } else if (playing && video.paused && Date.now() - lastLocalPauseRef.current > 5000) {
+      } else if (playing && video.paused && !midBuffering && video.readyState >= 3 && Date.now() - lastLocalPauseRef.current > 5000) {
         setResumeOpen(true);
       }
     });
@@ -3450,20 +3450,26 @@ export default function Room() {
             }),
           });
           const data = await res.json();
-          if (data.success && data.cached && data.hlsUrl) {
+          if (data.success && data.cached && (data.hlsUrl || data.streamUrl || data.directUrl)) {
+            const streamType = data.streamType || (data.canDirect ? 'direct' : 'hls');
+            const streamUrl = data.streamUrl || (streamType === 'direct' ? data.directUrl : data.hlsUrl);
             updateStreamLoading({
               title: item.title,
-              status: '⚡ Buffering direct stream...'
+              status: streamType === 'direct' ? '⚡ Direct NVMe stream ready...' : '⚡ Buffering stream...'
             });
             startStreamWatchdog(item.title, fallbackToVidfast);
 
             const payload = {
-              type: 'hls',
-              url: data.hlsUrl,
+              type: streamType,
+              url: streamUrl,
+              streamType,
+              hlsUrl: data.hlsUrl,
+              directUrl: data.directUrl,
+              canDirect: data.canDirect,
               subtitleUrl: data.subtitleUrl || null,
               subtitles: data.subtitles || [],
               title: item.title,
-              platform: `TorBox Direct (${data.quality || '1080p'})`,
+              platform: `TorBox (${data.quality || '1080p'})`,
               mediaType: 'movie',
               tmdbId: item.tmdbId || item.id,
               poster: item.poster,
@@ -3631,20 +3637,26 @@ export default function Room() {
           }),
         });
         const data = await res.json();
-        if (data.success && data.cached && data.hlsUrl) {
+        if (data.success && data.cached && (data.hlsUrl || data.streamUrl || data.directUrl)) {
+          const streamType = data.streamType || (data.canDirect ? 'direct' : 'hls');
+          const streamUrl = data.streamUrl || (streamType === 'direct' ? data.directUrl : data.hlsUrl);
           updateStreamLoading({
             title: epLabel,
-            status: '⚡ Buffering direct stream...'
+            status: streamType === 'direct' ? '⚡ Direct NVMe stream ready...' : '⚡ Buffering stream...'
           });
           startStreamWatchdog(epLabel, fallbackToVidfast);
 
           const payload = {
-            type: 'hls',
-            url: data.hlsUrl,
+            type: streamType,
+            url: streamUrl,
+            streamType,
+            hlsUrl: data.hlsUrl,
+            directUrl: data.directUrl,
+            canDirect: data.canDirect,
             subtitleUrl: data.subtitleUrl || null,
             subtitles: data.subtitles || [],
             title: epPayload.title,
-            platform: `TorBox Direct (${data.quality || '1080p'})`,
+            platform: `TorBox (${data.quality || '1080p'})`,
             mediaType: 'tv',
             tmdbId: epPayload.tmdbId,
             season: epPayload.season,
