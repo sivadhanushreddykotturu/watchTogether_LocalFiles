@@ -538,6 +538,7 @@ export default function Room() {
   const selectTrack = (trackId, announce = true) => {
     activeTrackIdRef.current = trackId;
     setActiveTrackId(trackId);
+    activeTrackIdRef.current = trackId;
     if (trackId === 'off') {
       if (hlsRef.current) {
         try { hlsRef.current.subtitleTrack = -1; } catch {}
@@ -563,7 +564,7 @@ export default function Room() {
           fetch(track.url)
             .then((r) => r.text())
             .then((txt) => {
-              const parsed = parseSrtOrVtt(txt);
+              const parsed = parseExternalSubtitle(txt, track.label || '');
               track.cues = parsed;
               if (activeTrackIdRef.current === trackId) {
                 cuesRef.current = parsed;
@@ -2691,20 +2692,29 @@ export default function Room() {
         }
       }
 
-      if (source.subtitleUrl) {
-        fetch(source.subtitleUrl)
-          .then(res => res.text())
-          .then(txt => {
-            if (txt) {
-              const cues = parseVttOrSrt(txt);
-              if (cues && cues.length > 0) {
-                setSubtitleCues(cues);
-                setSubsOn(true);
-                toast('External Subtitle Loaded');
-              }
-            }
-          })
-          .catch(e => console.warn('Could not load remote subtitle:', e));
+      // Populate remote SubDL subtitles
+      const remoteSubs = Array.isArray(source.subtitles) ? [...source.subtitles] : [];
+      if (source.subtitleUrl && !remoteSubs.some((s) => s.url === source.subtitleUrl)) {
+        remoteSubs.unshift({
+          id: 'subdl-primary',
+          label: 'English (SubDL)',
+          url: source.subtitleUrl,
+        });
+      }
+
+      if (remoteSubs.length > 0) {
+        const mapped = remoteSubs.map((s, idx) => ({
+          id: s.id || `remote-sub-${idx}`,
+          label: s.label || `Subtitle ${idx + 1}`,
+          type: 'remote',
+          url: s.url,
+          cues: [],
+        }));
+        const existingNonRemote = subTracksRef.current.filter((t) => t.type !== 'remote');
+        const nextTracks = [...existingNonRemote, ...mapped];
+        subTracksRef.current = nextTracks;
+        setSubTracks(nextTracks);
+        selectTrack(mapped[0].id, false);
       }
 
       return () => {
@@ -2748,23 +2758,73 @@ export default function Room() {
         }
       }
 
-      if (source.subtitleUrl) {
-        fetch(source.subtitleUrl)
-          .then(res => res.text())
-          .then(txt => {
-            if (txt) {
-              const cues = parseVttOrSrt(txt);
-              if (cues && cues.length > 0) {
-                setSubtitleCues(cues);
-                setSubsOn(true);
-                toast('External Subtitle Loaded');
-              }
-            }
-          })
-          .catch(e => console.warn('Could not load remote subtitle:', e));
+      // Populate remote SubDL subtitles
+      const remoteSubs = Array.isArray(source.subtitles) ? [...source.subtitles] : [];
+      if (source.subtitleUrl && !remoteSubs.some((s) => s.url === source.subtitleUrl)) {
+        remoteSubs.unshift({
+          id: 'subdl-primary',
+          label: 'English (SubDL)',
+          url: source.subtitleUrl,
+        });
+      }
+
+      if (remoteSubs.length > 0) {
+        const mapped = remoteSubs.map((s, idx) => ({
+          id: s.id || `remote-sub-${idx}`,
+          label: s.label || `Subtitle ${idx + 1}`,
+          type: 'remote',
+          url: s.url,
+          cues: [],
+        }));
+        const existingNonRemote = subTracksRef.current.filter((t) => t.type !== 'remote');
+        const nextTracks = [...existingNonRemote, ...mapped];
+        subTracksRef.current = nextTracks;
+        setSubTracks(nextTracks);
+        selectTrack(mapped[0].id, false);
       }
     }
-  }, [source?.type, source?.url, source?.audioUrl, source?.subtitleUrl]);
+  }, [source?.type, source?.url, source?.audioUrl, source?.subtitleUrl, source?.subtitles]);
+
+  // Auto-fetch SubDL subtitles for TMDB content if not already populated
+  useEffect(() => {
+    if (!source?.tmdbId || source?.type === 'embed') return;
+    if (source?.subtitleUrl || (Array.isArray(source?.subtitles) && source.subtitles.length > 0)) return;
+
+    const controller = new AbortController();
+    const isTv = source.mediaType === 'tv';
+    const params = new URLSearchParams({
+      tmdbId: String(source.tmdbId),
+      mediaType: isTv ? 'tv' : 'movie',
+      title: source.title || '',
+      languages: 'en',
+    });
+    if (isTv && source.season !== undefined) {
+      params.set('season', String(source.season));
+      params.set('episode', String(source.episode || 1));
+    }
+
+    fetch(`/api/subtitles/search?${params.toString()}`, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.subtitles) && data.subtitles.length > 0) {
+          const mapped = data.subtitles.map((s, idx) => ({
+            id: s.id || `subdl-${idx}`,
+            label: s.label || `Subtitle ${idx + 1}`,
+            type: 'remote',
+            url: s.url,
+            cues: [],
+          }));
+          const existingNonRemote = subTracksRef.current.filter((t) => t.type !== 'remote');
+          const nextTracks = [...existingNonRemote, ...mapped];
+          subTracksRef.current = nextTracks;
+          setSubTracks(nextTracks);
+          selectTrack(mapped[0].id, false);
+        }
+      })
+      .catch(() => {});
+
+    return () => controller.abort();
+  }, [source?.tmdbId, source?.mediaType, source?.season, source?.episode, source?.url]);
 
   // autoscroll chat on new messages or when switching to chat tab or expanding sidebar
   useEffect(() => {
@@ -3172,6 +3232,7 @@ export default function Room() {
       url: resolved.url,
       audioUrl: resolved.audioUrl,
       subtitleUrl: resolved.subtitleUrl,
+      subtitles: resolved.subtitles || [],
       viewkey: resolved.viewkey,
       title,
       platform: resolved.platform,
@@ -3356,6 +3417,7 @@ export default function Room() {
               type: 'hls',
               url: data.hlsUrl,
               subtitleUrl: data.subtitleUrl || null,
+              subtitles: data.subtitles || [],
               title: item.title,
               platform: `TorBox Direct (${data.quality || '1080p'})`,
               mediaType: 'movie',
@@ -3536,6 +3598,7 @@ export default function Room() {
             type: 'hls',
             url: data.hlsUrl,
             subtitleUrl: data.subtitleUrl || null,
+            subtitles: data.subtitles || [],
             title: epPayload.title,
             platform: `TorBox Direct (${data.quality || '1080p'})`,
             mediaType: 'tv',
@@ -4794,6 +4857,11 @@ export default function Room() {
                       {subTracks.filter((t) => t.type === 'embedded').length > 0 && (
                         <span className="sub-badge">
                           {subTracks.filter((t) => t.type === 'embedded').length} Embedded
+                        </span>
+                      )}
+                      {subTracks.filter((t) => t.type === 'remote').length > 0 && (
+                        <span className="sub-badge" style={{ background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', borderColor: 'rgba(34, 197, 94, 0.3)' }}>
+                          {subTracks.filter((t) => t.type === 'remote').length} SubDL Tracks
                         </span>
                       )}
                       {source?.type === 'embed' && subTracks.length > 1 && (

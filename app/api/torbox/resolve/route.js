@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { searchSubdl } from '@/lib/subdl';
 
 const execFileAsync = promisify(execFile);
 const YTS_DOMAINS = ['yts.am', 'yts.pm', 'yts.do', 'yts.rs'];
@@ -255,6 +256,19 @@ export async function POST(req) {
         return NextResponse.json({ success: false, cached: false, reason: `Episode S${sStr}E${eStr} file not found in torrent` });
       }
 
+      // Search SubDL subtitles in parallel with stream generation
+      const subdlPromise = searchSubdl({
+        title,
+        tmdbId,
+        mediaType: 'tv',
+        season: sNum,
+        episode: eNum,
+        languages: 'en',
+      }).catch((e) => {
+        console.warn('SubDL TV lookup error:', e.message);
+        return [];
+      });
+
       // Generate HLS Stream
       const streamRes = await fetch(
         `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${epFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=null`,
@@ -281,10 +295,15 @@ export async function POST(req) {
         }
       }
 
+      const subtitles = await subdlPromise;
+      const subtitleUrl = subtitles.length > 0 ? subtitles[0].url : null;
+
       return NextResponse.json({
         success: true,
         cached: true,
         hlsUrl,
+        subtitleUrl,
+        subtitles,
         title: `${title} S${sStr}:E${eStr}`,
         fileName: epFile.name,
         quality: '1080p',
@@ -378,11 +397,22 @@ export async function POST(req) {
     const listJson = await listRes.json();
     const files = listJson.data?.files || [];
     const videoFile = files.find((f) => f.name.endsWith('.mp4') || f.name.endsWith('.mkv')) || files[0];
-    const srtFile = files.find((f) => f.name.endsWith('.srt'));
 
     if (!videoFile) {
       return NextResponse.json({ success: false, cached: false, reason: 'No video file found in torrent' });
     }
+
+    // Search SubDL subtitles in parallel with stream generation
+    const subdlPromise = searchSubdl({
+      title: movie?.title || title,
+      tmdbId,
+      imdbId: resolvedImdb,
+      mediaType: 'movie',
+      languages: 'en',
+    }).catch((e) => {
+      console.warn('SubDL Movie lookup error:', e.message);
+      return [];
+    });
 
     const streamRes = await fetch(
       `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${videoFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=null`,
@@ -413,29 +443,19 @@ export async function POST(req) {
       return NextResponse.json({ success: false, cached: false, reason: 'Could not generate stream URL' });
     }
 
-    let subtitleUrl = null;
-    if (srtFile) {
-      try {
-        const srtRes = await fetch(
-          `https://api.torbox.app/v1/api/torrents/requestdl?token=${token}&torrent_id=${torrentId}&file_id=${srtFile.id}&redirect=false`,
-          { signal: AbortSignal.timeout(4000) }
-        );
-        if (srtRes.ok) {
-          const srtJson = await srtRes.json();
-          subtitleUrl = srtJson.data;
-        }
-      } catch {}
-    }
+    const subtitles = await subdlPromise;
+    const subtitleUrl = subtitles.length > 0 ? subtitles[0].url : null;
 
     return NextResponse.json({
       success: true,
       cached: true,
       hlsUrl,
       subtitleUrl,
+      subtitles,
       quality: bestTorrent.quality || '1080p',
       fileSize: videoFile.size,
       fileName: videoFile.name,
-      title: movie.title || title,
+      title: movie?.title || title,
     });
   } catch (err) {
     console.error('TorBox resolve error:', err);
