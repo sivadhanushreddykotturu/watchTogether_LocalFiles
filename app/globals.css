@@ -7386,3 +7386,43 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   color: #ffffff;
   transform: translateY(-1px);
 }
+
+.stream-loading-hint {
+  font-size: 11.5px;
+  color: #a1a1aa;
+  max-width: 340px;
+  line-height: 1.45;
+  margin-top: 4px;
+}
+
+.stream-loading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.stream-loading-keep-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  border-radius: 8px;
+  padding: 7px 12px;
+  color: #4ade80;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  pointer-events: auto;
+}
+
+.stream-loading-keep-btn:hover {
+  background: rgba(34, 197, 94, 0.22);
+  border-color: rgba(34, 197, 94, 0.6);
+  color: #ffffff;
+  transform: translateY(-1px);
+}

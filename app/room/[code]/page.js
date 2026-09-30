@@ -315,38 +315,42 @@ export default function Room() {
     clearStreamWatchdog();
     pendingFallbackRef.current = fallbackFn;
 
-    // Phase 1: At 4.5s -> server preparing video chunks
-    const t1 = setTimeout(() => {
-      if (!streamLoadingRef.current) return;
-      updateStreamLoading({
-        ...streamLoadingRef.current,
-        status: '⏳ Server is preparing video chunks...',
-      });
-    }, 4500);
+    let remaining = 10;
+    updateStreamLoading({
+      title,
+      status: `⚡ Buffering direct stream (${remaining}s lock-in)`,
+      hint: 'Direct stream gives 100% room sync & zero ads.',
+      canFallback: false,
+      countdown: remaining,
+    });
 
-    // Phase 2: At 8s -> offer immediate fallback button
-    const t2 = setTimeout(() => {
-      if (!streamLoadingRef.current) return;
-      updateStreamLoading({
-        ...streamLoadingRef.current,
-        status: '⚠️ Buffering is taking longer than expected',
-        canFallback: true,
-      });
-    }, 8000);
-
-    // Phase 3: At 14s -> auto fallback to VidFast
-    const t3 = setTimeout(() => {
-      if (!streamLoadingRef.current) return;
-      toast('TorBox stream took too long · Switched to VidFast');
-      stopStreamLoading();
-      if (typeof fallbackFn === 'function') fallbackFn();
-    }, 14000);
+    const interval = setInterval(() => {
+      remaining -= 1;
+      if (!streamLoadingRef.current) {
+        clearInterval(interval);
+        return;
+      }
+      if (remaining > 0) {
+        updateStreamLoading({
+          ...streamLoadingRef.current,
+          countdown: remaining,
+          status: `⚡ Buffering direct stream (${remaining}s lock-in)`,
+        });
+      } else {
+        clearInterval(interval);
+        updateStreamLoading({
+          ...streamLoadingRef.current,
+          countdown: 0,
+          status: '⏳ Server is preparing video chunks...',
+          hint: '💡 Direct stream gives 100% sync & zero ads. We recommend waiting ~30-60s, or switch to VidFast below.',
+          canFallback: true,
+        });
+      }
+    }, 1000);
 
     streamWatchdogRef.current = {
       clear: () => {
-        clearTimeout(t1);
-        clearTimeout(t2);
-        clearTimeout(t3);
+        clearInterval(interval);
       },
     };
   };
@@ -4207,22 +4211,40 @@ export default function Room() {
                   <div className="stream-loading-ring" />
                   <div className="stream-loading-title">{streamLoading.title}</div>
                   <div className="stream-loading-status">{streamLoading.status}</div>
+                  {streamLoading.hint && (
+                    <div className="stream-loading-hint">{streamLoading.hint}</div>
+                  )}
                   {streamLoading.canFallback && (
-                    <button
-                      type="button"
-                      className="stream-loading-fallback-btn"
-                      onClick={() => {
-                        const fn = pendingFallbackRef.current;
-                        stopStreamLoading();
-                        if (typeof fn === 'function') fn();
-                      }}
-                    >
-                      <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
-                        <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-7.068 2H.534a.25.25 0 0 1-.192-.41l1.966-2.36a.25.25 0 0 1 .384 0l1.966 2.36a.25.25 0 0 1-.192.41z"/>
-                        <path fillRule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/>
-                      </svg>
-                      Switch to VidFast Now
-                    </button>
+                    <div className="stream-loading-actions">
+                      <button
+                        type="button"
+                        className="stream-loading-fallback-btn"
+                        onClick={() => {
+                          const fn = pendingFallbackRef.current;
+                          stopStreamLoading();
+                          if (typeof fn === 'function') fn();
+                        }}
+                      >
+                        <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
+                          <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-7.068 2H.534a.25.25 0 0 1-.192-.41l1.966-2.36a.25.25 0 0 1 .384 0l1.966 2.36a.25.25 0 0 1-.192.41z"/>
+                          <path fillRule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/>
+                        </svg>
+                        Switch to VidFast
+                      </button>
+                      <button
+                        type="button"
+                        className="stream-loading-keep-btn"
+                        onClick={() => {
+                          updateStreamLoading({
+                            ...streamLoadingRef.current,
+                            hint: '⏳ Waiting for TorBox direct stream chunks...',
+                            canFallback: true,
+                          });
+                        }}
+                      >
+                        Keep Waiting (Recommended)
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
