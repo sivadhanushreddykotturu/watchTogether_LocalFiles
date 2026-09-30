@@ -452,6 +452,9 @@ export default function Room() {
     activeTrackIdRef.current = trackId;
     setActiveTrackId(trackId);
     if (trackId === 'off') {
+      if (hlsRef.current) {
+        try { hlsRef.current.subtitleTrack = -1; } catch {}
+      }
       subsOnRef.current = false;
       setSubsOn(false);
       cuesRef.current = [];
@@ -460,6 +463,15 @@ export default function Room() {
     } else {
       const track = subTracksRef.current.find((t) => t.id === trackId);
       if (track) {
+        if (track.type === 'hls' && track.trackIndex !== undefined) {
+          if (hlsRef.current) {
+            try { hlsRef.current.subtitleTrack = track.trackIndex; } catch {}
+          }
+          subsOnRef.current = true;
+          setSubsOn(true);
+          if (announce) toast(`Subtitles: ${track.label}`);
+          return;
+        }
         if (track.url && (!track.cues || track.cues.length === 0)) {
           fetch(track.url)
             .then((r) => r.text())
@@ -2405,6 +2417,26 @@ export default function Room() {
         });
         hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (event, data) => {
           setCurrentAudioTrack(data.id);
+        });
+        hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (event, data) => {
+          if (data && data.subtitleTracks && data.subtitleTracks.length > 0) {
+            const hlsSubs = data.subtitleTracks.map((t, idx) => ({
+              id: `hls-sub-${idx}`,
+              trackIndex: idx,
+              label: t.name || t.lang || `Subtitle ${idx + 1}`,
+              type: 'hls',
+              cues: [],
+            }));
+            const baseTracks = [{ id: 'off', label: 'Off / Disabled', cues: [] }, ...hlsSubs];
+            subTracksRef.current = baseTracks;
+            setSubTracks(baseTracks);
+          }
+        });
+        hls.on(Hls.Events.SUBTITLE_TRACK_SWITCH, (event, data) => {
+          const isEnabled = data.id >= 0;
+          setActiveTrackId(isEnabled ? `hls-sub-${data.id}` : 'off');
+          setSubsOn(isEnabled);
+          subsOnRef.current = isEnabled;
         });
         hls.on(Hls.Events.ERROR, async (event, data) => {
           if (data.fatal) {
@@ -4423,18 +4455,18 @@ export default function Room() {
               <button className="btn primary big" onClick={resume}>Catch up with the room</button>
             </div>
 
-            {subPanelOpen && (!source || source.type === 'embed') && (
+            {subPanelOpen && source?.type !== 'youtube' && (
               <>
                 <div className="sub-backdrop" onClick={() => setSubPanelOpen(false)} />
                 <div className="sub-panel">
                   <div className="sub-panel-head">
-                    <span className="sub-panel-title">{source?.type === 'embed' ? 'Subtitles & Captions' : 'Subtitles & Audio'}</span>
+                    <span className="sub-panel-title">{source?.type === 'embed' ? 'Subtitles & Captions' : source?.type === 'hls' ? 'Subtitles' : 'Subtitles & Audio'}</span>
                     <button className="sub-close-btn" onClick={() => setSubPanelOpen(false)} title="Close">
                       <svg viewBox="0 0 24 24" width="16" height="16"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/></svg>
                     </button>
                   </div>
 
-                  {(!source || source.type !== 'embed') && (
+                  {!source && (
                     <>
                       <div className="sub-row">
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
@@ -4770,18 +4802,20 @@ export default function Room() {
                 </span>
               </div>
 
-              <button
-                className={'t-btn yt-btn' + (source?.type === 'youtube' ? ' active' : '')}
-                onClick={() => setYtPanelOpen(!ytPanelOpen)}
-                title="YouTube together"
-              >
-                <svg viewBox="0 0 24 24" width="18" height="18"><path d="M22 12s0-3.3-.42-4.8a2.5 2.5 0 0 0-1.76-1.77C18.25 5 12 5 12 5s-6.25 0-7.82.43A2.5 2.5 0 0 0 2.42 7.2C2 8.7 2 12 2 12s0 3.3.42 4.8c.23.86.9 1.53 1.76 1.77C5.75 19 12 19 12 19s6.25 0 7.82-.43a2.5 2.5 0 0 0 1.76-1.77C22 15.3 22 12 22 12zM10 15.5v-7l6 3.5-6 3.5z" fill="currentColor"/></svg>
-              </button>
+              {source?.type === 'youtube' && (
+                <button
+                  className="t-btn yt-btn active"
+                  onClick={() => setYtPanelOpen(!ytPanelOpen)}
+                  title="YouTube together"
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18"><path d="M22 12s0-3.3-.42-4.8a2.5 2.5 0 0 0-1.76-1.77C18.25 5 12 5 12 5s-6.25 0-7.82.43A2.5 2.5 0 0 0 2.42 7.2C2 8.7 2 12 2 12s0 3.3.42 4.8c.23.86.9 1.53 1.76 1.77C5.75 19 12 19 12 19s6.25 0 7.82-.43a2.5 2.5 0 0 0 1.76-1.77C22 15.3 22 12 22 12zM10 15.5v-7l6 3.5-6 3.5z" fill="currentColor"/></svg>
+                </button>
+              )}
 
               <button
                 className={'t-btn dim-btn' + (dimmed ? ' active' : '')}
                 onClick={() => setDimmed(!dimmed)}
-                title="Theater mode (L)"
+                title="Dim lights (L)"
               >
                 <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41M12 6a6 6 0 1 0 0 12 6 6 0 0 0 0-12z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
               </button>
