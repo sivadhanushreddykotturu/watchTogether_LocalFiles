@@ -2116,10 +2116,17 @@ export default function Room() {
       setIsFullscreen(!!el);
       if (!el) setZoomUiVisible(false);
       // The stream's own fullscreen button fullscreens just its iframe, which
-      // leaves our chat pop-ups and reactions outside. Point people at ours.
-      if (el && el.tagName === 'IFRAME' && !iframeFsTipShownRef.current) {
-        iframeFsTipShownRef.current = true;
-        setTimeout(() => toast('Tip: use ReelSync’s ⛶ button (top-right of the player) to keep chat pop-ups visible in fullscreen'), 0);
+      // leaves our chat pop-ups and subtitles outside. Point people at ours.
+      if (el && el.tagName === 'IFRAME') {
+        if (!iframeFsTipShownRef.current) {
+          iframeFsTipShownRef.current = true;
+          setTimeout(() => toast('💡 Subtitles hidden? Use ReelSync’s ⛶ Maximize button to keep SubDL subtitles visible!'), 0);
+        }
+        if (screenRef.current && screenRef.current.requestFullscreen) {
+          try {
+            screenRef.current.requestFullscreen().catch(() => {});
+          } catch {}
+        }
       }
     };
     document.addEventListener('fullscreenchange', onFsChange);
@@ -2189,6 +2196,11 @@ export default function Room() {
           latestStateRef.current.time = target;
           emitPlayback('seek');
         }
+        if (e.code === 'KeyF') fullscreen();
+        const subStep = e.shiftKey ? 500 : 50;
+        if (e.code === 'KeyG') nudgeSubtitles(-subStep);
+        if (e.code === 'KeyH') nudgeSubtitles(subStep);
+        if (e.code === 'KeyV') cycleSubtitles();
         if (e.code === 'KeyL' || e.code === 'KeyD') setDimmed((prev) => !prev);
         return;
       }
@@ -2229,6 +2241,7 @@ export default function Room() {
       if (e.code === 'KeyH') nudgeSubtitles(subStep);
       if (e.code === 'KeyV') cycleSubtitles(); // VLC: V cycles subtitle tracks
       if (e.code === 'KeyB') cycleAudioTrack(); // VLC: B cycles audio tracks
+      if (e.code === 'KeyF') fullscreen();
       if (e.code === 'KeyL' || e.code === 'KeyD') setDimmed((prev) => !prev);
     };
 
@@ -2371,6 +2384,7 @@ export default function Room() {
 
     // --- cleanup: leave the room, drop everything ---
     return () => {
+      if (typeof document !== 'undefined') document.body.style.overflow = '';
       if (embedPauseTimerRef.current) clearTimeout(embedPauseTimerRef.current);
       window.removeEventListener('message', onMessage);
       socket.emit('leave-room');
@@ -4021,6 +4035,15 @@ export default function Room() {
   const setPseudo = (on) => {
     pseudoFsRef.current = on;
     setPseudoFs(on);
+    if (typeof document !== 'undefined') {
+      try {
+        if (on) {
+          document.body.style.overflow = 'hidden';
+        } else {
+          document.body.style.overflow = '';
+        }
+      } catch {}
+    }
   };
 
   const fullscreen = () => {
@@ -4407,12 +4430,12 @@ export default function Room() {
               </div>
             )}
 
-            {source?.type !== 'embed' && pseudoFs && (
+            {(source?.type === 'embed' || pseudoFs || isFullscreen) && (
               <button
                 type="button"
-                className="screen-fs-btn"
+                className={'screen-fs-btn' + (isFullscreen || pseudoFs ? ' active' : '')}
                 onClick={fullscreen}
-                title={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Fullscreen (keeps chat pop-ups visible)'}
+                title={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Maximize (keeps SubDL subtitles visible)'}
                 aria-label={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Fullscreen'}
               >
                 {isFullscreen || pseudoFs ? (
@@ -4471,6 +4494,25 @@ export default function Room() {
                     title="Choose Subtitle Track (SubDL)"
                   >
                     {subLoading ? '⏳ Loading...' : '💬 Subtitles'} {subsOn && <span className="sub-active-dot" />}
+                  </button>
+
+                  <button
+                    type="button"
+                    className={'room-tv-btn fs-btn' + (isFullscreen || pseudoFs ? ' active' : '')}
+                    onClick={fullscreen}
+                    title={isFullscreen || pseudoFs ? 'Exit Fullscreen' : 'Maximize (keeps SubDL subtitles visible)'}
+                  >
+                    {isFullscreen || pseudoFs ? (
+                      <>
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>
+                        <span>Exit</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                        <span>Maximize</span>
+                      </>
+                    )}
                   </button>
 
                   {source.type === 'embed' && (
