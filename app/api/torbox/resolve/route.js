@@ -161,8 +161,7 @@ export async function POST(req) {
       const listJson = await listRes.json();
       const files = listJson.data?.files || [];
 
-      // Regex match episode file (e.g., S01E01, 1x01, or Episode 1)
-      const epRegex = new RegExp(`(?:s${sStr}e${eStr}|${sNum}x${eStr}|episode\\s*0?${eNum})`, 'i');
+      // Match episode file (e.g., S01E01, 1x01, or Episode 1)
       const epFile = files.find((f) => epRegex.test(f.name)) || files.find((f) => f.name.endsWith('.mkv') || f.name.endsWith('.mp4'));
 
       if (!epFile) {
