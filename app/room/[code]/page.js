@@ -289,6 +289,21 @@ export default function Room() {
   const pendingFallbackRef = useRef(null);
   const seekBufferTimerRef = useRef(null);
 
+  // Lightweight mid-stream buffering indicator (bottom-left, unobtrusive)
+  const [midBuffering, setMidBuffering] = useState(false);
+  const [midBufferingSlow, setMidBufferingSlow] = useState(false);
+  const midBufferingTimerRef = useRef(null);
+  const midBufferingSlowTimerRef = useRef(null);
+
+  const stopMidBuffering = () => {
+    if (midBufferingTimerRef.current) clearTimeout(midBufferingTimerRef.current);
+    if (midBufferingSlowTimerRef.current) clearTimeout(midBufferingSlowTimerRef.current);
+    midBufferingTimerRef.current = null;
+    midBufferingSlowTimerRef.current = null;
+    setMidBuffering(false);
+    setMidBufferingSlow(false);
+  };
+
   const clearStreamWatchdog = () => {
     if (streamWatchdogRef.current) {
       if (typeof streamWatchdogRef.current.clear === 'function') {
@@ -1511,6 +1526,7 @@ export default function Room() {
       if (streamLoadingRef.current && v && v.currentTime > 0.05) {
         stopStreamLoading();
       }
+      stopMidBuffering();
       // Only correct drift if neither video nor audio is seeking
       if (ext && ext.src && v && !v.paused && !v.seeking && !ext.seeking) {
         if (ext.paused) {
@@ -1525,42 +1541,31 @@ export default function Room() {
 
     const onPlaying = () => {
       clearTimeout(seekBufferTimerRef.current);
+      stopMidBuffering();
       if (streamLoadingRef.current) {
         stopStreamLoading();
       }
     };
 
     const onWaiting = () => {
-      if (sourceRef.current?.type === 'hls' && !streamLoadingRef.current) {
-        clearTimeout(seekBufferTimerRef.current);
-        seekBufferTimerRef.current = setTimeout(() => {
+      // Don't trigger if initial stream loading card is already showing
+      if (streamLoadingRef.current) return;
+      if (sourceRef.current?.type === 'hls' || sourceRef.current?.type === 'direct') {
+        if (midBufferingTimerRef.current) clearTimeout(midBufferingTimerRef.current);
+        midBufferingTimerRef.current = setTimeout(() => {
           const v = videoRef.current;
-          if (v && (v.seeking || v.readyState < 3) && !streamLoadingRef.current) {
-            updateStreamLoading({
-              title: sourceRef.current?.title || 'Video Stream',
-              status: '⚡ Buffering video chunks...',
-              canFallback: true,
-            });
-            startStreamWatchdog(sourceRef.current?.title || 'Video Stream', () => {
-              if (sourceRef.current?.tmdbId) {
-                const isTv = sourceRef.current.mediaType === 'tv';
-                const embedUrl = buildVidfastUrl({
-                  tmdbId: sourceRef.current.tmdbId,
-                  type: isTv ? 'tv' : 'movie',
-                  season: sourceRef.current.season,
-                  episode: sourceRef.current.episode,
-                });
-                socket.emit('source', {
-                  ...sourceRef.current,
-                  type: 'embed',
-                  embedUrl,
-                  platform: 'VidFast',
-                  playing: true,
-                });
+          if (v && (v.seeking || v.readyState < 3)) {
+            setMidBuffering(true);
+
+            if (midBufferingSlowTimerRef.current) clearTimeout(midBufferingSlowTimerRef.current);
+            midBufferingSlowTimerRef.current = setTimeout(() => {
+              const curV = videoRef.current;
+              if (curV && (curV.seeking || curV.readyState < 3)) {
+                setMidBufferingSlow(true);
               }
-            });
+            }, 8000);
           }
-        }, 1500);
+        }, 300);
       }
     };
 
@@ -4247,6 +4252,39 @@ export default function Room() {
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {midBuffering && !streamLoading && (
+              <div className="mid-buffering-indicator">
+                <span className="mid-buffering-dot" />
+                <span>Buffering...</span>
+                {midBufferingSlow && source?.tmdbId && (
+                  <button
+                    type="button"
+                    className="mid-buffering-switch-btn"
+                    onClick={() => {
+                      stopMidBuffering();
+                      const isTv = source.mediaType === 'tv';
+                      const embedUrl = buildVidfastUrl({
+                        tmdbId: source.tmdbId,
+                        type: isTv ? 'tv' : 'movie',
+                        season: source.season,
+                        episode: source.episode,
+                      });
+                      getSocket().emit('source', {
+                        ...source,
+                        type: 'embed',
+                        embedUrl,
+                        platform: 'VidFast',
+                        playing: true,
+                      });
+                      toast('Switched to VidFast');
+                    }}
+                  >
+                    · Switch to VidFast?
+                  </button>
+                )}
               </div>
             )}
 
