@@ -288,6 +288,8 @@ export default function Room() {
   const streamWatchdogRef = useRef(null);
   const pendingFallbackRef = useRef(null);
   const seekBufferTimerRef = useRef(null);
+  const [subSearchLang, setSubSearchLang] = useState('');
+  const [subSearching, setSubSearching] = useState(false);
 
   // Lightweight mid-stream buffering indicator (bottom-left, unobtrusive)
   const [midBuffering, setMidBuffering] = useState(false);
@@ -584,6 +586,57 @@ export default function Room() {
           if (announce) toast(`Subtitles: ${track.label}`);
         }
       }
+    }
+  };
+
+  const handleSearchSubdl = async (lang = '') => {
+    const qLang = (lang || subSearchLang || 'en').trim();
+    if (!source?.title && !source?.tmdbId) {
+      toast('No media title available to search');
+      return;
+    }
+    setSubSearching(true);
+    try {
+      const isTv = source.mediaType === 'tv';
+      const params = new URLSearchParams({
+        title: source.showTitle || source.title || '',
+        mediaType: isTv ? 'tv' : 'movie',
+        languages: qLang,
+      });
+      if (source.tmdbId) params.set('tmdbId', String(source.tmdbId));
+      if (isTv && source.season !== undefined) {
+        params.set('season', String(source.season));
+        params.set('episode', String(source.episode || 1));
+      }
+      const res = await fetch(`/api/subtitles/search?${params.toString()}`);
+      const data = await res.json();
+      if (data.success && Array.isArray(data.subtitles) && data.subtitles.length > 0) {
+        const mapped = data.subtitles.map((s, idx) => ({
+          id: s.id || `remote-sub-${idx}-${Date.now()}`,
+          label: s.label || `Subtitle ${idx + 1}`,
+          type: 'remote',
+          url: s.url,
+          cues: [],
+        }));
+        const existingUrls = new Set(subTracksRef.current.map((t) => t.url).filter(Boolean));
+        const newTracks = mapped.filter((m) => !existingUrls.has(m.url));
+        const nextTracks = [...subTracksRef.current, ...newTracks];
+        subTracksRef.current = nextTracks;
+        setSubTracks(nextTracks);
+        if (newTracks.length > 0) {
+          selectTrack(newTracks[0].id, true);
+          toast(`Found ${newTracks.length} subtitles for "${qLang}"`);
+        } else {
+          toast(`Subtitles already in list`);
+        }
+      } else {
+        toast(`No subtitles found on SubDL for "${qLang}"`);
+      }
+    } catch (err) {
+      console.warn('SubDL search error:', err);
+      toast('Failed to search SubDL');
+    } finally {
+      setSubSearching(false);
     }
   };
 
@@ -1497,13 +1550,10 @@ export default function Room() {
     const onEnded = () => { setPlaying(false); releaseWakeLock(); };
 
     const updateSubtitles = () => {
-      if (sourceRef.current?.type === 'embed') {
-        setSubText((prev) => (prev ? '' : prev));
-        return;
-      }
-      const v = videoRef.current;
       const cues = cuesRef.current;
-      if (!v || !cues.length || !subsOnRef.current) {
+      const isEmbed = sourceRef.current?.type === 'embed';
+      const v = videoRef.current;
+      if ((!v && !isEmbed) || !cues.length || !subsOnRef.current) {
         setSubText((prev) => (prev ? '' : prev));
         return;
       }
@@ -2562,7 +2612,8 @@ export default function Room() {
               type: 'hls',
               cues: [],
             }));
-            const baseTracks = [{ id: 'off', label: 'Off / Disabled', cues: [] }, ...hlsSubs];
+            const existingNonHls = subTracksRef.current.filter((t) => t.type !== 'hls' && t.id !== 'off');
+            const baseTracks = [{ id: 'off', label: 'Off / Disabled', cues: [] }, ...hlsSubs, ...existingNonHls];
             subTracksRef.current = baseTracks;
             setSubTracks(baseTracks);
           }
@@ -4367,51 +4418,72 @@ export default function Room() {
               </button>
             )}
 
-            {source?.type === 'embed' && (
-              <div className="web-embed-wrap" style={{ transform: `scale(${zoom})` }}>
-                {source.tmdbId && (
-                  <div className="room-tv-overlay" style={{ justifyContent: 'flex-end' }}>
-                    <div className="yt-top-actions">
-                      {source.mediaType === 'tv' && (
-                        <>
-                          <button
-                            type="button"
-                            className="room-tv-btn"
-                            onClick={() => {
-                              setSelectedSeriesForEpisodes({
-                                tmdbId: source.tmdbId,
-                                title: source.showTitle || source.title,
-                                name: source.showTitle || source.title,
-                                poster: source.poster,
-                                backdrop: source.backdrop,
-                              });
-                              setTmdbEpisodeModalOpen(true);
-                            }}
-                            title="Browse all seasons and episodes"
-                          >
-                            📑 Episodes
-                          </button>
-                          <button
-                            type="button"
-                            className="room-tv-btn"
-                            onClick={handlePlayNextEpisode}
-                            title="Play Next Episode"
-                          >
-                            ⏭️ Next Ep
-                          </button>
-                        </>
-                      )}
+            {source && (source.tmdbId || source.title) && (
+              <div className="room-tv-overlay">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                  <span className="room-tv-badge">
+                    {source.platform || (source.type === 'hls' ? '⚡ Direct Stream' : 'Online')}
+                  </span>
+                  <span className="room-tv-title-text" title={source.showTitle || source.title}>
+                    {source.showTitle ? `${source.showTitle} ${source.season ? `S${source.season}:E${source.episode || 1}` : ''}` : source.title}
+                  </span>
+                </div>
+                <div className="yt-top-actions">
+                  {source.tmdbId && source.mediaType === 'tv' && (
+                    <>
                       <button
                         type="button"
-                        className="room-tv-btn offline-help"
-                        onClick={() => setEmbedOffline(true)}
-                        title="Server offline or buffering? Get recovery options"
+                        className="room-tv-btn"
+                        onClick={() => {
+                          setSelectedSeriesForEpisodes({
+                            tmdbId: source.tmdbId,
+                            title: source.showTitle || source.title,
+                            name: source.showTitle || source.title,
+                            poster: source.poster,
+                            backdrop: source.backdrop,
+                          });
+                          setTmdbEpisodeModalOpen(true);
+                        }}
+                        title="Browse all seasons and episodes"
                       >
-                        🔄 Server Help
+                        📑 Episodes
                       </button>
-                    </div>
-                  </div>
-                )}
+                      <button
+                        type="button"
+                        className="room-tv-btn"
+                        onClick={handlePlayNextEpisode}
+                        title="Play Next Episode"
+                      >
+                        ⏭️ Next Ep
+                      </button>
+                    </>
+                  )}
+
+                  <button
+                    type="button"
+                    className={'room-tv-btn sub-quick-btn' + (subsOn ? ' active' : '')}
+                    onClick={() => setSubPanelOpen((v) => !v)}
+                    title="Choose Subtitle Track (SubDL)"
+                  >
+                    💬 Subtitles {subsOn && <span className="sub-active-dot" />}
+                  </button>
+
+                  {source.type === 'embed' && (
+                    <button
+                      type="button"
+                      className="room-tv-btn offline-help"
+                      onClick={() => setEmbedOffline(true)}
+                      title="Server offline or buffering? Get recovery options"
+                    >
+                      🔄 Server Help
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {source?.type === 'embed' && (
+              <div className="web-embed-wrap" style={{ transform: `scale(${zoom})` }}>
 
                 {embedOffline && (
                   <div className="embed-offline-overlay">
@@ -4750,7 +4822,7 @@ export default function Room() {
               </div>
             )}
 
-            {subsOn && subText && source?.type !== 'embed' && (
+            {subsOn && subText && (
               <div
                 className="sub-overlay"
                 style={{
@@ -4852,35 +4924,58 @@ export default function Room() {
                   )}
 
                   <div className="sub-row">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                      <span className="sub-label">Subtitle Track (V key · only you)</span>
-                      {subTracks.filter((t) => t.type === 'embedded').length > 0 && (
-                        <span className="sub-badge">
-                          {subTracks.filter((t) => t.type === 'embedded').length} Embedded
-                        </span>
-                      )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '4px' }}>
+                      <span className="sub-label">Choose Subtitle Track (V key to cycle)</span>
                       {subTracks.filter((t) => t.type === 'remote').length > 0 && (
                         <span className="sub-badge" style={{ background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', borderColor: 'rgba(34, 197, 94, 0.3)' }}>
                           {subTracks.filter((t) => t.type === 'remote').length} SubDL Tracks
                         </span>
                       )}
-                      {source?.type === 'embed' && subTracks.length > 1 && (
-                        <span className="sub-badge">
-                          {subTracks.length - 1} Online Tracks
-                        </span>
-                      )}
                     </div>
-                    <select
-                      className="sub-select"
-                      value={activeTrackId}
-                      onChange={(e) => selectTrack(e.target.value, true)}
-                    >
-                      {subTracks.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.label}
-                        </option>
-                      ))}
-                    </select>
+
+                    <div className="sub-tracks-list">
+                      {subTracks.map((t) => {
+                        const isSelected = activeTrackId === t.id;
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            className={'sub-track-card' + (isSelected ? ' active' : '')}
+                            onClick={() => selectTrack(t.id, true)}
+                          >
+                            <div className="sub-track-card-left">
+                              <span className="sub-track-card-check">{isSelected ? '✓' : '○'}</span>
+                              <span className="sub-track-card-label">{t.label}</span>
+                            </div>
+                            {t.type === 'remote' && <span className="sub-track-tag subdl">SubDL</span>}
+                            {t.type === 'embedded' && <span className="sub-track-tag embedded">Embedded</span>}
+                            {t.type === 'external' && <span className="sub-track-tag ext">File</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="sub-row">
+                    <span className="sub-label">Search SubDL in other language</span>
+                    <div className="sub-search-row">
+                      <input
+                        type="text"
+                        className="sub-lang-input"
+                        placeholder="e.g. Spanish, French, Hindi, Japanese..."
+                        value={subSearchLang}
+                        onChange={(e) => setSubSearchLang(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleSearchSubdl(); }}
+                      />
+                      <button
+                        type="button"
+                        className="btn ghost sm"
+                        onClick={() => handleSearchSubdl()}
+                        disabled={subSearching}
+                      >
+                        {subSearching ? 'Searching...' : 'Search'}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="sub-row">
