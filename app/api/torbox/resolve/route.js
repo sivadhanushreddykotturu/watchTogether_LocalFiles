@@ -19,20 +19,152 @@ async function searchYts(query, imdbId) {
   return null;
 }
 
+async function searchPirateBay(query) {
+  try {
+    const res = await fetch(`https://apibay.org/q.php?q=${encodeURIComponent(query)}`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json) ? json.filter((t) => t.info_hash && t.info_hash !== '0000000000000000000000000000000000000000') : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function POST(req) {
   try {
-    const { title, year, imdbId, tmdbId } = await req.json();
+    const { title, year, imdbId, tmdbId, mediaType, season, episode } = await req.json();
     const token = process.env.TORBOX_API_KEY;
 
     if (!token) {
       return NextResponse.json({ success: false, error: 'TORBOX_API_KEY not configured' }, { status: 500 });
     }
 
-    if (!title && !imdbId && !tmdbId) {
-      return NextResponse.json({ success: false, error: 'Missing title or id' }, { status: 400 });
+    const isTv = mediaType === 'tv' || (season !== undefined && episode !== undefined);
+
+    // ──────────────────────────────────────────
+    // TV SERIES RESOLVER
+    // ──────────────────────────────────────────
+    if (isTv) {
+      const sNum = Number(season) || 1;
+      const eNum = Number(episode) || 1;
+      const sStr = String(sNum).padStart(2, '0');
+      const eStr = String(eNum).padStart(2, '0');
+
+      // Search PiratyBay for candidate packs/episodes
+      const pbTorrents = await searchPirateBay(title);
+      if (pbTorrents.length === 0) {
+        return NextResponse.json({ success: false, cached: false, reason: 'No torrents found for series' });
+      }
+
+      const hashes = pbTorrents.slice(0, 30).map((t) => t.info_hash.toLowerCase());
+
+      // Batch check TorBox cache
+      const cacheRes = await fetch('https://api.torbox.app/v1/api/torrents/checkcached?format=list', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ hashes }),
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!cacheRes.ok) {
+        return NextResponse.json({ success: false, cached: false, reason: 'TorBox cache check failed' });
+      }
+
+      const cacheJson = await cacheRes.json();
+      const cachedList = Array.isArray(cacheJson.data) ? cacheJson.data : [];
+      if (cachedList.length === 0) {
+        return NextResponse.json({ success: false, cached: false, reason: 'No cached torrent found on TorBox' });
+      }
+
+      const targetHash = cachedList[0].hash.toLowerCase();
+
+      // Add to TorBox
+      const form = new FormData();
+      form.append('magnet', `magnet:?xt=urn:btih:${targetHash}`);
+      form.append('add_only_if_cached', 'true');
+
+      const addRes = await fetch('https://api.torbox.app/v1/api/torrents/createtorrent', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+        signal: AbortSignal.timeout(6000),
+      });
+
+      if (!addRes.ok) {
+        return NextResponse.json({ success: false, cached: false, reason: 'Failed to add torrent to TorBox' });
+      }
+
+      const addJson = await addRes.json();
+      const torrentId = addJson.data?.torrent_id;
+      if (!torrentId) {
+        return NextResponse.json({ success: false, cached: false, reason: 'Torrent ID not returned by TorBox' });
+      }
+
+      // Fetch files list
+      const listRes = await fetch(`https://api.torbox.app/v1/api/torrents/mylist?id=${torrentId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!listRes.ok) {
+        return NextResponse.json({ success: false, cached: false, reason: 'Failed to fetch files list' });
+      }
+
+      const listJson = await listRes.json();
+      const files = listJson.data?.files || [];
+
+      // Regex match episode file (e.g., S01E01, 1x01, or Episode 1)
+      const epRegex = new RegExp(`(?:s${sStr}e${eStr}|${sNum}x${eStr}|episode\\s*0?${eNum})`, 'i');
+      const epFile = files.find((f) => epRegex.test(f.name)) || files.find((f) => f.name.endsWith('.mkv') || f.name.endsWith('.mp4'));
+
+      if (!epFile) {
+        return NextResponse.json({ success: false, cached: false, reason: 'Episode file not found in torrent' });
+      }
+
+      // Generate HLS Stream
+      const streamRes = await fetch(
+        `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${epFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=null`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(7000),
+        }
+      );
+
+      let hlsUrl = null;
+      if (streamRes.ok) {
+        const streamJson = await streamRes.json();
+        hlsUrl = streamJson.data?.hls_url;
+      }
+
+      if (!hlsUrl) {
+        const dlRes = await fetch(
+          `https://api.torbox.app/v1/api/torrents/requestdl?token=${token}&torrent_id=${torrentId}&file_id=${epFile.id}&redirect=false`,
+          { signal: AbortSignal.timeout(5000) }
+        );
+        if (dlRes.ok) {
+          const dlJson = await dlRes.json();
+          hlsUrl = dlJson.data;
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        cached: true,
+        hlsUrl,
+        title: `${title} S${sStr}:E${eStr}`,
+        fileName: epFile.name,
+        quality: '1080p',
+      });
     }
 
-    // 1. Resolve IMDb ID from TMDB if not provided
+    // ──────────────────────────────────────────
+    // MOVIE RESOLVER
+    // ──────────────────────────────────────────
     let resolvedImdb = imdbId;
     if (!resolvedImdb && tmdbId) {
       try {
@@ -47,14 +179,12 @@ export async function POST(req) {
       } catch {}
     }
 
-    // 2. Search YTS for candidate torrents
     const movie = await searchYts(title, resolvedImdb);
     const torrents = movie?.torrents || [];
     if (torrents.length === 0) {
       return NextResponse.json({ success: false, cached: false, reason: 'No torrent candidates found' });
     }
 
-    // Sort: prefer 1080p, then 720p, then 2160p
     const sortedTorrents = [...torrents].sort((a, b) => {
       const qScore = (q) => (q === '1080p' ? 3 : q === '720p' ? 2 : q === '2160p' ? 1 : 0);
       return qScore(b.quality) - qScore(a.quality);
@@ -62,7 +192,6 @@ export async function POST(req) {
 
     const hashes = sortedTorrents.map((t) => t.hash.toLowerCase());
 
-    // 3. Batch check TorBox cache
     const cacheRes = await fetch('https://api.torbox.app/v1/api/torrents/checkcached?format=list', {
       method: 'POST',
       headers: {
@@ -83,21 +212,17 @@ export async function POST(req) {
       return NextResponse.json({ success: false, cached: false, reason: 'No cached stream available on TorBox' });
     }
 
-    // Find best cached torrent matching our quality priority
     const cachedHashes = new Set(cachedList.map((c) => c.hash.toLowerCase()));
     const bestTorrent = sortedTorrents.find((t) => cachedHashes.has(t.hash.toLowerCase())) || sortedTorrents[0];
     const targetHash = bestTorrent.hash.toLowerCase();
 
-    // 4. Add cached torrent to TorBox
     const form = new FormData();
     form.append('magnet', `magnet:?xt=urn:btih:${targetHash}`);
     form.append('add_only_if_cached', 'true');
 
     const addRes = await fetch('https://api.torbox.app/v1/api/torrents/createtorrent', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
       body: form,
       signal: AbortSignal.timeout(6000),
     });
@@ -112,11 +237,8 @@ export async function POST(req) {
       return NextResponse.json({ success: false, cached: false, reason: 'Torrent ID not returned by TorBox' });
     }
 
-    // 5. Query torrent file list
     const listRes = await fetch(`https://api.torbox.app/v1/api/torrents/mylist?id=${torrentId}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(5000),
     });
 
@@ -133,13 +255,10 @@ export async function POST(req) {
       return NextResponse.json({ success: false, cached: false, reason: 'No video file found in torrent' });
     }
 
-    // 6. Request HLS Stream via createstream
     const streamRes = await fetch(
       `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${videoFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=null`,
       {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(7000),
       }
     );
@@ -150,7 +269,6 @@ export async function POST(req) {
       hlsUrl = streamJson.data?.hls_url;
     }
 
-    // Fallback to direct download link if createstream didn't return hls_url
     if (!hlsUrl) {
       const dlRes = await fetch(
         `https://api.torbox.app/v1/api/torrents/requestdl?token=${token}&torrent_id=${torrentId}&file_id=${videoFile.id}&redirect=false`,
@@ -166,7 +284,6 @@ export async function POST(req) {
       return NextResponse.json({ success: false, cached: false, reason: 'Could not generate stream URL' });
     }
 
-    // 7. Get subtitle link if available
     let subtitleUrl = null;
     if (srtFile) {
       try {

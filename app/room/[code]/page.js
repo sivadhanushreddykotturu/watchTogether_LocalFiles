@@ -3264,9 +3264,59 @@ export default function Room() {
     }
   };
 
-  const handleSelectEpisode = (epPayload, playNow = true) => {
+  const handleSelectEpisode = async (epPayload, playNow = true) => {
     const socket = getSocket();
     if (!socket.connected) return;
+
+    if (torboxDevMode) {
+      toast(`⚡ Checking TorBox cache for ${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode}...`);
+      try {
+        const res = await fetch('/api/torbox/resolve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: epPayload.showTitle,
+            season: epPayload.season,
+            episode: epPayload.episode,
+            tmdbId: epPayload.tmdbId,
+            mediaType: 'tv',
+          }),
+        });
+        const data = await res.json();
+        if (data.success && data.cached && data.hlsUrl) {
+          const payload = {
+            type: 'hls',
+            url: data.hlsUrl,
+            subtitleUrl: data.subtitleUrl || null,
+            title: epPayload.title,
+            platform: `TorBox Direct (${data.quality || '1080p'})`,
+            mediaType: 'tv',
+            tmdbId: epPayload.tmdbId,
+            season: epPayload.season,
+            episode: epPayload.episode,
+            episodeTitle: epPayload.episodeTitle,
+            showTitle: epPayload.showTitle,
+            poster: epPayload.poster,
+            backdrop: epPayload.backdrop,
+          };
+          if (playNow) {
+            socket.emit('source', { ...payload, playing: true });
+            toast(`⚡ Streaming ${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode} via TorBox`);
+            setTmdbEpisodeModalOpen(false);
+            setYtSearchModalOpen(false);
+            setYtPanelOpen(false);
+          } else {
+            socket.emit('queue-add', { ...payload, playNow: false });
+            toast(`Added S${epPayload.season}:E${epPayload.episode} (TorBox) to queue`);
+          }
+          return;
+        } else {
+          toast('Episode not cached on TorBox. Using VidFast...');
+        }
+      } catch (err) {
+        console.warn('TorBox TV resolve fallback to VidFast:', err);
+      }
+    }
 
     const embedUrl = buildVidfastUrl({
       tmdbId: epPayload.tmdbId,
