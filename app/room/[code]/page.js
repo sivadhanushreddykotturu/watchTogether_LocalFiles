@@ -5002,11 +5002,29 @@ export default function Room() {
                   </div>
 
                   <div className="sub-row">
-                    <span className="sub-label">Delay — Room-Wide (G / H keys · synced)</span>
-                    <button className="step-btn" onClick={() => nudgeSubtitles(-50)} title="Subtitles earlier by 50 ms (G)">−</button>
-                    <span className="sub-offset">{fmtOffset(subOffset)}</span>
-                    <button className="step-btn" onClick={() => nudgeSubtitles(50)} title="Subtitles later by 50 ms (H)">+</button>
-                    <span className="sub-hint">V / B keys cycle · shift = 500 ms</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '4px' }}>
+                      <span className="sub-label">Delay (Room-Wide Synced)</span>
+                      {subOffset !== 0 && (
+                        <button
+                          type="button"
+                          className="sub-reset-btn"
+                          onClick={() => nudgeSubtitles(-subOffset)}
+                          title="Reset to 0 ms"
+                        >
+                          Reset (0 ms)
+                        </button>
+                      )}
+                    </div>
+                    <div className="sub-delay-controls">
+                      <button className="step-btn lg" onClick={() => nudgeSubtitles(-500)} title="500 ms earlier (Shift+G)">−0.5s</button>
+                      <button className="step-btn" onClick={() => nudgeSubtitles(-50)} title="50 ms earlier (G)">−</button>
+                      <span className="sub-offset-pill">{fmtOffset(subOffset)}</span>
+                      <button className="step-btn" onClick={() => nudgeSubtitles(50)} title="50 ms later (H)">+</button>
+                      <button className="step-btn lg" onClick={() => nudgeSubtitles(500)} title="500 ms later (Shift+H)">+0.5s</button>
+                    </div>
+                    <span className="sub-hint" style={{ marginTop: '2px', width: '100%' }}>
+                      Keys: G / H (±50ms) · Shift + G / H (±500ms)
+                    </span>
                   </div>
 
                   <div className="sub-row">

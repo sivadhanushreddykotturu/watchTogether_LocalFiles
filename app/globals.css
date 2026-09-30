@@ -7714,3 +7714,41 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   border-color: rgba(245, 158, 11, 0.4);
   animation: pulse-soft 1.5s infinite;
 }
+
+.sub-delay-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+.sub-offset-pill {
+  flex: 1;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #4ade80;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.step-btn.lg {
+  width: auto;
+  padding: 0 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.sub-reset-btn {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+.sub-reset-btn:hover {
+  color: #f87171;
+}
