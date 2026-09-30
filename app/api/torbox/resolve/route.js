@@ -214,12 +214,21 @@ export async function POST(req) {
       // Filter cached torrents strictly matching the show title first
       const validCached = cachedList.filter((c) => matchesShowTitle(c.name || '', candidateTitles));
 
+      // Prioritize x264/h264 over heavy x265/hevc so TorBox's live transcoder never chokes with 504 timeouts
+      const scoreCodec = (name) => {
+        const lower = (name || '').toLowerCase();
+        if (/hevc|x265|h\.?265|10bit/i.test(lower)) return 1;
+        if (/x264|h\.?264|avc/i.test(lower)) return 3;
+        return 2;
+      };
+      const sortedCandidates = [...validCached].sort((a, b) => scoreCodec(b.name) - scoreCodec(a.name));
+
       // 1. Look for exact episode torrent (e.g. S01E02)
-      let targetTorrent = validCached.find((c) => epRegex.test(c.name || ''));
+      let targetTorrent = sortedCandidates.find((c) => epRegex.test(c.name || ''));
 
       // 2. Or complete season pack (e.g. S01 Complete)
       if (!targetTorrent) {
-        targetTorrent = validCached.find((c) => seasonRegex.test(c.name || '') && !/s\d+e\d+/i.test(c.name || ''));
+        targetTorrent = sortedCandidates.find((c) => seasonRegex.test(c.name || '') && !/s\d+e\d+/i.test(c.name || ''));
       }
 
       // Strictly fail if neither exists so we NEVER play a wrong episode
