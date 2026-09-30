@@ -275,6 +275,13 @@ export default function Room() {
   const [embedRoomPaused, setEmbedRoomPaused] = useState(false);
   const [embedPausedActor, setEmbedPausedActor] = useState('');
   const [peerSyncData, setPeerSyncData] = useState({}); // { socketId: { name, color, time, playing } }
+  const [torboxDevMode, setTorboxDevMode] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      const val = localStorage.getItem('reelsync:torbox_dev');
+      return val === null ? true : val === 'true';
+    } catch { return true; }
+  });
   const [embedKey, setEmbedKey] = useState(0);
   const lastEmbedSeekRef = useRef(0);
   const embedPauseTimerRef = useRef(null);
@@ -3124,6 +3131,50 @@ export default function Room() {
       }
 
       // Movie
+      if (torboxDevMode) {
+        toast(`⚡ Checking TorBox cache for "${item.title}"...`);
+        try {
+          const res = await fetch('/api/torbox/resolve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              title: item.title,
+              year: item.releaseYear || item.year,
+              imdbId: item.imdbId,
+              tmdbId: item.tmdbId || item.id,
+            }),
+          });
+          const data = await res.json();
+          if (data.success && data.cached && data.hlsUrl) {
+            const payload = {
+              type: 'hls',
+              url: data.hlsUrl,
+              subtitleUrl: data.subtitleUrl || null,
+              title: item.title,
+              platform: `TorBox Direct (${data.quality || '1080p'})`,
+              mediaType: 'movie',
+              tmdbId: item.tmdbId || item.id,
+              poster: item.poster,
+              backdrop: item.backdrop,
+            };
+            if (playNow) {
+              socket.emit('source', { ...payload, playing: true });
+              toast(`⚡ Streaming "${item.title}" via TorBox (${data.quality || '1080p'})`);
+              setYtSearchModalOpen(false);
+              setYtPanelOpen(false);
+            } else {
+              socket.emit('queue-add', { ...payload, playNow: false });
+              toast(`Added "${item.title}" (TorBox) to queue`);
+            }
+            return;
+          } else {
+            toast('Not cached on TorBox. Using VidFast...');
+          }
+        } catch (err) {
+          console.warn('TorBox resolve error, falling back to VidFast:', err);
+        }
+      }
+
       const embedUrl = buildVidfastUrl({ tmdbId: item.tmdbId || item.id, type: 'movie' });
       const payload = {
         type: 'embed',
@@ -3757,6 +3808,24 @@ export default function Room() {
                   <span className={'min-switch sm' + (adultMode ? ' on' : '')} aria-hidden="true"><span className="switch-dot" /></span>
                 </button>
               )}
+
+              <button
+                type="button"
+                className="room-menu-item"
+                role="menuitemcheckbox"
+                aria-checked={torboxDevMode}
+                onClick={() => {
+                  const next = !torboxDevMode;
+                  setTorboxDevMode(next);
+                  try { localStorage.setItem('reelsync:torbox_dev', String(next)); } catch {}
+                  toast(next ? '⚡ TorBox Direct Stream (Dev Mode) ON' : 'VidFast Embed Mode ON');
+                }}
+                title={torboxDevMode ? 'Direct Stream ON (Queries TorBox for 100% sync HLS streams)' : 'Direct Stream OFF (Uses VidFast embeds)'}
+              >
+                <span style={{ fontSize: '14px', lineHeight: 1 }}>⚡</span>
+                <span>Direct Stream (Dev)</span>
+                <span className={'min-switch sm' + (torboxDevMode ? ' on' : '')} aria-hidden="true"><span className="switch-dot" /></span>
+              </button>
 
               <div className="room-menu-row">
                 <span>Account</span>
