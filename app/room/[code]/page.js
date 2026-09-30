@@ -283,7 +283,74 @@ export default function Room() {
     } catch { return true; }
   });
   const [embedKey, setEmbedKey] = useState(0);
-  const [streamLoading, setStreamLoading] = useState(null); // { title: string, status: string }
+  const [streamLoading, setStreamLoading] = useState(null); // { title: string, status: string, canFallback?: boolean }
+  const streamLoadingRef = useRef(null);
+  const streamWatchdogRef = useRef(null);
+  const pendingFallbackRef = useRef(null);
+  const seekBufferTimerRef = useRef(null);
+
+  const clearStreamWatchdog = () => {
+    if (streamWatchdogRef.current) {
+      if (typeof streamWatchdogRef.current.clear === 'function') {
+        streamWatchdogRef.current.clear();
+      } else {
+        clearTimeout(streamWatchdogRef.current);
+      }
+      streamWatchdogRef.current = null;
+    }
+  };
+
+  const updateStreamLoading = (val) => {
+    streamLoadingRef.current = val;
+    setStreamLoading(val);
+  };
+
+  const stopStreamLoading = () => {
+    clearStreamWatchdog();
+    pendingFallbackRef.current = null;
+    updateStreamLoading(null);
+  };
+
+  const startStreamWatchdog = (title, fallbackFn) => {
+    clearStreamWatchdog();
+    pendingFallbackRef.current = fallbackFn;
+
+    // Phase 1: At 4.5s -> server preparing video chunks
+    const t1 = setTimeout(() => {
+      if (!streamLoadingRef.current) return;
+      updateStreamLoading({
+        ...streamLoadingRef.current,
+        status: '⏳ Server is preparing video chunks...',
+      });
+    }, 4500);
+
+    // Phase 2: At 8s -> offer immediate fallback button
+    const t2 = setTimeout(() => {
+      if (!streamLoadingRef.current) return;
+      updateStreamLoading({
+        ...streamLoadingRef.current,
+        status: '⚠️ Buffering is taking longer than expected',
+        canFallback: true,
+      });
+    }, 8000);
+
+    // Phase 3: At 14s -> auto fallback to VidFast
+    const t3 = setTimeout(() => {
+      if (!streamLoadingRef.current) return;
+      toast('TorBox stream took too long · Switched to VidFast');
+      stopStreamLoading();
+      if (typeof fallbackFn === 'function') fallbackFn();
+    }, 14000);
+
+    streamWatchdogRef.current = {
+      clear: () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      },
+    };
+  };
+
   const lastEmbedSeekRef = useRef(0);
   const embedPauseTimerRef = useRef(null);
   const lastRemoteCommandAt = useRef(0);
@@ -1437,6 +1504,9 @@ export default function Room() {
       updateSubtitles();
       const ext = extAudioRef.current;
       const v = videoRef.current;
+      if (streamLoadingRef.current && v && v.currentTime > 0.05) {
+        stopStreamLoading();
+      }
       // Only correct drift if neither video nor audio is seeking
       if (ext && ext.src && v && !v.paused && !v.seeking && !ext.seeking) {
         if (ext.paused) {
@@ -1446,6 +1516,47 @@ export default function Room() {
         if (drift > 0.25) {
           ext.currentTime = v.currentTime;
         }
+      }
+    };
+
+    const onPlaying = () => {
+      clearTimeout(seekBufferTimerRef.current);
+      if (streamLoadingRef.current) {
+        stopStreamLoading();
+      }
+    };
+
+    const onWaiting = () => {
+      if (sourceRef.current?.type === 'hls' && !streamLoadingRef.current) {
+        clearTimeout(seekBufferTimerRef.current);
+        seekBufferTimerRef.current = setTimeout(() => {
+          const v = videoRef.current;
+          if (v && (v.seeking || v.readyState < 3) && !streamLoadingRef.current) {
+            updateStreamLoading({
+              title: sourceRef.current?.title || 'Video Stream',
+              status: '⚡ Buffering video chunks...',
+              canFallback: true,
+            });
+            startStreamWatchdog(sourceRef.current?.title || 'Video Stream', () => {
+              if (sourceRef.current?.tmdbId) {
+                const isTv = sourceRef.current.mediaType === 'tv';
+                const embedUrl = buildVidfastUrl({
+                  tmdbId: sourceRef.current.tmdbId,
+                  type: isTv ? 'tv' : 'movie',
+                  season: sourceRef.current.season,
+                  episode: sourceRef.current.episode,
+                });
+                socket.emit('source', {
+                  ...sourceRef.current,
+                  type: 'embed',
+                  embedUrl,
+                  platform: 'VidFast',
+                  playing: true,
+                });
+              }
+            });
+          }
+        }, 1500);
       }
     };
 
@@ -1480,6 +1591,9 @@ export default function Room() {
     video.addEventListener('ended', onEnded);
     video.addEventListener('timeupdate', onTime);
     video.addEventListener('loadedmetadata', onLoadedMetadata);
+    video.addEventListener('playing', onPlaying);
+    video.addEventListener('waiting', onWaiting);
+    video.addEventListener('canplay', onPlaying);
 
     // --- socket events ---
     const onUserTyping = ({ id, name, color, typing }) => {
@@ -2204,6 +2318,9 @@ export default function Room() {
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('playing', onPlaying);
+      video.removeEventListener('waiting', onWaiting);
+      video.removeEventListener('canplay', onPlaying);
       video.removeEventListener('ended', onEnded);
       video.removeEventListener('timeupdate', onTime);
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
@@ -2373,13 +2490,20 @@ export default function Room() {
           lowLatencyMode: false,
           startLevel: -1,
           capLevelToPlayerSize: true,
-          maxBufferLength: 30,
-          maxMaxBufferLength: 60,
-          maxBufferSize: 60 * 1000 * 1000,
-          maxBufferHole: 0.5,
-          maxFragLookUpTolerance: 0.3,
-          nudgeOffset: 0.2,
-          nudgeMaxRetry: 10,
+          backBufferLength: 90,
+          maxBufferLength: 60,
+          maxMaxBufferLength: 180,
+          maxBufferSize: 90 * 1000 * 1000,
+          maxBufferHole: 0.8,
+          maxFragLookUpTolerance: 0.4,
+          nudgeOffset: 0.3,
+          nudgeMaxRetry: 12,
+          fragLoadingTimeOut: 25000,
+          fragLoadingMaxRetry: 6,
+          fragLoadingRetryDelay: 1000,
+          fragLoadingMaxRetryTimeout: 30000,
+          levelLoadingTimeOut: 15000,
+          levelLoadingMaxRetry: 5,
           autoStartLoad: true,
           startFragPrefetch: true,
         });
@@ -3169,8 +3293,33 @@ export default function Room() {
         setYtPanelOpen(false);
       }
 
+      const fallbackToVidfast = () => {
+        stopStreamLoading();
+        const embedUrl = buildVidfastUrl({ tmdbId: item.tmdbId || item.id, type: 'movie' });
+        const payload = {
+          type: 'embed',
+          embedUrl,
+          title: item.title,
+          platform: 'VidFast',
+          mediaType: 'movie',
+          tmdbId: item.tmdbId || item.id,
+          poster: item.poster,
+          backdrop: item.backdrop,
+        };
+
+        if (playNow) {
+          socket.emit('source', { ...payload, playing: true });
+          toast(`Playing "${item.title}"`);
+          setYtSearchModalOpen(false);
+          setYtPanelOpen(false);
+        } else {
+          socket.emit('queue-add', { ...payload, playNow: false });
+          toast(`Added "${item.title}" to queue`);
+        }
+      };
+
       if (torboxDevMode) {
-        setStreamLoading({
+        updateStreamLoading({
           title: item.title,
           status: '⚡ Checking TorBox cache...'
         });
@@ -3188,7 +3337,12 @@ export default function Room() {
           });
           const data = await res.json();
           if (data.success && data.cached && data.hlsUrl) {
-            setStreamLoading(null);
+            updateStreamLoading({
+              title: item.title,
+              status: '⚡ Buffering direct stream...'
+            });
+            startStreamWatchdog(item.title, fallbackToVidfast);
+
             const payload = {
               type: 'hls',
               url: data.hlsUrl,
@@ -3206,45 +3360,26 @@ export default function Room() {
               setYtSearchModalOpen(false);
               setYtPanelOpen(false);
             } else {
+              stopStreamLoading();
               socket.emit('queue-add', { ...payload, playNow: false });
               toast(`Added "${item.title}" (TorBox) to queue`);
             }
             return;
           } else {
-            setStreamLoading({
+            updateStreamLoading({
               title: item.title,
               status: 'Not cached on TorBox · Switching to VidFast...'
             });
-            setTimeout(() => setStreamLoading(null), 1400);
+            setTimeout(() => stopStreamLoading(), 1400);
             toast('Not cached on TorBox. Using VidFast...');
           }
         } catch (err) {
-          setStreamLoading(null);
+          stopStreamLoading();
           console.warn('TorBox resolve error, falling back to VidFast:', err);
         }
       }
 
-      const embedUrl = buildVidfastUrl({ tmdbId: item.tmdbId || item.id, type: 'movie' });
-      const payload = {
-        type: 'embed',
-        embedUrl,
-        title: item.title,
-        platform: 'VidFast',
-        mediaType: 'movie',
-        tmdbId: item.tmdbId || item.id,
-        poster: item.poster,
-        backdrop: item.backdrop,
-      };
-
-      if (playNow) {
-        socket.emit('source', { ...payload, playing: true });
-        toast(`Playing "${item.title}"`);
-        setYtSearchModalOpen(false);
-        setYtPanelOpen(false);
-      } else {
-        socket.emit('queue-add', { ...payload, playNow: false });
-        toast(`Added "${item.title}" to queue`);
-      }
+      fallbackToVidfast();
       return;
     }
 
@@ -3324,9 +3459,45 @@ export default function Room() {
       setYtPanelOpen(false);
     }
 
+    const fallbackToVidfast = () => {
+      stopStreamLoading();
+      const embedUrl = buildVidfastUrl({
+        tmdbId: epPayload.tmdbId,
+        type: 'tv',
+        season: epPayload.season,
+        episode: epPayload.episode,
+      });
+
+      const payload = {
+        type: 'embed',
+        embedUrl,
+        title: epPayload.title,
+        platform: 'VidFast',
+        mediaType: 'tv',
+        tmdbId: epPayload.tmdbId,
+        season: epPayload.season,
+        episode: epPayload.episode,
+        episodeTitle: epPayload.episodeTitle,
+        showTitle: epPayload.showTitle,
+        poster: epPayload.poster,
+        backdrop: epPayload.backdrop,
+      };
+
+      if (playNow) {
+        socket.emit('source', { ...payload, playing: true });
+        toast(`Playing ${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode}`);
+        setTmdbEpisodeModalOpen(false);
+        setYtSearchModalOpen(false);
+        setYtPanelOpen(false);
+      } else {
+        socket.emit('queue-add', { ...payload, playNow: false });
+        toast(`Added S${epPayload.season}:E${epPayload.episode} to queue`);
+      }
+    };
+
     if (torboxDevMode) {
       const epLabel = `${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode}`;
-      setStreamLoading({
+      updateStreamLoading({
         title: epLabel,
         status: '⚡ Checking TorBox cache...'
       });
@@ -3345,7 +3516,12 @@ export default function Room() {
         });
         const data = await res.json();
         if (data.success && data.cached && data.hlsUrl) {
-          setStreamLoading(null);
+          updateStreamLoading({
+            title: epLabel,
+            status: '⚡ Buffering direct stream...'
+          });
+          startStreamWatchdog(epLabel, fallbackToVidfast);
+
           const payload = {
             type: 'hls',
             url: data.hlsUrl,
@@ -3368,56 +3544,26 @@ export default function Room() {
             setYtSearchModalOpen(false);
             setYtPanelOpen(false);
           } else {
+            stopStreamLoading();
             socket.emit('queue-add', { ...payload, playNow: false });
             toast(`Added S${epPayload.season}:E${epPayload.episode} (TorBox) to queue`);
           }
           return;
         } else {
-          setStreamLoading({
+          updateStreamLoading({
             title: epLabel,
             status: 'Episode not cached · Switching to VidFast...'
           });
-          setTimeout(() => setStreamLoading(null), 1400);
+          setTimeout(() => stopStreamLoading(), 1400);
           toast('Episode not cached on TorBox. Using VidFast...');
         }
       } catch (err) {
-        setStreamLoading(null);
+        stopStreamLoading();
         console.warn('TorBox TV resolve fallback to VidFast:', err);
       }
     }
 
-    const embedUrl = buildVidfastUrl({
-      tmdbId: epPayload.tmdbId,
-      type: 'tv',
-      season: epPayload.season,
-      episode: epPayload.episode,
-    });
-
-    const payload = {
-      type: 'embed',
-      embedUrl,
-      title: epPayload.title,
-      platform: 'VidFast',
-      mediaType: 'tv',
-      tmdbId: epPayload.tmdbId,
-      season: epPayload.season,
-      episode: epPayload.episode,
-      episodeTitle: epPayload.episodeTitle,
-      showTitle: epPayload.showTitle,
-      poster: epPayload.poster,
-      backdrop: epPayload.backdrop,
-    };
-
-    if (playNow) {
-      socket.emit('source', { ...payload, playing: true });
-      toast(`Playing ${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode}`);
-      setTmdbEpisodeModalOpen(false);
-      setYtSearchModalOpen(false);
-      setYtPanelOpen(false);
-    } else {
-      socket.emit('queue-add', { ...payload, playNow: false });
-      toast(`Added S${epPayload.season}:E${epPayload.episode} to queue`);
-    }
+    fallbackToVidfast();
   };
 
   const handlePlayNextEpisode = () => {
@@ -4060,6 +4206,23 @@ export default function Room() {
                   <div className="stream-loading-ring" />
                   <div className="stream-loading-title">{streamLoading.title}</div>
                   <div className="stream-loading-status">{streamLoading.status}</div>
+                  {streamLoading.canFallback && (
+                    <button
+                      type="button"
+                      className="stream-loading-fallback-btn"
+                      onClick={() => {
+                        const fn = pendingFallbackRef.current;
+                        stopStreamLoading();
+                        if (typeof fn === 'function') fn();
+                      }}
+                    >
+                      <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
+                        <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-7.068 2H.534a.25.25 0 0 1-.192-.41l1.966-2.36a.25.25 0 0 1 .384 0l1.966 2.36a.25.25 0 0 1-.192.41z"/>
+                        <path fillRule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/>
+                      </svg>
+                      Switch to VidFast Now
+                    </button>
+                  )}
                 </div>
               </div>
             )}
