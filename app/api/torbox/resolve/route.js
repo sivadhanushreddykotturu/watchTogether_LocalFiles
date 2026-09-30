@@ -64,7 +64,7 @@ function matchesShowTitle(torrentName, candidateTitles) {
   const normTorrent = rawName.toLowerCase().replace(/[\._\-:,]/g, ' ').replace(/\s+/g, ' ').trim();
 
   // Find where the season / episode / year specifier starts
-  const markerRegex = /\b(?:s\d{1,2}|season\s*\d{1,2}|\d{1,2}x\d{1,2}|(?:19|20)\d{2})\b/i;
+  const markerRegex = /\b(?:s\d{1,2}(?:e\d{1,2})?|season\s*\d{1,2}|\d{1,2}x\d{1,2}|ep(?:isode)?\s*\d{1,2}|(?:19|20)\d{2})\b/i;
   const match = normTorrent.match(markerRegex);
   const prefix = match ? normTorrent.slice(0, match.index).trim() : normTorrent;
 
