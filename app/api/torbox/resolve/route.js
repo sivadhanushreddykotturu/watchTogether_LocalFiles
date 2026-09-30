@@ -122,7 +122,9 @@ export async function POST(req) {
         return NextResponse.json({ success: false, cached: false, reason: 'No cached torrent found on TorBox' });
       }
 
-      const targetHash = cachedList[0].hash.toLowerCase();
+      const epRegex = new RegExp(`(?:s${sStr}e${eStr}|${sNum}x${eStr}|episode\\s*0?${eNum})`, 'i');
+      const epMatch = cachedList.find((c) => epRegex.test(c.name || ''));
+      const targetHash = (epMatch || cachedList[0]).hash.toLowerCase();
 
       // Add to TorBox
       const form = new FormData();
