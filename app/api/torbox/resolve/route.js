@@ -85,13 +85,21 @@ export async function POST(req) {
         } catch {}
       }
 
-      // Search PirateBay using candidate titles
+      // Search PirateBay prioritizing exact episode & season packs
+      const queries = [];
+      candidateTitles.forEach((t) => {
+        queries.push(`${t} S${sStr}E${eStr}`);
+        queries.push(`${t} S${sStr}`);
+        queries.push(`${t} Season ${sNum}`);
+        queries.push(t);
+      });
+
       let pbTorrents = [];
-      for (const query of candidateTitles.slice(0, 4)) {
+      for (const query of queries.slice(0, 6)) {
         const found = await searchPirateBay(query);
         if (found.length > 0) {
-          pbTorrents = found;
-          break;
+          pbTorrents.push(...found);
+          if (pbTorrents.length >= 20) break;
         }
       }
 
@@ -122,9 +130,23 @@ export async function POST(req) {
         return NextResponse.json({ success: false, cached: false, reason: 'No cached torrent found on TorBox' });
       }
 
-      const epRegex = new RegExp(`(?:s${sStr}e${eStr}|${sNum}x${eStr}|episode\\s*0?${eNum})`, 'i');
-      const epMatch = cachedList.find((c) => epRegex.test(c.name || ''));
-      const targetHash = (epMatch || cachedList[0]).hash.toLowerCase();
+      const epRegex = new RegExp(`(?:s${sStr}e${eStr}|${sNum}x${eStr}|episode\\s*0?${eNum}\\b)`, 'i');
+      const seasonRegex = new RegExp(`(?:s${sStr}\\b|season\\s*0?${sNum}\\b)`, 'i');
+
+      // 1. Look for exact episode torrent (e.g. S01E02)
+      let targetTorrent = cachedList.find((c) => epRegex.test(c.name || ''));
+
+      // 2. Or complete season pack (e.g. S01 Complete)
+      if (!targetTorrent) {
+        targetTorrent = cachedList.find((c) => seasonRegex.test(c.name || '') && !/s\d+e\d+/i.test(c.name || ''));
+      }
+
+      // Strictly fail if neither exists so we NEVER play a wrong episode
+      if (!targetTorrent) {
+        return NextResponse.json({ success: false, cached: false, reason: `Episode S${sStr}E${eStr} not cached on TorBox` });
+      }
+
+      const targetHash = targetTorrent.hash.toLowerCase();
 
       // Add to TorBox
       const form = new FormData();
@@ -161,11 +183,11 @@ export async function POST(req) {
       const listJson = await listRes.json();
       const files = listJson.data?.files || [];
 
-      // Match episode file (e.g., S01E01, 1x01, or Episode 1)
-      const epFile = files.find((f) => epRegex.test(f.name)) || files.find((f) => f.name.endsWith('.mkv') || f.name.endsWith('.mp4'));
+      // Match exact episode file
+      const epFile = files.find((f) => epRegex.test(f.name));
 
       if (!epFile) {
-        return NextResponse.json({ success: false, cached: false, reason: 'Episode file not found in torrent' });
+        return NextResponse.json({ success: false, cached: false, reason: `Episode S${sStr}E${eStr} file not found in torrent` });
       }
 
       // Generate HLS Stream
