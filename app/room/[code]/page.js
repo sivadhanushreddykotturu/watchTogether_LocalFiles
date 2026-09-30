@@ -287,9 +287,18 @@ export default function Room() {
   const streamLoadingRef = useRef(null);
   const streamWatchdogRef = useRef(null);
   const pendingFallbackRef = useRef(null);
-  const seekBufferTimerRef = useRef(null);
-  const [subSearchLang, setSubSearchLang] = useState('');
-  const [subSearching, setSubSearching] = useState(false);
+  const [subLoading, setSubLoading] = useState(false);
+  const [activeSubLang, setActiveSubLang] = useState('en');
+  const SUB_LANG_PILLS = [
+    { label: 'English', code: 'en' },
+    { label: 'Spanish', code: 'es' },
+    { label: 'French', code: 'fr' },
+    { label: 'German', code: 'de' },
+    { label: 'Hindi', code: 'hi' },
+    { label: 'Japanese', code: 'ja' },
+    { label: 'Arabic', code: 'ar' },
+    { label: 'All', code: 'all' },
+  ];
 
   // Lightweight mid-stream buffering indicator (bottom-left, unobtrusive)
   const [midBuffering, setMidBuffering] = useState(false);
@@ -589,24 +598,27 @@ export default function Room() {
     }
   };
 
-  const handleSearchSubdl = async (lang = '') => {
-    const qLang = (lang || subSearchLang || 'en').trim();
-    if (!source?.title && !source?.tmdbId) {
-      toast('No media title available to search');
+  const loadSubtitlesForCurrentMedia = async (lang = 'en') => {
+    const curSource = sourceRef.current || source;
+    const currentTitle = curSource?.showTitle || curSource?.title || '';
+    const currentTmdb = curSource?.tmdbId || '';
+    if (!currentTitle && !currentTmdb) {
+      toast('No media loaded to find subtitles for');
       return;
     }
-    setSubSearching(true);
+    setSubLoading(true);
+    setActiveSubLang(lang);
     try {
-      const isTv = source.mediaType === 'tv';
+      const isTv = curSource?.mediaType === 'tv' || Boolean(curSource?.season && curSource?.episode);
       const params = new URLSearchParams({
-        title: source.showTitle || source.title || '',
         mediaType: isTv ? 'tv' : 'movie',
-        languages: qLang,
+        languages: lang,
       });
-      if (source.tmdbId) params.set('tmdbId', String(source.tmdbId));
-      if (isTv && source.season !== undefined) {
-        params.set('season', String(source.season));
-        params.set('episode', String(source.episode || 1));
+      if (currentTmdb) params.set('tmdbId', String(currentTmdb));
+      if (currentTitle) params.set('title', currentTitle);
+      if (isTv && curSource?.season !== undefined && curSource?.season !== null) {
+        params.set('season', String(curSource.season));
+        params.set('episode', String(curSource.episode || 1));
       }
       const res = await fetch(`/api/subtitles/search?${params.toString()}`);
       const data = await res.json();
@@ -616,27 +628,36 @@ export default function Room() {
           label: s.label || `Subtitle ${idx + 1}`,
           type: 'remote',
           url: s.url,
+          format: s.format,
+          language: s.language,
           cues: [],
         }));
-        const existingUrls = new Set(subTracksRef.current.map((t) => t.url).filter(Boolean));
-        const newTracks = mapped.filter((m) => !existingUrls.has(m.url));
-        const nextTracks = [...subTracksRef.current, ...newTracks];
+        const existingNonRemote = subTracksRef.current.filter((t) => t.type !== 'remote');
+        const nextTracks = [...existingNonRemote, ...mapped];
         subTracksRef.current = nextTracks;
         setSubTracks(nextTracks);
-        if (newTracks.length > 0) {
-          selectTrack(newTracks[0].id, true);
-          toast(`Found ${newTracks.length} subtitles for "${qLang}"`);
-        } else {
-          toast(`Subtitles already in list`);
-        }
+        // Automatically activate first track so user gets immediate playback
+        selectTrack(mapped[0].id, true);
+        toast(`Loaded ${mapped.length} subtitles from SubDL`);
       } else {
-        toast(`No subtitles found on SubDL for "${qLang}"`);
+        toast(`No subtitles found on SubDL for ${lang === 'all' ? 'this video' : lang.toUpperCase()}`);
       }
     } catch (err) {
-      console.warn('SubDL search error:', err);
-      toast('Failed to search SubDL');
+      console.warn('SubDL fetch error:', err);
+      toast('Failed to load subtitles from SubDL');
     } finally {
-      setSubSearching(false);
+      setSubLoading(false);
+    }
+  };
+
+  const handleToggleSubPanel = () => {
+    const nextOpen = !subPanelOpen;
+    setSubPanelOpen(nextOpen);
+    if (nextOpen) {
+      const hasRemote = subTracksRef.current.some((t) => t.type === 'remote');
+      if (!hasRemote) {
+        loadSubtitlesForCurrentMedia(activeSubLang || 'en');
+      }
     }
   };
 
@@ -2836,46 +2857,18 @@ export default function Room() {
     }
   }, [source?.type, source?.url, source?.audioUrl, source?.subtitleUrl, source?.subtitles]);
 
-  // Auto-fetch SubDL subtitles for TMDB content if not already populated
+  // Reset remote subtitle tracks and subtitle state when playing source changes (no background fetching)
   useEffect(() => {
-    if (!source?.tmdbId || source?.type === 'embed') return;
-    if (source?.subtitleUrl || (Array.isArray(source?.subtitles) && source.subtitles.length > 0)) return;
-
-    const controller = new AbortController();
-    const isTv = source.mediaType === 'tv';
-    const params = new URLSearchParams({
-      tmdbId: String(source.tmdbId),
-      mediaType: isTv ? 'tv' : 'movie',
-      title: source.title || '',
-      languages: 'en',
-    });
-    if (isTv && source.season !== undefined) {
-      params.set('season', String(source.season));
-      params.set('episode', String(source.episode || 1));
-    }
-
-    fetch(`/api/subtitles/search?${params.toString()}`, { signal: controller.signal })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && Array.isArray(data.subtitles) && data.subtitles.length > 0) {
-          const mapped = data.subtitles.map((s, idx) => ({
-            id: s.id || `subdl-${idx}`,
-            label: s.label || `Subtitle ${idx + 1}`,
-            type: 'remote',
-            url: s.url,
-            cues: [],
-          }));
-          const existingNonRemote = subTracksRef.current.filter((t) => t.type !== 'remote');
-          const nextTracks = [...existingNonRemote, ...mapped];
-          subTracksRef.current = nextTracks;
-          setSubTracks(nextTracks);
-          selectTrack(mapped[0].id, false);
-        }
-      })
-      .catch(() => {});
-
-    return () => controller.abort();
-  }, [source?.tmdbId, source?.mediaType, source?.season, source?.episode, source?.url]);
+    subTracksRef.current = subTracksRef.current.filter((t) => t.type !== 'remote');
+    setSubTracks((prev) => prev.filter((t) => t.type !== 'remote'));
+    setActiveTrackId('off');
+    activeTrackIdRef.current = 'off';
+    subsOnRef.current = false;
+    setSubsOn(false);
+    setSubText('');
+    setActiveSubLang('en');
+    setSubLoading(false);
+  }, [source?.url, source?.embedUrl, source?.videoId, source?.tmdbId, source?.season, source?.episode]);
 
   // autoscroll chat on new messages or when switching to chat tab or expanding sidebar
   useEffect(() => {
@@ -4461,11 +4454,11 @@ export default function Room() {
 
                   <button
                     type="button"
-                    className={'room-tv-btn sub-quick-btn' + (subsOn ? ' active' : '')}
-                    onClick={() => setSubPanelOpen((v) => !v)}
+                    className={'room-tv-btn sub-quick-btn' + (subsOn ? ' active' : '') + (subLoading ? ' loading' : '')}
+                    onClick={handleToggleSubPanel}
                     title="Choose Subtitle Track (SubDL)"
                   >
-                    💬 Subtitles {subsOn && <span className="sub-active-dot" />}
+                    {subLoading ? '⏳ Loading...' : '💬 Subtitles'} {subsOn && <span className="sub-active-dot" />}
                   </button>
 
                   {source.type === 'embed' && (
@@ -4924,8 +4917,8 @@ export default function Room() {
                   )}
 
                   <div className="sub-row">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '4px' }}>
-                      <span className="sub-label">Choose Subtitle Track (V key to cycle)</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '6px' }}>
+                      <span className="sub-label">Language (1-Tap · SubDL)</span>
                       {subTracks.filter((t) => t.type === 'remote').length > 0 && (
                         <span className="sub-badge" style={{ background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', borderColor: 'rgba(34, 197, 94, 0.3)' }}>
                           {subTracks.filter((t) => t.type === 'remote').length} SubDL Tracks
@@ -4933,49 +4926,71 @@ export default function Room() {
                       )}
                     </div>
 
-                    <div className="sub-tracks-list">
-                      {subTracks.map((t) => {
-                        const isSelected = activeTrackId === t.id;
-                        return (
-                          <button
-                            key={t.id}
-                            type="button"
-                            className={'sub-track-card' + (isSelected ? ' active' : '')}
-                            onClick={() => selectTrack(t.id, true)}
-                          >
-                            <div className="sub-track-card-left">
-                              <span className="sub-track-card-check">{isSelected ? '✓' : '○'}</span>
-                              <span className="sub-track-card-label">{t.label}</span>
-                            </div>
-                            {t.type === 'remote' && <span className="sub-track-tag subdl">SubDL</span>}
-                            {t.type === 'embedded' && <span className="sub-track-tag embedded">Embedded</span>}
-                            {t.type === 'external' && <span className="sub-track-tag ext">File</span>}
-                          </button>
-                        );
-                      })}
+                    <div className="sub-quick-pills">
+                      {SUB_LANG_PILLS.map((ql) => (
+                        <button
+                          key={ql.code}
+                          type="button"
+                          className={'sub-pill-btn' + (activeSubLang === ql.code ? ' active' : '')}
+                          onClick={() => loadSubtitlesForCurrentMedia(ql.code)}
+                          disabled={subLoading}
+                        >
+                          {ql.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
 
                   <div className="sub-row">
-                    <span className="sub-label">Search SubDL in other language</span>
-                    <div className="sub-search-row">
-                      <input
-                        type="text"
-                        className="sub-lang-input"
-                        placeholder="e.g. Spanish, French, Hindi, Japanese..."
-                        value={subSearchLang}
-                        onChange={(e) => setSubSearchLang(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleSearchSubdl(); }}
-                      />
-                      <button
-                        type="button"
-                        className="btn ghost sm"
-                        onClick={() => handleSearchSubdl()}
-                        disabled={subSearching}
-                      >
-                        {subSearching ? 'Searching...' : 'Search'}
-                      </button>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '4px' }}>
+                      <span className="sub-label">Choose Subtitle Track (V key to cycle)</span>
+                      {subLoading && <span className="sub-badge loading">Loading...</span>}
                     </div>
+
+                    {subLoading ? (
+                      <div className="sub-loading-box">
+                        <div className="sub-spinner" />
+                        <div className="sub-loading-text">
+                          <strong>Loading SubDL subtitles...</strong>
+                          <span>Fetching authentic release subtitles for &ldquo;{source?.showTitle || source?.title || 'video'}&rdquo;</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="sub-tracks-list">
+                        {subTracks.map((t) => {
+                          const isSelected = activeTrackId === t.id;
+                          return (
+                            <button
+                              key={t.id}
+                              type="button"
+                              className={'sub-track-card' + (isSelected ? ' active' : '')}
+                              onClick={() => selectTrack(t.id, true)}
+                            >
+                              <div className="sub-track-card-left">
+                                <span className="sub-track-card-check">{isSelected ? '✓' : '○'}</span>
+                                <span className="sub-track-card-label">{t.label}</span>
+                              </div>
+                              {t.type === 'remote' && <span className="sub-track-tag subdl">SubDL</span>}
+                              {t.type === 'embedded' && <span className="sub-track-tag embedded">Embedded</span>}
+                              {t.type === 'external' && <span className="sub-track-tag ext">File</span>}
+                            </button>
+                          );
+                        })}
+
+                        {subTracks.filter((t) => t.type === 'remote').length === 0 && (
+                          <button
+                            type="button"
+                            className="sub-fetch-btn"
+                            onClick={() => loadSubtitlesForCurrentMedia(activeSubLang || 'en')}
+                          >
+                            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+                              <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+                            </svg>
+                            Fetch SubDL Subtitles ({activeSubLang.toUpperCase()})
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="sub-row">
@@ -5304,7 +5319,7 @@ export default function Room() {
                   if (source?.type === 'youtube') {
                     toggleYtCaptions();
                   } else {
-                    setSubPanelOpen(!subPanelOpen);
+                    handleToggleSubPanel();
                   }
                 }}
                 title={source?.type === 'youtube' ? (ytCcOn ? 'Disable Captions (C)' : 'Enable Captions (C)') : 'Subtitles (V to cycle)'}

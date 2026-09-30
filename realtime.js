@@ -590,7 +590,7 @@ function attach(io) {
 
     // --- source switch: local files <-> YouTube <-> HLS / PH Stream <-> Web Embed <-> Direct Stream. Resetting the source also
     // resets the playhead; everyone (including the setter) applies it uniformly.
-    socket.on('source', ({ type, videoId, embedUrl, url, title, platform, viewkey, playing = true, tmdbId, mediaType, season, episode, episodeTitle, showTitle, poster, backdrop } = {}) => {
+    socket.on('source', ({ type, videoId, embedUrl, url, title, platform, viewkey, playing = true, tmdbId, mediaType, season, episode, episodeTitle, showTitle, poster, backdrop, subtitleUrl, subtitles } = {}) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
       if (room.controlLock && room.host !== socket.id) return; // locked: host only
@@ -599,7 +599,23 @@ function attach(io) {
         room.state.source = { type: 'youtube', videoId, title: String(title || 'YouTube Video').slice(0, 150), platform: 'YouTube' };
         room.state.playing = Boolean(playing);
       } else if ((type === 'hls' || type === 'direct') && url) {
-        room.state.source = { type, url: String(url), title: String(title || 'Video Stream').slice(0, 150), platform: String(platform || 'Stream').slice(0, 50), viewkey: viewkey || null };
+        room.state.source = {
+          type,
+          url: String(url),
+          title: String(title || 'Video Stream').slice(0, 150),
+          platform: String(platform || 'Stream').slice(0, 50),
+          viewkey: viewkey || null,
+          tmdbId: tmdbId || null,
+          mediaType: mediaType || 'movie',
+          season: season ? Number(season) : null,
+          episode: episode ? Number(episode) : null,
+          episodeTitle: episodeTitle ? String(episodeTitle).slice(0, 200) : null,
+          showTitle: showTitle ? String(showTitle).slice(0, 200) : null,
+          poster: poster ? String(poster).slice(0, 500) : null,
+          backdrop: backdrop ? String(backdrop).slice(0, 500) : null,
+          subtitleUrl: subtitleUrl || null,
+          subtitles: Array.isArray(subtitles) ? subtitles : [],
+        };
         room.state.playing = Boolean(playing);
       } else if (type === 'ph' && viewkey) {
         room.state.source = { type: 'ph', viewkey, url: url || null, embedUrl: embedUrl || null, title: String(title || 'PH Video').slice(0, 150), platform: 'PH' };
@@ -618,6 +634,8 @@ function attach(io) {
           showTitle: showTitle ? String(showTitle).slice(0, 200) : null,
           poster: poster ? String(poster).slice(0, 500) : null,
           backdrop: backdrop ? String(backdrop).slice(0, 500) : null,
+          subtitleUrl: subtitleUrl || null,
+          subtitles: Array.isArray(subtitles) ? subtitles : [],
         };
         room.state.playing = Boolean(playing);
       } else {
