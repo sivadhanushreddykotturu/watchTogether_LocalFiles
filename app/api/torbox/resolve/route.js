@@ -85,7 +85,7 @@ export async function POST(req) {
         } catch {}
       }
 
-      // Search PirateBay prioritizing exact episode & season packs
+      // Search PirateBay prioritizing exact episode & season packs in parallel
       const queries = [];
       candidateTitles.forEach((t) => {
         queries.push(`${t} S${sStr}E${eStr}`);
@@ -94,12 +94,19 @@ export async function POST(req) {
         queries.push(t);
       });
 
-      let pbTorrents = [];
-      for (const query of queries.slice(0, 6)) {
-        const found = await searchPirateBay(query);
-        if (found.length > 0) {
-          pbTorrents.push(...found);
-          if (pbTorrents.length >= 20) break;
+      const uniqueQueries = [...new Set(queries)].slice(0, 4);
+      const searchResults = await Promise.all(uniqueQueries.map((q) => searchPirateBay(q)));
+      const pbTorrents = [];
+      const seenHashes = new Set();
+      for (const list of searchResults) {
+        if (Array.isArray(list)) {
+          for (const t of list) {
+            const h = (t.info_hash || '').toLowerCase();
+            if (h && !seenHashes.has(h)) {
+              seenHashes.add(h);
+              pbTorrents.push(t);
+            }
+          }
         }
       }
 

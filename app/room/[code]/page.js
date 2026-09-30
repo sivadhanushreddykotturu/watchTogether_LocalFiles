@@ -283,6 +283,7 @@ export default function Room() {
     } catch { return true; }
   });
   const [embedKey, setEmbedKey] = useState(0);
+  const [streamLoading, setStreamLoading] = useState(null); // { title: string, status: string }
   const lastEmbedSeekRef = useRef(0);
   const embedPauseTimerRef = useRef(null);
   const lastRemoteCommandAt = useRef(0);
@@ -3162,8 +3163,17 @@ export default function Room() {
         return;
       }
 
-      // Movie
+      // Movie - dismiss modal immediately for 0ms UI responsiveness
+      if (playNow) {
+        setYtSearchModalOpen(false);
+        setYtPanelOpen(false);
+      }
+
       if (torboxDevMode) {
+        setStreamLoading({
+          title: item.title,
+          status: '⚡ Checking TorBox cache...'
+        });
         toast(`⚡ Checking TorBox cache for "${item.title}"...`);
         try {
           const res = await fetch('/api/torbox/resolve', {
@@ -3178,6 +3188,7 @@ export default function Room() {
           });
           const data = await res.json();
           if (data.success && data.cached && data.hlsUrl) {
+            setStreamLoading(null);
             const payload = {
               type: 'hls',
               url: data.hlsUrl,
@@ -3200,9 +3211,15 @@ export default function Room() {
             }
             return;
           } else {
+            setStreamLoading({
+              title: item.title,
+              status: 'Not cached on TorBox · Switching to VidFast...'
+            });
+            setTimeout(() => setStreamLoading(null), 1400);
             toast('Not cached on TorBox. Using VidFast...');
           }
         } catch (err) {
+          setStreamLoading(null);
           console.warn('TorBox resolve error, falling back to VidFast:', err);
         }
       }
@@ -3300,8 +3317,20 @@ export default function Room() {
     const socket = getSocket();
     if (!socket.connected) return;
 
+    // Immediately dismiss modals for 0ms UI responsiveness
+    if (playNow) {
+      setTmdbEpisodeModalOpen(false);
+      setYtSearchModalOpen(false);
+      setYtPanelOpen(false);
+    }
+
     if (torboxDevMode) {
-      toast(`⚡ Checking TorBox cache for ${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode}...`);
+      const epLabel = `${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode}`;
+      setStreamLoading({
+        title: epLabel,
+        status: '⚡ Checking TorBox cache...'
+      });
+      toast(`⚡ Checking TorBox cache for ${epLabel}...`);
       try {
         const res = await fetch('/api/torbox/resolve', {
           method: 'POST',
@@ -3316,6 +3345,7 @@ export default function Room() {
         });
         const data = await res.json();
         if (data.success && data.cached && data.hlsUrl) {
+          setStreamLoading(null);
           const payload = {
             type: 'hls',
             url: data.hlsUrl,
@@ -3343,9 +3373,15 @@ export default function Room() {
           }
           return;
         } else {
+          setStreamLoading({
+            title: epLabel,
+            status: 'Episode not cached · Switching to VidFast...'
+          });
+          setTimeout(() => setStreamLoading(null), 1400);
           toast('Episode not cached on TorBox. Using VidFast...');
         }
       } catch (err) {
+        setStreamLoading(null);
         console.warn('TorBox TV resolve fallback to VidFast:', err);
       }
     }
@@ -4017,6 +4053,16 @@ export default function Room() {
             ></video>
             <audio ref={extAudioRef} playsInline style={{ display: 'none' }}></audio>
             <div ref={voiceAudioRef} style={{ display: 'none' }} aria-hidden="true"></div>
+
+            {streamLoading && (
+              <div className="stream-loading-overlay">
+                <div className="stream-loading-card">
+                  <div className="stream-loading-ring" />
+                  <div className="stream-loading-title">{streamLoading.title}</div>
+                  <div className="stream-loading-status">{streamLoading.status}</div>
+                </div>
+              </div>
+            )}
 
             {source?.type !== 'embed' && pseudoFs && (
               <button
