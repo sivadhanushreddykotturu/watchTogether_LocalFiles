@@ -67,8 +67,34 @@ export async function POST(req) {
       const sStr = String(sNum).padStart(2, '0');
       const eStr = String(eNum).padStart(2, '0');
 
-      // Search PiratyBay for candidate packs/episodes
-      const pbTorrents = await searchPirateBay(title);
+      // Candidate search titles (include alternative titles / native names like Nan Hong)
+      const candidateTitles = [title];
+      if (tmdbId) {
+        try {
+          const tmdbApiKey = process.env.TMDB_API_KEY || 'baf435afe9fef24b14b2a137359e4124';
+          const altRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}/alternative_titles?api_key=${tmdbApiKey}`, {
+            signal: AbortSignal.timeout(3000),
+          });
+          if (altRes.ok) {
+            const altJson = await altRes.json();
+            const results = altJson.results || [];
+            results.forEach((r) => {
+              if (r.title && !candidateTitles.includes(r.title)) candidateTitles.push(r.title);
+            });
+          }
+        } catch {}
+      }
+
+      // Search PirateBay using candidate titles
+      let pbTorrents = [];
+      for (const query of candidateTitles.slice(0, 4)) {
+        const found = await searchPirateBay(query);
+        if (found.length > 0) {
+          pbTorrents = found;
+          break;
+        }
+      }
+
       if (pbTorrents.length === 0) {
         return NextResponse.json({ success: false, cached: false, reason: 'No torrents found for series' });
       }
