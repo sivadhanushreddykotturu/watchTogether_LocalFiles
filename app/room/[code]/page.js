@@ -2814,6 +2814,7 @@ export default function Room() {
     if (source?.type === 'direct' && source.url) {
       setPlayDisabled(false);
       fileLoadedRef.current = true;
+      try { video.removeAttribute('crossorigin'); } catch {}
       video.src = source.url;
       if (latestStateRef.current.time) {
         video.currentTime = latestStateRef.current.time;
@@ -4345,9 +4346,19 @@ export default function Room() {
               ref={videoRef}
               playsInline
               referrerPolicy="no-referrer"
-              crossOrigin="anonymous"
+              crossOrigin={source?.type === 'direct' ? undefined : 'anonymous'}
               className={source?.type === 'youtube' || source?.type === 'embed' ? 'hidden' : ''}
               style={{ transform: `scale(${zoom})` }}
+              onError={() => {
+                const err = videoRef.current?.error;
+                if (err && source?.type === 'direct') {
+                  if (err.code === 4) {
+                    toast('⚠️ Format not supported by your browser. Ensure S3 file is MP4 (H.264/AAC).');
+                  } else if (err.code === 2) {
+                    toast('⚠️ Network or S3 CORS error loading video stream.');
+                  }
+                }
+              }}
             ></video>
             <audio ref={extAudioRef} playsInline style={{ display: 'none' }}></audio>
             <div ref={voiceAudioRef} style={{ display: 'none' }} aria-hidden="true"></div>
