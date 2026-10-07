@@ -2844,33 +2844,36 @@ export default function Room() {
           extAudioRef.current.load();
         }
       }
-
-      // Populate remote SubDL subtitles
-      const remoteSubs = Array.isArray(source.subtitles) ? [...source.subtitles] : [];
-      if (source.subtitleUrl && !remoteSubs.some((s) => s.url === source.subtitleUrl)) {
-        remoteSubs.unshift({
-          id: 'subdl-primary',
-          label: 'English (SubDL)',
-          url: source.subtitleUrl,
-        });
-      }
-
-      if (remoteSubs.length > 0) {
-        const mapped = remoteSubs.map((s, idx) => ({
-          id: s.id || `remote-sub-${idx}`,
-          label: s.label || `Subtitle ${idx + 1}`,
-          type: 'remote',
-          url: s.url,
-          cues: [],
-        }));
-        const existingNonRemote = subTracksRef.current.filter((t) => t.type !== 'remote');
-        const nextTracks = [...existingNonRemote, ...mapped];
-        subTracksRef.current = nextTracks;
-        setSubTracks(nextTracks);
-        selectTrack(mapped[0].id, false);
-      }
     }
-  }, [source?.type, source?.url, source?.audioUrl, source?.subtitleUrl, source?.subtitles]);
+  }, [source?.type, source?.url, source?.audioUrl]);
+
+  // Decoupled subtitle tracks population from remote sources (does not restart or reload video playback)
+  useEffect(() => {
+    const remoteSubs = Array.isArray(source?.subtitles) ? [...source.subtitles] : [];
+    if (source?.subtitleUrl && !remoteSubs.some((s) => s.url === source.subtitleUrl)) {
+      remoteSubs.unshift({
+        id: 'subdl-primary',
+        label: 'English (SubDL)',
+        url: source.subtitleUrl,
+      });
+    }
+
+    if (remoteSubs.length > 0) {
+      const mapped = remoteSubs.map((s, idx) => ({
+        id: s.id || `remote-sub-${idx}`,
+        label: s.label || `Subtitle ${idx + 1}`,
+        type: 'remote',
+        url: s.url,
+        cues: [],
+      }));
+      const existingNonRemote = subTracksRef.current.filter((t) => t.type !== 'remote');
+      const nextTracks = [...existingNonRemote, ...mapped];
+      subTracksRef.current = nextTracks;
+      setSubTracks(nextTracks);
+      // Select track quietly without interrupting video time or triggering room restarts
+      selectTrack(mapped[0].id, false);
+    }
+  }, [source?.subtitleUrl, source?.subtitles]);
 
   // Reset remote subtitle tracks and subtitle state when playing source changes (no background fetching)
   useEffect(() => {

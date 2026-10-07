@@ -9,10 +9,8 @@ export async function GET(req) {
     const tmdbId = searchParams.get('tmdbId') || searchParams.get('tmdb_id') || '';
     const imdbId = searchParams.get('imdbId') || searchParams.get('imdb_id') || '';
     const mediaType = searchParams.get('mediaType') || searchParams.get('type') || 'movie';
-    const rawSeason = searchParams.get('season') || searchParams.get('season_number');
-    const rawEpisode = searchParams.get('episode') || searchParams.get('episode_number');
-    const season = rawSeason !== null && rawSeason !== '' ? Number(rawSeason) : undefined;
-    const episode = rawEpisode !== null && rawEpisode !== '' ? Number(rawEpisode) : undefined;
+    let rawSeason = searchParams.get('season') || searchParams.get('season_number');
+    let rawEpisode = searchParams.get('episode') || searchParams.get('episode_number');
 
     let languages = searchParams.get('languages') || searchParams.get('lang') || searchParams.get('q') || 'en';
 
@@ -27,6 +25,26 @@ export async function GET(req) {
       languages = 'en'; // default back to english subtitles for the queried title
     }
 
+    // Auto-detect Season and Episode patterns from the title string (e.g. "East of Eden S01E03" or "Show 1x03")
+    let detectedType = mediaType;
+    if (title) {
+      const seMatch = title.match(/(?:s|season\s*)(\d{1,2})[.\s_-]*(?:e|ep|episode\s*)(\d{1,3})/i) ||
+                      title.match(/(\d{1,2})x(\d{1,3})/i);
+      if (seMatch) {
+        if (!rawSeason) rawSeason = seMatch[1];
+        if (!rawEpisode) rawEpisode = seMatch[2];
+        detectedType = 'tv';
+        // Clean out S01E03 from the film search title for better SubDL database matching
+        title = title.replace(/(?:s|season\s*)\d{1,2}[.\s_-]*(?:e|ep|episode\s*)\d{1,3}/i, '')
+                     .replace(/\d{1,2}x\d{1,3}/i, '')
+                     .replace(/[._-]/g, ' ')
+                     .trim();
+      }
+    }
+
+    const season = rawSeason !== null && rawSeason !== undefined && rawSeason !== '' ? Number(rawSeason) : undefined;
+    const episode = rawEpisode !== null && rawEpisode !== undefined && rawEpisode !== '' ? Number(rawEpisode) : undefined;
+
     if (!title && !tmdbId && !imdbId) {
       return NextResponse.json({ success: false, error: 'Title or TMDB/IMDB ID required' }, { status: 400 });
     }
@@ -35,7 +53,7 @@ export async function GET(req) {
       title,
       tmdbId,
       imdbId,
-      mediaType,
+      mediaType: detectedType,
       season,
       episode,
       languages,
