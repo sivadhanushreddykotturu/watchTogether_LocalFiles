@@ -637,6 +637,8 @@ export default function Room() {
         subTracksRef.current = nextTracks;
         setSubTracks(nextTracks);
         // Automatically activate first track so user gets immediate playback
+        subsOnRef.current = true;
+        setSubsOn(true);
         selectTrack(mapped[0].id, true);
         toast(`Loaded ${mapped.length} subtitles from SubDL`);
       } else {
