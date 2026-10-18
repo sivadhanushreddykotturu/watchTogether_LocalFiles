@@ -396,6 +396,9 @@ export default function Room() {
     if (embedIframeRef.current?.contentWindow) {
       try {
         const sec = Math.max(0, Math.floor(seconds));
+        // Official Vidlove command: { type: 'SET_TIME', time: seconds }
+        embedIframeRef.current.contentWindow.postMessage({ type: 'SET_TIME', time: sec }, '*');
+        embedIframeRef.current.contentWindow.postMessage({ type: 'seek', time: sec }, '*');
         embedIframeRef.current.contentWindow.postMessage({ command: 'seek', time: sec }, '*');
       } catch {}
     }
@@ -409,6 +412,7 @@ export default function Room() {
     }
     if (embedIframeRef.current?.contentWindow) {
       try {
+        embedIframeRef.current.contentWindow.postMessage({ type: 'play' }, '*');
         embedIframeRef.current.contentWindow.postMessage({ command: 'play' }, '*');
       } catch {}
     }
@@ -422,6 +426,7 @@ export default function Room() {
     }
     if (embedIframeRef.current?.contentWindow) {
       try {
+        embedIframeRef.current.contentWindow.postMessage({ type: 'pause' }, '*');
         embedIframeRef.current.contentWindow.postMessage({ command: 'pause' }, '*');
       } catch {}
     }
@@ -496,17 +501,7 @@ export default function Room() {
       setSubsOn(false);
       setSubText('');
 
-      const roomPos = latestStateRef.current?.playing
-        ? ((latestStateRef.current.time || 0) + (Date.now() - (latestStateRef.current.at || Date.now())) / 1000)
-        : (latestStateRef.current?.time || 0);
 
-      if (roomPos > 2 && s.embedUrl && !s.embedUrl.includes('startAt=')) {
-        try {
-          const u = new URL(s.embedUrl);
-          u.searchParams.set('startAt', String(Math.floor(roomPos)));
-          s.embedUrl = u.toString();
-        } catch {}
-      }
 
       fetchTmdbSources({
         id: s.tmdbId,
@@ -1243,6 +1238,7 @@ export default function Room() {
     if (sourceRef.current?.type === 'embed') {
       const cur = embedTimeRef.current || 0;
       if (Math.abs(cur - state.time) > 2.0) {
+        lastRemoteCommandAt.current = Date.now() + 1500;
         seekEmbed(state.time);
       }
       if (state.playing) {
@@ -1371,8 +1367,8 @@ export default function Room() {
 
     // Embed mode heartbeat
     if (sourceRef.current?.type === 'embed') {
+      if (!embedReadyRef.current || !socket.connected) return;
       const cur = embedTimeRef.current || 0;
-      if (!socket.connected) return;
       socket.emit('time-update', cur, ({ expected, playing } = {}) => {
         if (typeof expected !== 'number') return;
         setStateLatest(playing, expected);
@@ -1380,9 +1376,11 @@ export default function Room() {
 
         if (playing && Math.abs(drift) > 3.5 && expected > 2 && Date.now() - lastLocalSeekRef.current > 4000) {
           lastLocalSeekRef.current = Date.now();
+          lastRemoteCommandAt.current = Date.now() + 1500;
           seekEmbed(expected);
         } else if (!playing && Math.abs(drift) > 2.0 && Date.now() - lastLocalSeekRef.current > 4000) {
           lastLocalSeekRef.current = Date.now();
+          lastRemoteCommandAt.current = Date.now() + 1500;
           seekEmbed(expected);
           pauseEmbed();
         }
@@ -1911,8 +1909,14 @@ export default function Room() {
       setPeerVoice((prev) => ({ ...prev, [id]: !!on }));
     };
     const onSource = ({ source: s, playing: p, time, name: actor }) => {
+      setStateLatest(p, time || 0);
+      embedTimeRef.current = time || 0;
+      embedDurationRef.current = 0;
+      embedReadyRef.current = false;
+      lastLocalSeekRef.current = Date.now();
+      lastRemoteCommandAt.current = Date.now() + 2000;
+      setEmbedKey((k) => k + 1);
       setSourceState(s);
-      setStateLatest(p, time);
       setResumeOpen(false);
       if (s?.type === 'youtube' && s.videoId) {
         setSubPanelOpen(false);
@@ -2183,9 +2187,14 @@ export default function Room() {
         return;
       }
       if (sourceRef.current?.type === 'embed') {
-        if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+        if (e.code === 'Space') {
+          e.preventDefault();
+          userIntentRef.current = true;
+          togglePlay();
+        }
         if (e.code === 'ArrowRight') {
           e.preventDefault();
+          userIntentRef.current = true;
           const target = (embedTimeRef.current || 0) + 5;
           seekEmbed(target);
           latestStateRef.current.time = target;
@@ -2193,6 +2202,7 @@ export default function Room() {
         }
         if (e.code === 'ArrowLeft') {
           e.preventDefault();
+          userIntentRef.current = true;
           const target = Math.max(0, (embedTimeRef.current || 0) - 5);
           seekEmbed(target);
           latestStateRef.current.time = target;
@@ -2274,7 +2284,7 @@ export default function Room() {
         setEmbedDuration(dur);
       }
 
-      // First handshake: VidFast has booted, hydrated its scripts, and sent its first message!
+      // First handshake: Vidlove has booted, hydrated its scripts, and sent its first message!
       if (!embedReadyRef.current) {
         embedReadyRef.current = true;
         const rState = latestStateRef.current;
@@ -2283,19 +2293,31 @@ export default function Room() {
           : (rState?.time || 0);
 
         if (targetPos > 2 && Math.abs((curTime || 0) - targetPos) > 2.5) {
+          lastRemoteCommandAt.current = Date.now() + 2000;
           seekEmbed(targetPos);
         }
 
         if (rState?.playing === false) {
           pauseEmbed();
           setPlaying(false);
+          setEmbedRoomPaused(true);
         } else if (rState?.playing === true) {
           playEmbed();
           setPlaying(true);
+          setEmbedRoomPaused(false);
         }
       }
 
       if (eventName === 'timeupdate') {
+        if (latestStateRef.current?.playing === false) {
+          const pausedPos = latestStateRef.current.time || 0;
+          if (curTime !== null && curTime > pausedPos + 2.5) {
+            seekEmbed(pausedPos);
+          }
+          setEmbedRoomPaused(true);
+          updateTimeline();
+          return;
+        }
         updateTimeline();
         updateSubtitles();
         setEmbedOffline(false);
@@ -2320,10 +2342,22 @@ export default function Room() {
           clearTimeout(embedPauseTimerRef.current);
           embedPauseTimerRef.current = null;
         }
+        // If room is paused and user didn't intentionally trigger this:
+        if (latestStateRef.current?.playing === false && !userIntentRef.current) {
+          const pausedPos = latestStateRef.current.time || embedTimeRef.current || 0;
+          if (curTime !== null && Math.abs(curTime - pausedPos) > 1.5) {
+            seekEmbed(pausedPos);
+          }
+          embedPlayingRef.current = false;
+          setPlaying(false);
+          setEmbedRoomPaused(true);
+          return;
+        }
         embedPlayingRef.current = true;
         setPlaying(true);
         setEmbedRoomPaused(false);
-        if (!isEcho) {
+        if (userIntentRef.current || (!isEcho && embedReadyRef.current && latestStateRef.current?.playing !== true)) {
+          userIntentRef.current = false;
           emitPlayback('play');
         }
       } else if (eventName === 'pause') {
@@ -2331,16 +2365,16 @@ export default function Room() {
           clearTimeout(embedPauseTimerRef.current);
           embedPauseTimerRef.current = null;
         }
-        // If we recently seeked/fast-forwarded (within 1000ms), ignore internal buffering pauses!
-        if (Date.now() - lastEmbedSeekRef.current < 1000) {
+        // If we recently seeked/fast-forwarded (within 1200ms), ignore internal buffering pauses!
+        if (Date.now() - lastEmbedSeekRef.current < 1200) {
           return;
         }
         embedPauseTimerRef.current = setTimeout(() => {
-          if (Date.now() - lastEmbedSeekRef.current < 1000) return;
+          if (Date.now() - lastEmbedSeekRef.current < 1200) return;
           embedPlayingRef.current = false;
           setPlaying(false);
           setEmbedRoomPaused(true);
-          if (!isEcho) {
+          if (!isEcho && latestStateRef.current?.playing !== false) {
             lastLocalPauseRef.current = Date.now();
             emitPlayback('pause');
           }
@@ -2359,7 +2393,9 @@ export default function Room() {
         }
         updateTimeline();
         updateSubtitles();
-        if (!isEcho) {
+        // Only broadcast seek if user intentionally initiated this seek (scrub, hotkey)
+        if (userIntentRef.current && !isEcho) {
+          userIntentRef.current = false;
           lastLocalSeekRef.current = Date.now();
           const t = curTime !== null ? curTime : (embedTimeRef.current || 0);
           latestStateRef.current.time = t;
@@ -3199,6 +3235,7 @@ export default function Room() {
         ytRef.current.seekTo(t, true);
         emitPlayback('seek');
       } else if (sourceRef.current?.type === 'embed') {
+        userIntentRef.current = true;
         guardRef.current.seek++;
         seekEmbed(t);
         emitPlayback('seek');
@@ -3427,14 +3464,14 @@ export default function Room() {
         setYtPanelOpen(false);
       }
 
-      const fallbackToVidfast = () => {
+      const fallbackToVidlove = () => {
         stopStreamLoading();
-        const embedUrl = buildVidfastUrl({ tmdbId: item.tmdbId || item.id, type: 'movie' });
+        const embedUrl = buildVidloveUrl({ tmdbId: item.tmdbId || item.id, type: 'movie' });
         const payload = {
           type: 'embed',
           embedUrl,
           title: item.title,
-          platform: 'VidFast',
+          platform: 'Vidlove',
           mediaType: 'movie',
           tmdbId: item.tmdbId || item.id,
           poster: item.poster,
@@ -3477,7 +3514,7 @@ export default function Room() {
               title: item.title,
               status: streamType === 'direct' ? '⚡ Direct NVMe stream ready...' : '⚡ Buffering stream...'
             });
-            startStreamWatchdog(item.title, fallbackToVidfast);
+            startStreamWatchdog(item.title, fallbackToVidlove);
 
             const payload = {
               type: streamType,
@@ -3509,18 +3546,18 @@ export default function Room() {
           } else {
             updateStreamLoading({
               title: item.title,
-              status: 'Not cached on TorBox · Switching to VidFast...'
+              status: 'Not cached on TorBox · Switching to Vidlove...'
             });
             setTimeout(() => stopStreamLoading(), 1400);
-            toast('Not cached on TorBox. Using VidFast...');
+            toast('Not cached on TorBox. Using Vidlove...');
           }
         } catch (err) {
           stopStreamLoading();
-          console.warn('TorBox resolve error, falling back to VidFast:', err);
+          console.warn('TorBox resolve error, falling back to Vidlove:', err);
         }
       }
 
-      fallbackToVidfast();
+      fallbackToVidlove();
       return;
     }
 
@@ -3600,9 +3637,9 @@ export default function Room() {
       setYtPanelOpen(false);
     }
 
-    const fallbackToVidfast = () => {
+    const fallbackToVidlove = () => {
       stopStreamLoading();
-      const embedUrl = buildVidfastUrl({
+      const embedUrl = buildVidloveUrl({
         tmdbId: epPayload.tmdbId,
         type: 'tv',
         season: epPayload.season,
@@ -3613,7 +3650,7 @@ export default function Room() {
         type: 'embed',
         embedUrl,
         title: epPayload.title,
-        platform: 'VidFast',
+        platform: 'Vidlove',
         mediaType: 'tv',
         tmdbId: epPayload.tmdbId,
         season: epPayload.season,
@@ -3664,7 +3701,7 @@ export default function Room() {
             title: epLabel,
             status: streamType === 'direct' ? '⚡ Direct NVMe stream ready...' : '⚡ Buffering stream...'
           });
-          startStreamWatchdog(epLabel, fallbackToVidfast);
+          startStreamWatchdog(epLabel, fallbackToVidlove);
 
           const payload = {
             type: streamType,
@@ -3701,18 +3738,18 @@ export default function Room() {
         } else {
           updateStreamLoading({
             title: epLabel,
-            status: 'Episode not cached · Switching to VidFast...'
+            status: 'Episode not cached · Switching to Vidlove...'
           });
           setTimeout(() => stopStreamLoading(), 1400);
-          toast('Episode not cached on TorBox. Using VidFast...');
+          toast('Episode not cached on TorBox. Using Vidlove...');
         }
       } catch (err) {
         stopStreamLoading();
-        console.warn('TorBox TV resolve fallback to VidFast:', err);
+        console.warn('TorBox TV resolve fallback to Vidlove:', err);
       }
     }
 
-    fallbackToVidfast();
+    fallbackToVidlove();
   };
 
   const handlePlayNextEpisode = () => {
@@ -3722,7 +3759,7 @@ export default function Room() {
 
     const nextEp = (Number(source.episode) || 1) + 1;
     const season = Number(source.season) || 1;
-    const embedUrl = buildVidfastUrl({
+    const embedUrl = buildVidloveUrl({
       tmdbId: source.tmdbId,
       type: 'tv',
       season,
@@ -3734,7 +3771,7 @@ export default function Room() {
       ...source,
       type: 'embed',
       embedUrl,
-      platform: 'VidFast',
+      platform: 'Vidlove',
       season,
       episode: nextEp,
       episodeTitle: `Episode ${nextEp}`,
@@ -4240,9 +4277,9 @@ export default function Room() {
                   const next = !torboxDevMode;
                   setTorboxDevMode(next);
                   try { localStorage.setItem('reelsync:torbox_dev', String(next)); } catch {}
-                  toast(next ? '⚡ TorBox Direct Stream (Dev Mode) ON' : 'VidFast Embed Mode ON');
+                  toast(next ? '⚡ TorBox Direct Stream (Dev Mode) ON' : 'Vidlove Embed Mode ON');
                 }}
-                title={torboxDevMode ? 'Direct Stream ON (Queries TorBox for 100% sync HLS streams)' : 'Direct Stream OFF (Uses VidFast embeds)'}
+                title={torboxDevMode ? 'Direct Stream ON (Queries TorBox for 100% sync HLS streams)' : 'Direct Stream OFF (Uses Vidlove embeds)'}
               >
                 <span style={{ fontSize: '14px', lineHeight: 1 }}>⚡</span>
                 <span>Direct Stream (Dev)</span>
@@ -4392,7 +4429,7 @@ export default function Room() {
                           <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-7.068 2H.534a.25.25 0 0 1-.192-.41l1.966-2.36a.25.25 0 0 1 .384 0l1.966 2.36a.25.25 0 0 1-.192.41z"/>
                           <path fillRule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/>
                         </svg>
-                        Switch to VidFast
+                        Switch to Vidlove
                       </button>
                       <button
                         type="button"
@@ -4424,7 +4461,7 @@ export default function Room() {
                     onClick={() => {
                       stopMidBuffering();
                       const isTv = source.mediaType === 'tv';
-                      const embedUrl = buildVidfastUrl({
+                      const embedUrl = buildVidloveUrl({
                         tmdbId: source.tmdbId,
                         type: isTv ? 'tv' : 'movie',
                         season: source.season,
@@ -4434,13 +4471,13 @@ export default function Room() {
                         ...source,
                         type: 'embed',
                         embedUrl,
-                        platform: 'VidFast',
+                        platform: 'Vidlove',
                         playing: true,
                       });
-                      toast('Switched to VidFast');
+                      toast('Switched to Vidlove');
                     }}
                   >
-                    · Switch to VidFast?
+                    · Switch to Vidlove?
                   </button>
                 )}
               </div>
@@ -4680,6 +4717,41 @@ export default function Room() {
                   allowFullScreen
                   frameBorder="0"
                 />
+
+                {embedRoomPaused && (
+                  <div
+                    className="embed-paused-overlay"
+                    onClick={() => {
+                      userIntentRef.current = true;
+                      togglePlay();
+                    }}
+                  >
+                    <div className="embed-paused-card">
+                      <div className="embed-paused-icon">
+                        <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
+                          <path d="M8 5v14l11-7z" />
+                        </svg>
+                      </div>
+                      <div className="embed-paused-info">
+                        <span className="embed-paused-title">Room Paused</span>
+                        <span className="embed-paused-sub">
+                          {embedPausedActor ? `Paused by ${embedPausedActor}` : 'Playback paused for everyone'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="embed-paused-resume-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          userIntentRef.current = true;
+                          togglePlay();
+                        }}
+                      >
+                        Resume Playback
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
