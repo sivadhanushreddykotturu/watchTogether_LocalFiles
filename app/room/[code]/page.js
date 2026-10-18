@@ -4717,41 +4717,6 @@ export default function Room() {
                   allowFullScreen
                   frameBorder="0"
                 />
-
-                {embedRoomPaused && (
-                  <div
-                    className="embed-paused-overlay"
-                    onClick={() => {
-                      userIntentRef.current = true;
-                      togglePlay();
-                    }}
-                  >
-                    <div className="embed-paused-card">
-                      <div className="embed-paused-icon">
-                        <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
-                          <path d="M8 5v14l11-7z" />
-                        </svg>
-                      </div>
-                      <div className="embed-paused-info">
-                        <span className="embed-paused-title">Room Paused</span>
-                        <span className="embed-paused-sub">
-                          {embedPausedActor ? `Paused by ${embedPausedActor}` : 'Playback paused for everyone'}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        className="embed-paused-resume-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          userIntentRef.current = true;
-                          togglePlay();
-                        }}
-                      >
-                        Resume Playback
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
