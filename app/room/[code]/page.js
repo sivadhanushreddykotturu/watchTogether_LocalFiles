@@ -445,20 +445,7 @@ export default function Room() {
   const handleRetryEmbed = () => {
     setEmbedOffline(false);
     setEmbedKey((k) => k + 1);
-    toast("Retrying stream server...");
-    const curSource = sourceRef.current;
-    if (curSource?.tmdbId) {
-      fetchTmdbSources({
-        id: curSource.tmdbId,
-        type: curSource.mediaType || 'movie',
-        season: curSource.season || 1,
-        episode: curSource.episode || 1,
-      }).then((res) => {
-        if (res?.hasServers === false) {
-          setTimeout(() => setEmbedOffline(true), 4000);
-        }
-      }).catch(() => {});
-    }
+    toast("Reloading player...");
   };
 
   const ytMode = () => sourceRef.current?.type === 'youtube';
@@ -495,29 +482,10 @@ export default function Room() {
       setEmbedTime(0);
       setEmbedDuration(0);
       setEmbedOffline(false);
-      setEmbedRoomPaused(latestStateRef.current?.playing === false);
       setEmbedPausedActor('');
       subsOnRef.current = false;
       setSubsOn(false);
       setSubText('');
-
-
-
-      fetchTmdbSources({
-        id: s.tmdbId,
-        type: s.mediaType || 'movie',
-        season: s.season || 1,
-        episode: s.episode || 1,
-      }).then((res) => {
-        if (!res) return;
-        if (res.hasServers === false) {
-          setEmbedOffline(true);
-        } else {
-          setEmbedOffline(false);
-        }
-      }).catch((err) => {
-        console.warn('Error checking TMDB sources:', err);
-      });
     }
   };
 
@@ -2274,6 +2242,7 @@ export default function Room() {
       }
 
       if (!eventName) return;
+      setEmbedOffline(false);
 
       if (curTime !== null) {
         embedTimeRef.current = curTime;
