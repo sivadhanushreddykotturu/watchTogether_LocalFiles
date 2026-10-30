@@ -2646,6 +2646,43 @@ export default function Room() {
         const dashPlayer = dashLib.MediaPlayer().create();
         dashRef.current = dashPlayer;
 
+        // Auto Gap-Jumping & Buffer Stall Fix: Prevents segment boundary freezes & repeating chunk loops
+        dashPlayer.updateSettings({
+          streaming: {
+            gaps: {
+              jumpGaps: true,
+              jumpLargeGaps: true,
+              smallGapLimit: 2.5,
+              threshold: 0.25,
+              enableSeekFix: true,
+              enableStallFix: true,
+              stallSeek: 0.3,
+            },
+            buffer: {
+              bufferTimeDefault: 30,
+              bufferTimeAtTopQuality: 30,
+              bufferTimeAtTopQualityLongForm: 30,
+              initialBufferLevel: 4,
+              bufferToKeep: 60,
+              bufferPruningInterval: 30,
+              fastSwitchEnabled: true,
+              reuseExistingSourceBuffers: true,
+              enableSeekDecorrelationFix: true,
+              setStallState: true,
+            },
+            retryAttempts: {
+              MPD: 4,
+              MediaSegment: 6,
+              InitializationSegment: 6,
+            },
+            retryIntervals: {
+              MPD: 500,
+              MediaSegment: 1000,
+              InitializationSegment: 1000,
+            },
+          },
+        });
+
         // Propagate CloudFront signed query parameters to all DASH media segments/chunks
         if (source.url && source.url.includes('Policy=') && !source.url.includes('/proxy?')) {
           const queryString = source.url.split('?')[1];
@@ -2751,6 +2788,54 @@ export default function Room() {
         video.addEventListener('loadedmetadata', updateDashQualities);
         video.addEventListener('playing', updateDashQualities);
         video.oncanplay = onStreamInit;
+
+        // Active gap jumper: Detect micro-gaps between chunks and skip over them immediately
+        let lastStallJumpTime = 0;
+        let stallEventCount = 0;
+        const handleDashBufferGap = () => {
+          if (!video || video.paused || video.seeking) return;
+          const ct = video.currentTime;
+          const b = video.buffered;
+          if (!b || b.length === 0) return;
+
+          for (let i = 0; i < b.length; i++) {
+            const start = b.start(i);
+            const end = b.end(i);
+            // Case 1: Video reached end of current chunk buffer and next chunk starts within 2s
+            if (ct >= end - 0.35 && ct <= end + 0.15 && i + 1 < b.length) {
+              const nextStart = b.start(i + 1);
+              const gap = nextStart - ct;
+              if (gap > 0 && gap <= 2.0) {
+                video.currentTime = nextStart + 0.05;
+                lastLocalSeekRef.current = Date.now();
+                return;
+              }
+            }
+            // Case 2: Current time is slightly behind the buffer start
+            if (ct < start && start - ct <= 1.5) {
+              video.currentTime = start + 0.05;
+              lastLocalSeekRef.current = Date.now();
+              return;
+            }
+          }
+
+          const now = Date.now();
+          if (now - lastStallJumpTime < 1800) {
+            stallEventCount++;
+            if (stallEventCount >= 2) {
+              // Micro-nudge forward 0.3s to break out of any pipeline stall
+              video.currentTime = video.currentTime + 0.3;
+              lastLocalSeekRef.current = Date.now();
+              stallEventCount = 0;
+            }
+          } else {
+            stallEventCount = 1;
+          }
+          lastStallJumpTime = now;
+        };
+
+        video.addEventListener('waiting', handleDashBufferGap);
+        video.addEventListener('stalled', handleDashBufferGap);
 
         setTimeout(updateDashQualities, 400);
         setTimeout(updateDashQualities, 1200);
