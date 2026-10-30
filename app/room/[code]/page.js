@@ -2696,34 +2696,38 @@ export default function Room() {
         };
 
         dashPlayer.initialize(video, playUrl, true);
-        dashPlayer.on(dashLib.MediaPlayer.events.STREAM_INITIALIZED, () => {
-          startPlayback();
-          updateDashQualities();
-        });
-        dashPlayer.on(dashLib.MediaPlayer.events.QUALITY_CHANGE_RENDERED, (e) => {
-          if (e.mediaType === 'video') {
-            const curRep = typeof dashPlayer.getCurrentRepresentationForType === 'function' ? dashPlayer.getCurrentRepresentationForType('video') : null;
-            if (curRep && curRep.height) {
-              setAutoResolution(`${curRep.height}p`);
-            }
-          }
-          updateDashQualities();
-        });
-        dashPlayer.on(dashLib.MediaPlayer.events.CAN_PLAY, () => {
-          startPlayback();
-          updateDashQualities();
-        });
-        dashPlayer.on(dashLib.MediaPlayer.events.PLAYBACK_METADATA_LOADED, () => {
-          startPlayback();
-          updateDashQualities();
-        });
-        dashPlayer.on(dashLib.MediaPlayer.events.ERROR, (e) => console.warn('[DASH] error:', e));
-        video.oncanplay = () => {
+
+        const onStreamInit = () => {
           startPlayback();
           updateDashQualities();
         };
-        setTimeout(updateDashQualities, 800);
-        setTimeout(updateDashQualities, 2000);
+        dashPlayer.on('streamInitialized', onStreamInit);
+        dashPlayer.on('manifestLoaded', updateDashQualities);
+        dashPlayer.on('canPlay', onStreamInit);
+        dashPlayer.on('playbackMetadataLoaded', onStreamInit);
+        dashPlayer.on('qualityChangeRendered', (e) => {
+          if (e && (e.mediaType === 'video' || !e.mediaType)) {
+            try {
+              const curRep = typeof dashPlayer.getCurrentRepresentationForType === 'function'
+                ? dashPlayer.getCurrentRepresentationForType('video')
+                : null;
+              if (curRep && curRep.height) {
+                setAutoResolution(`${curRep.height}p`);
+              }
+            } catch {}
+          }
+          updateDashQualities();
+        });
+        dashPlayer.on('error', (e) => console.warn('[DASH] error:', e));
+
+        video.addEventListener('loadedmetadata', updateDashQualities);
+        video.addEventListener('playing', updateDashQualities);
+        video.oncanplay = onStreamInit;
+
+        setTimeout(updateDashQualities, 400);
+        setTimeout(updateDashQualities, 1200);
+        setTimeout(updateDashQualities, 2500);
+        setTimeout(updateDashQualities, 5000);
       } catch (err) {
         console.warn('Dash.js error:', err);
       }
@@ -3592,28 +3596,14 @@ export default function Room() {
         setYtPanelOpen(false);
       }
 
-      const fallbackToVidlove = () => {
+      const fallbackToLocal = () => {
         stopStreamLoading();
-        const embedUrl = buildVidloveUrl({ tmdbId: item.tmdbId || item.id, type: 'movie' });
-        const payload = {
-          type: 'embed',
-          embedUrl,
-          title: item.title,
-          platform: 'Vidlove',
-          mediaType: 'movie',
-          tmdbId: item.tmdbId || item.id,
-          poster: item.poster,
-          backdrop: item.backdrop,
-        };
-
+        toast(`⚠️ "${item.title}" is not available on streaming providers.`);
         if (playNow) {
-          socket.emit('source', { ...payload, playing: true });
-          toast(`Playing "${item.title}"`);
+          socket.emit('source', null);
+          setPickerHint('Stream not found on providers. Pick your local copy to join in.');
           setYtSearchModalOpen(false);
           setYtPanelOpen(false);
-        } else {
-          socket.emit('queue-add', { ...payload, playNow: false });
-          toast(`Added "${item.title}" to queue`);
         }
       };
 
@@ -3642,7 +3632,7 @@ export default function Room() {
               title: item.title,
               status: streamType === 'direct' ? '⚡ Direct NVMe stream ready...' : '⚡ Buffering stream...'
             });
-            startStreamWatchdog(item.title, fallbackToVidlove);
+            startStreamWatchdog(item.title, fallbackToLocal);
 
             const payload = {
               type: streamType,
@@ -3674,10 +3664,10 @@ export default function Room() {
           } else {
             updateStreamLoading({
               title: item.title,
-              status: 'Not cached on TorBox · Switching to Vidlove...'
+              status: 'Not cached on TorBox · Extracting clean stream...'
             });
             setTimeout(() => stopStreamLoading(), 1400);
-            toast('Not cached on TorBox. Using Vidlove...');
+            toast('Not cached on TorBox. Checking direct streams...');
           }
         } catch (err) {
           stopStreamLoading();
@@ -3727,7 +3717,7 @@ export default function Room() {
         console.warn('Native HLS resolve error:', e);
       }
 
-      fallbackToVidlove();
+      fallbackToLocal();
       return;
     }
 
@@ -3807,39 +3797,15 @@ export default function Room() {
       setYtPanelOpen(false);
     }
 
-    const fallbackToVidlove = () => {
+    const fallbackToLocal = () => {
       stopStreamLoading();
-      const embedUrl = buildVidloveUrl({
-        tmdbId: epPayload.tmdbId,
-        type: 'tv',
-        season: epPayload.season,
-        episode: epPayload.episode,
-      });
-
-      const payload = {
-        type: 'embed',
-        embedUrl,
-        title: epPayload.title,
-        platform: 'Vidlove',
-        mediaType: 'tv',
-        tmdbId: epPayload.tmdbId,
-        season: epPayload.season,
-        episode: epPayload.episode,
-        episodeTitle: epPayload.episodeTitle,
-        showTitle: epPayload.showTitle,
-        poster: epPayload.poster,
-        backdrop: epPayload.backdrop,
-      };
-
+      toast(`⚠️ ${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode} is not available on providers.`);
       if (playNow) {
-        socket.emit('source', { ...payload, playing: true });
-        toast(`Playing ${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode}`);
+        socket.emit('source', null);
+        setPickerHint('Stream not found on providers. Pick your local copy to join in.');
         setTmdbEpisodeModalOpen(false);
         setYtSearchModalOpen(false);
         setYtPanelOpen(false);
-      } else {
-        socket.emit('queue-add', { ...payload, playNow: false });
-        toast(`Added S${epPayload.season}:E${epPayload.episode} to queue`);
       }
     };
 
@@ -3871,7 +3837,7 @@ export default function Room() {
             title: epLabel,
             status: streamType === 'direct' ? '⚡ Direct NVMe stream ready...' : '⚡ Buffering stream...'
           });
-          startStreamWatchdog(epLabel, fallbackToVidlove);
+          startStreamWatchdog(epLabel, fallbackToLocal);
 
           const payload = {
             type: streamType,
@@ -3908,10 +3874,10 @@ export default function Room() {
         } else {
           updateStreamLoading({
             title: epLabel,
-            status: 'Episode not cached · Switching to Vidlove...'
+            status: 'Episode not cached · Extracting clean stream...'
           });
           setTimeout(() => stopStreamLoading(), 1400);
-          toast('Episode not cached on TorBox. Using Vidlove...');
+          toast('Episode not cached on TorBox. Checking direct streams...');
         }
       } catch (err) {
         stopStreamLoading();
@@ -3969,7 +3935,7 @@ export default function Room() {
       console.warn('Native HLS episode resolve error:', e);
     }
 
-    fallbackToVidlove();
+    fallbackToLocal();
   };
 
   const handlePlayNextEpisode = async () => {
@@ -4013,28 +3979,7 @@ export default function Room() {
       return;
     }
 
-    const embedUrl = buildVidloveUrl({
-      tmdbId: source.tmdbId,
-      type: 'tv',
-      season,
-      episode: nextEp,
-    });
-
-    const payload = {
-      ...source,
-      type: 'embed',
-      embedUrl,
-      platform: 'Vidlove',
-      season,
-      episode: nextEp,
-      episodeTitle: `Episode ${nextEp}`,
-      showTitle: cleanShowTitle,
-      title: `${cleanShowTitle} · S${season}:E${nextEp}`,
-      playing: true,
-    };
-
-    socket.emit('source', payload);
-    toast(`Skipped to Episode ${nextEp}`);
+    toast(`⚠️ Episode ${nextEp} is not available on streaming providers.`);
   };
 
   const pokeTopBar = () => {
@@ -4707,32 +4652,7 @@ export default function Room() {
               <div className="mid-buffering-indicator">
                 <span className="mid-buffering-dot" />
                 <span>Buffering...</span>
-                {midBufferingSlow && source?.tmdbId && (
-                  <button
-                    type="button"
-                    className="mid-buffering-switch-btn"
-                    onClick={() => {
-                      stopMidBuffering();
-                      const isTv = source.mediaType === 'tv';
-                      const embedUrl = buildVidloveUrl({
-                        tmdbId: source.tmdbId,
-                        type: isTv ? 'tv' : 'movie',
-                        season: source.season,
-                        episode: source.episode,
-                      });
-                      getSocket().emit('source', {
-                        ...source,
-                        type: 'embed',
-                        embedUrl,
-                        platform: 'Vidlove',
-                        playing: true,
-                      });
-                      toast('Switched to Vidlove');
-                    }}
-                  >
-                    · Switch to Vidlove?
-                  </button>
-                )}
+
               </div>
             )}
 
