@@ -174,6 +174,7 @@ export default function Room() {
   const [subStyle, setSubStyle] = useState(SUB_STYLE_DEFAULT);
   const [hlsQualities, setHlsQualities] = useState([]);
   const [currentHlsQuality, setCurrentHlsQuality] = useState(-1);
+  const [autoResolution, setAutoResolution] = useState('');
   const [qualityPanelOpen, setQualityPanelOpen] = useState(false);
   const [hlsAudioTracks, setHlsAudioTracks] = useState([]);
   const [currentAudioTrack, setCurrentAudioTrack] = useState(-1);
@@ -916,10 +917,30 @@ export default function Room() {
 
   // ---------- video quality switching ----------
   const changeHlsQuality = (index) => {
-    if (!hlsRef.current) return;
-    hlsRef.current.currentLevel = index;
+    if (hlsRef.current) {
+      hlsRef.current.currentLevel = index;
+      hlsRef.current.loadLevel = index;
+      // Fast switch: trigger immediate refresh at current playback position so the new resolution renders immediately
+      const v = videoRef.current;
+      if (v) {
+        const t = v.currentTime;
+        v.currentTime = t;
+      }
+    } else if (dashRef.current) {
+      if (index === -1) {
+        dashRef.current.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: true } } } });
+      } else {
+        dashRef.current.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: false } } } });
+        dashRef.current.setQualityFor('video', index);
+      }
+      const v = videoRef.current;
+      if (v) {
+        const t = v.currentTime;
+        v.currentTime = t;
+      }
+    }
     setCurrentHlsQuality(index);
-    const label = hlsQualities.find((q) => q.index === index)?.label || 'Auto';
+    const label = hlsQualities.find((q) => q.index === index)?.label || (index === -1 ? 'Auto' : `${index}p`);
     toast(`Video Quality: ${label}`);
     setQualityPanelOpen(false);
   };
@@ -2596,6 +2617,34 @@ export default function Room() {
         const dashPlayer = dashjs.MediaPlayer().create();
         dashRef.current = dashPlayer;
         dashPlayer.initialize(video, source.url, true);
+        dashPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+          const bitrates = dashPlayer.getBitrateInfoListFor('video');
+          if (bitrates && bitrates.length > 0) {
+            const list = [
+              { index: -1, label: 'Auto' },
+              ...bitrates.map((b) => ({
+                index: b.qualityIndex,
+                label: b.height ? `${b.height}p` : `${Math.round(b.bitrate / 1000)}k`,
+              })).sort((a, b) => {
+                if (a.index === -1) return -1;
+                if (b.index === -1) return 1;
+                const hA = parseInt(a.label) || 0;
+                const hB = parseInt(b.label) || 0;
+                return hB - hA;
+              }),
+            ];
+            setHlsQualities(list);
+          }
+        });
+        dashPlayer.on(dashjs.MediaPlayer.events.QUALITY_CHANGE_RENDERED, (e) => {
+          if (e.mediaType === 'video') {
+            const bitrates = dashPlayer.getBitrateInfoListFor('video');
+            const b = bitrates ? bitrates[e.newQuality] : null;
+            if (b && b.height) {
+              setAutoResolution(`${b.height}p`);
+            }
+          }
+        });
         dashPlayer.on(dashjs.MediaPlayer.events.CAN_PLAY, () => {
           if (latestStateRef.current.time) {
             video.currentTime = latestStateRef.current.time;
@@ -2638,6 +2687,12 @@ export default function Room() {
         });
         hls.loadSource(source.url);
         hls.attachMedia(video);
+        hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+          const lvl = hls.levels ? hls.levels[data.level] : null;
+          if (lvl && lvl.height) {
+            setAutoResolution(`${lvl.height}p`);
+          }
+        });
         hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
           if (data && data.levels && data.levels.length > 0) {
             const list = [
@@ -2645,7 +2700,13 @@ export default function Room() {
               ...data.levels.map((lvl, idx) => ({
                 index: idx,
                 label: lvl.height ? `${lvl.height}p` : `${lvl.bitrate ? Math.round(lvl.bitrate / 1000) + 'k' : 'Level ' + idx}`,
-              })),
+              })).sort((a, b) => {
+                if (a.index === -1) return -1;
+                if (b.index === -1) return 1;
+                const hA = parseInt(a.label) || 0;
+                const hB = parseInt(b.label) || 0;
+                return hB - hA;
+              }),
             ];
             setHlsQualities(list);
           }
@@ -5521,7 +5582,7 @@ export default function Room() {
                   title="Video Quality"
                 >
                   <span style={{ fontSize: '10.5px', fontWeight: '800', letterSpacing: '0.04em' }}>
-                    {hlsQualities.find((q) => q.index === currentHlsQuality)?.label || 'AUTO'}
+                    {currentHlsQuality === -1 ? (autoResolution ? `AUTO (${autoResolution})` : 'AUTO') : (hlsQualities.find((q) => q.index === currentHlsQuality)?.label || 'AUTO')}
                   </span>
                 </button>
               )}
