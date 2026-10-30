@@ -931,10 +931,15 @@ export default function Room() {
         dashRef.current.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: true } } } });
       } else {
         dashRef.current.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: false } } } });
+        // _origIndex is the original unsorted array position from getRepresentationsByType()
+        // which is what setRepresentationForTypeByIndex expects in Dash.js v5
+        const qualityEntry = hlsQualities.find((q) => q.index === index);
+        const origIdx = qualityEntry && qualityEntry._origIndex !== undefined ? qualityEntry._origIndex : index;
+        console.log('[DASH] Quality switch: sorted index', index, '-> orig index', origIdx, 'label', qualityEntry?.label);
         if (typeof dashRef.current.setRepresentationForTypeByIndex === 'function') {
-          dashRef.current.setRepresentationForTypeByIndex('video', index);
+          dashRef.current.setRepresentationForTypeByIndex('video', origIdx);
         } else if (typeof dashRef.current.setQualityFor === 'function') {
-          dashRef.current.setQualityFor('video', index);
+          dashRef.current.setQualityFor('video', origIdx);
         }
       }
       const v = videoRef.current;
@@ -2724,16 +2729,11 @@ export default function Room() {
             if (reps && reps.length > 0) {
               const list = [
                 { index: -1, label: 'Auto' },
-                ...reps.map((b, idx) => ({
-                  index: b.index !== undefined ? b.index : idx,
-                  label: b.height ? `${b.height}p` : (b.bitrateInKbit ? `${b.bitrateInKbit}k` : `Level ${idx + 1}`),
-                })).sort((a, b) => {
-                  if (a.index === -1) return -1;
-                  if (b.index === -1) return 1;
-                  const hA = parseInt(a.label) || 0;
-                  const hB = parseInt(b.label) || 0;
-                  return hB - hA;
-                }),
+                ...[...reps].sort((a, b) => (b.height || b.bandwidth || 0) - (a.height || a.bandwidth || 0)).map((b, sortedIdx) => ({
+                  index: sortedIdx,
+                  label: b.height ? `${b.height}p` : (b.bitrateInKbit ? `${b.bitrateInKbit}k` : `Level ${sortedIdx + 1}`),
+                  _origIndex: b.index !== undefined ? b.index : sortedIdx,
+                })),
               ];
               setHlsQualities(list);
             }
