@@ -26,6 +26,28 @@ async function verifiedUserId(token) {
 // How long to wait before announcing "X left" — mobile lock/unlock blips
 // reconnect within this window and never spam the chat.
 const LEAVE_GRACE_MS = Number(process.env.LEAVE_GRACE_MS || 45000);
+// --- Stream Resolver Daemon Bridge (Local Puppeteer Worker <-> Server) ---
+let activeResolverSocket = null;
+const pendingResolves = new Map(); // reqId -> { resolve, timer }
+
+function requestStreamResolve({ id, type, s, e, timeoutMs = 12000 }) {
+  if (!activeResolverSocket || !activeResolverSocket.connected) {
+    return Promise.resolve(null);
+  }
+  const reqId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingResolves.delete(reqId);
+      resolve(null);
+    }, timeoutMs);
+
+    pendingResolves.set(reqId, { resolve, timer });
+    activeResolverSocket.emit('resolve-stream', { reqId, id, type, s, e });
+  });
+}
+
+global.__reelsync_resolve = requestStreamResolve;
+
 
 // ---------------------------------------------------------------------------
 // Rooms. The in-memory Map is the realtime source of truth; MongoDB is the
@@ -230,6 +252,23 @@ function streamHistory(socket, code) {
 
 function attach(io) {
   io.on('connection', (socket) => {
+    // --- Stream Resolver Daemon registration & communication ---
+    socket.on('register-resolver', () => {
+      activeResolverSocket = socket;
+      console.log(`[Realtime] Stream Resolver Daemon registered: ${socket.id}`);
+    });
+
+    socket.on('resolve-stream-done', (data) => {
+      if (data && data.reqId) {
+        const pending = pendingResolves.get(data.reqId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          pendingResolves.delete(data.reqId);
+          pending.resolve(data);
+        }
+      }
+    });
+
     // --- create a room, returns its join code ---
     socket.on('create-room', async (payload, cb) => {
       let name = '';
@@ -996,6 +1035,10 @@ function attach(io) {
 
     socket.on('leave-room', () => leaveCurrentRoom(io, socket));
     socket.on('disconnect', () => {
+      if (activeResolverSocket === socket) {
+        console.log('[Realtime] Stream Resolver Daemon disconnected');
+        activeResolverSocket = null;
+      }
       // Clean up any lobby knocks this socket was waiting on
       for (const [kid, k] of pendingKnocks) {
         if (k.socket === socket) {

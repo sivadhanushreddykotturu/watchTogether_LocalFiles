@@ -32,50 +32,75 @@ export async function GET(request) {
     console.warn('MongoDB cache check warning:', err.message);
   }
 
-  // 2. Query parallel background daemon on port 4545
-  try {
-    const qs = new URLSearchParams({
-      id: String(id),
-      type,
-      s: String(season),
-      e: String(episode),
-    });
+  let resolvedData = null;
 
-    const daemonRes = await fetch(`http://localhost:4545/resolve?${qs.toString()}`, {
-      signal: AbortSignal.timeout(9000),
-    });
-
-    if (daemonRes.ok) {
-      const data = await daemonRes.json();
-      if (data.ok && data.streamUrl) {
-        let finalStreamUrl = data.streamUrl;
-
-        // If HLS (.m3u8), proxy through Cloudflare Worker to bypass 403 referer blocks
-        if (data.streamType === 'hls' || data.streamUrl.includes('.m3u8')) {
-          finalStreamUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(data.streamUrl)}`;
-        }
-
-        const streamResult = {
-          streamUrl: finalStreamUrl,
-          rawUrl: data.streamUrl,
-          streamType: data.streamType || (finalStreamUrl.includes('.mpd') ? 'dash' : 'hls'),
-          provider: data.provider || 'VidFast',
-        };
-
-        // 3. Save to MongoDB so everyone in the room & future visitors play instantly
-        db.saveStreamCache(mediaKey, streamResult).catch(() => {});
-
-        console.log(`[Stream API] Resolved and cached in MongoDB: ${mediaKey} -> ${streamResult.provider} (${streamResult.streamType})`);
-
-        return NextResponse.json({
-          ok: true,
-          cached: false,
-          ...streamResult,
-        });
+  // 2. Query connected Local Resolver Daemon via WebSocket bridge
+  if (typeof global !== 'undefined' && typeof global.__reelsync_resolve === 'function') {
+    try {
+      console.log(`[Stream API] ⚡ Requesting stream from connected resolver bridge for ${mediaKey}...`);
+      const bridgeRes = await global.__reelsync_resolve({ id, type, s: season, e: episode, timeoutMs: 12000 });
+      if (bridgeRes && bridgeRes.ok && bridgeRes.streamUrl) {
+        resolvedData = bridgeRes;
       }
+    } catch (err) {
+      console.warn('[Stream API] Resolver bridge query error:', err.message);
     }
-  } catch (err) {
-    console.warn('Stream resolver daemon unavailable:', err.message);
+  }
+
+  // 3. Fallback: Query local daemon on port 4545 (if running on same host)
+  if (!resolvedData) {
+    try {
+      const qs = new URLSearchParams({
+        id: String(id),
+        type,
+        s: String(season),
+        e: String(episode),
+      });
+
+      const daemonRes = await fetch(`http://localhost:4545/resolve?${qs.toString()}`, {
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (daemonRes.ok) {
+        const data = await daemonRes.json();
+        if (data.ok && data.streamUrl) {
+          resolvedData = data;
+        }
+      }
+    } catch (err) {
+      // Local daemon unavailable or timed out
+    }
+  }
+
+  // 4. If stream extracted, prepare and cache in MongoDB Atlas
+  if (resolvedData && resolvedData.streamUrl) {
+    let finalStreamUrl = resolvedData.streamUrl;
+
+    // If HLS (.m3u8), proxy through Cloudflare Worker to bypass 403 referer blocks
+    if (resolvedData.streamType === 'hls' || resolvedData.streamUrl.includes('.m3u8')) {
+      finalStreamUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(resolvedData.streamUrl)}`;
+    }
+
+    const streamResult = {
+      streamUrl: finalStreamUrl,
+      rawUrl: resolvedData.streamUrl,
+      streamType: resolvedData.streamType || (finalStreamUrl.includes('.mpd') ? 'dash' : 'hls'),
+      provider: resolvedData.provider || 'VidLink',
+    };
+
+    // Save to MongoDB so everyone in the room & future visitors play in 0ms
+    try {
+      await db.saveStreamCache(mediaKey, streamResult);
+      console.log(`[Stream API] ⚡ Resolved and saved to MongoDB: ${mediaKey} -> ${streamResult.provider}`);
+    } catch (err) {
+      console.warn('[Stream API] MongoDB save warning:', err.message);
+    }
+
+    return NextResponse.json({
+      ok: true,
+      cached: false,
+      ...streamResult,
+    });
   }
 
   return NextResponse.json({ ok: false, error: 'Failed to extract stream from providers' }, { status: 504 });

@@ -185,6 +185,7 @@ async function getHistory(code, limit = 50) {
 
 // ---- stream cache (VidFast & VidLink MongoDB caching) ----
 async function getStreamCache(key) {
+  if (!db) await connect();
   if (!db || !key) return null;
   try {
     return await db.collection('stream_cache').findOne({ key });
@@ -194,6 +195,7 @@ async function getStreamCache(key) {
 }
 
 async function saveStreamCache(key, streamData) {
+  if (!db) await connect();
   if (!db || !key || !streamData) return;
   try {
     await db.collection('stream_cache').updateOne(
