@@ -931,7 +931,11 @@ export default function Room() {
         dashRef.current.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: true } } } });
       } else {
         dashRef.current.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: false } } } });
-        dashRef.current.setQualityFor('video', index);
+        if (typeof dashRef.current.setRepresentationForTypeByIndex === 'function') {
+          dashRef.current.setRepresentationForTypeByIndex('video', index);
+        } else if (typeof dashRef.current.setQualityFor === 'function') {
+          dashRef.current.setQualityFor('video', index);
+        }
       }
       const v = videoRef.current;
       if (v) {
@@ -2660,13 +2664,22 @@ export default function Room() {
         }
         const updateDashQualities = () => {
           try {
-            const bitrates = dashPlayer.getBitrateInfoListFor('video');
-            if (bitrates && bitrates.length > 0) {
+            let reps = [];
+            if (typeof dashPlayer.getRepresentationsByType === 'function') {
+              reps = dashPlayer.getRepresentationsByType('video') || [];
+            } else if (typeof dashPlayer.getBitrateInfoListFor === 'function') {
+              reps = (dashPlayer.getBitrateInfoListFor('video') || []).map((b) => ({
+                index: b.qualityIndex !== undefined ? b.qualityIndex : b.index,
+                height: b.height,
+                bitrateInKbit: b.bitrate ? Math.round(b.bitrate / 1000) : 0,
+              }));
+            }
+            if (reps && reps.length > 0) {
               const list = [
                 { index: -1, label: 'Auto' },
-                ...bitrates.map((b) => ({
-                  index: b.qualityIndex,
-                  label: b.height ? `${b.height}p` : `${Math.round(b.bitrate / 1000)}k`,
+                ...reps.map((b, idx) => ({
+                  index: b.index !== undefined ? b.index : idx,
+                  label: b.height ? `${b.height}p` : (b.bitrateInKbit ? `${b.bitrateInKbit}k` : `Level ${idx + 1}`),
                 })).sort((a, b) => {
                   if (a.index === -1) return -1;
                   if (b.index === -1) return 1;
@@ -2677,7 +2690,9 @@ export default function Room() {
               ];
               setHlsQualities(list);
             }
-          } catch {}
+          } catch (e) {
+            console.warn('[DASH] updateDashQualities error:', e);
+          }
         };
 
         dashPlayer.initialize(video, playUrl, true);
@@ -2687,10 +2702,9 @@ export default function Room() {
         });
         dashPlayer.on(dashLib.MediaPlayer.events.QUALITY_CHANGE_RENDERED, (e) => {
           if (e.mediaType === 'video') {
-            const bitrates = dashPlayer.getBitrateInfoListFor('video');
-            const b = bitrates ? bitrates[e.newQuality] : null;
-            if (b && b.height) {
-              setAutoResolution(`${b.height}p`);
+            const curRep = typeof dashPlayer.getCurrentRepresentationForType === 'function' ? dashPlayer.getCurrentRepresentationForType('video') : null;
+            if (curRep && curRep.height) {
+              setAutoResolution(`${curRep.height}p`);
             }
           }
           updateDashQualities();
