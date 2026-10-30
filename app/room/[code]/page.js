@@ -2613,8 +2613,23 @@ export default function Room() {
       setPlayDisabled(false);
       fileLoadedRef.current = true;
       try {
-        const dashjs = require('dashjs');
-        const dashPlayer = dashjs.MediaPlayer().create();
+        let dashLib = typeof window !== 'undefined' && window.dashjs?.MediaPlayer ? window.dashjs : null;
+        if (!dashLib) {
+          try {
+            const rawDash = require('dashjs');
+            dashLib = (typeof window !== 'undefined' && window.dashjs?.MediaPlayer ? window.dashjs : null)
+              || (rawDash?.MediaPlayer ? rawDash : null)
+              || (rawDash?.default?.MediaPlayer ? rawDash.default : null);
+          } catch {}
+        }
+        if (!dashLib && typeof window !== 'undefined' && window.dashjs) {
+          dashLib = window.dashjs;
+        }
+        if (!dashLib || !dashLib.MediaPlayer) {
+          console.error('[DASH] MediaPlayer not available on dashjs:', dashLib);
+          return;
+        }
+        const dashPlayer = dashLib.MediaPlayer().create();
         dashRef.current = dashPlayer;
 
         // Propagate CloudFront signed query parameters to all DASH media segments/chunks
@@ -2630,8 +2645,18 @@ export default function Room() {
           }, true);
         }
 
+        const startPlayback = () => {
+          if (latestStateRef.current.time && Math.abs(video.currentTime - latestStateRef.current.time) > 1) {
+            video.currentTime = latestStateRef.current.time;
+          }
+          if (latestStateRef.current.playing) {
+            video.play().catch(() => {});
+          }
+        };
+
         dashPlayer.initialize(video, source.url, true);
-        dashPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+        dashPlayer.on(dashLib.MediaPlayer.events.STREAM_INITIALIZED, () => {
+          startPlayback();
           const bitrates = dashPlayer.getBitrateInfoListFor('video');
           if (bitrates && bitrates.length > 0) {
             const list = [
@@ -2650,7 +2675,7 @@ export default function Room() {
             setHlsQualities(list);
           }
         });
-        dashPlayer.on(dashjs.MediaPlayer.events.QUALITY_CHANGE_RENDERED, (e) => {
+        dashPlayer.on(dashLib.MediaPlayer.events.QUALITY_CHANGE_RENDERED, (e) => {
           if (e.mediaType === 'video') {
             const bitrates = dashPlayer.getBitrateInfoListFor('video');
             const b = bitrates ? bitrates[e.newQuality] : null;
@@ -2659,14 +2684,10 @@ export default function Room() {
             }
           }
         });
-        dashPlayer.on(dashjs.MediaPlayer.events.CAN_PLAY, () => {
-          if (latestStateRef.current.time) {
-            video.currentTime = latestStateRef.current.time;
-          }
-          if (latestStateRef.current.playing) {
-            video.play().catch(() => {});
-          }
-        });
+        dashPlayer.on(dashLib.MediaPlayer.events.CAN_PLAY, startPlayback);
+        dashPlayer.on(dashLib.MediaPlayer.events.PLAYBACK_METADATA_LOADED, startPlayback);
+        dashPlayer.on(dashLib.MediaPlayer.events.ERROR, (e) => console.warn('[DASH] error:', e));
+        video.oncanplay = startPlayback;
       } catch (err) {
         console.warn('Dash.js error:', err);
       }
