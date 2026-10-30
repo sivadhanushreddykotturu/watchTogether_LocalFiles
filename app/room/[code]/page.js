@@ -2616,6 +2616,20 @@ export default function Room() {
         const dashjs = require('dashjs');
         const dashPlayer = dashjs.MediaPlayer().create();
         dashRef.current = dashPlayer;
+
+        // Propagate CloudFront signed query parameters to all DASH media segments/chunks
+        if (source.url && source.url.includes('?')) {
+          const queryString = source.url.split('?')[1];
+          dashPlayer.extend('RequestModifier', () => {
+            return {
+              modifyRequestURL: (reqUrl) => {
+                if (!reqUrl || reqUrl.includes('Policy=')) return reqUrl;
+                return reqUrl + (reqUrl.includes('?') ? '&' : '?') + queryString;
+              },
+            };
+          }, true);
+        }
+
         dashPlayer.initialize(video, source.url, true);
         dashPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
           const bitrates = dashPlayer.getBitrateInfoListFor('video');
@@ -2658,7 +2672,7 @@ export default function Room() {
       }
     }
 
-    if (source?.type === 'hls' && source.url) {
+    if (source?.type === 'hls' && !source?.url?.includes('.mpd') && source.url) {
       setPlayDisabled(false);
       fileLoadedRef.current = true;
 
