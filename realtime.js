@@ -637,7 +637,7 @@ function attach(io) {
       if (type === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(String(videoId || ''))) {
         room.state.source = { type: 'youtube', videoId, title: String(title || 'YouTube Video').slice(0, 150), platform: 'YouTube' };
         room.state.playing = Boolean(playing);
-      } else if ((type === 'hls' || type === 'direct') && url) {
+      } else if ((type === 'hls' || type === 'dash' || type === 'direct') && url) {
         room.state.source = {
           type,
           url: String(url),
