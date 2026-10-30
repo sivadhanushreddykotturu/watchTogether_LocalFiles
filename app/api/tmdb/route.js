@@ -151,6 +151,37 @@ export async function GET(request) {
         .map((item) => formatMediaItem(item, explicitType))
         .filter(Boolean);
 
+      // If no media items found (common with punctuation like "WALL-E" or when people crowd multi-search),
+      // probe movie and tv endpoints with smart title variants.
+      if (results.length === 0) {
+        const variants = [
+          q.replace(/-/g, '·'), // WALL-E -> WALL·E
+          q.replace(/[-_.]/g, ' ').replace(/\s+/g, ' ').trim(), // WALL-E -> WALL E
+          q.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, ' ').trim(), // Strip punctuation
+        ].filter((v) => v && v.toLowerCase() !== q.toLowerCase());
+
+        for (const variant of variants) {
+          if (type === 'movie') {
+            const vRes = await tmdbFetch('/search/movie', { query: variant, include_adult: 'false' });
+            results = (vRes.data.results || []).map((i) => formatMediaItem(i, 'movie')).filter(Boolean);
+          } else if (type === 'tv' || type === 'anime' || type === 'kdrama') {
+            const vRes = await tmdbFetch('/search/tv', { query: variant, include_adult: 'false' });
+            results = (vRes.data.results || []).map((i) => formatMediaItem(i, 'tv')).filter(Boolean);
+          } else {
+            // type === 'all': query movie & tv directly
+            const [mRes, tRes] = await Promise.all([
+              tmdbFetch('/search/movie', { query: variant, include_adult: 'false' }).catch(() => ({ data: {} })),
+              tmdbFetch('/search/tv', { query: variant, include_adult: 'false' }).catch(() => ({ data: {} })),
+            ]);
+            const mItems = (mRes.data?.results || []).map((i) => formatMediaItem(i, 'movie')).filter(Boolean);
+            const tItems = (tRes.data?.results || []).map((i) => formatMediaItem(i, 'tv')).filter(Boolean);
+            results = [...mItems, ...tItems].sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+          }
+
+          if (results.length > 0) break;
+        }
+      }
+
       if (type === 'anime') {
         results = results.sort((a, b) => (b.subType === 'anime' ? 1 : 0) - (a.subType === 'anime' ? 1 : 0));
       } else if (type === 'kdrama') {
