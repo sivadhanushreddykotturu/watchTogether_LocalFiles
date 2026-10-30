@@ -1,3 +1,14 @@
+
+function shouldProxyStream(url, provider) {
+  if (!url) return false;
+  // If already proxied
+  if (url.startsWith('https://d.ksdhanushreddy.workers.dev/proxy')) return false;
+  // DASH streams are direct signed CloudFront manifests (sacdn)
+  if (url.includes('.mpd')) return false;
+  // CineSrc has open CORS and blocks Cloudflare Worker with 502/dontscrape
+  if (provider === 'CineSrc' || url.includes('cinesrc.st') || url.includes('bright67.online')) return false;
+  return true;
+}
 import { NextResponse } from 'next/server';
 const db = require('@/db');
 
@@ -20,7 +31,7 @@ export async function GET(request) {
     if (cached && cached.streamUrl) {
       console.log(`[Stream API] ⚡ Cache HIT in MongoDB for ${mediaKey} (${cached.provider})`);
       let streamUrl = cached.streamUrl;
-      if (!streamUrl.startsWith('https://d.ksdhanushreddy.workers.dev/proxy')) {
+      if (shouldProxyStream(streamUrl, cached.provider)) {
         streamUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(streamUrl)}`;
       }
       return NextResponse.json({
@@ -80,8 +91,10 @@ export async function GET(request) {
   if (resolvedData && resolvedData.streamUrl) {
     let finalStreamUrl = resolvedData.streamUrl;
 
-    // Proxy streams through Cloudflare Worker to rewrite manifests & bypass 403 blocks
-    finalStreamUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(resolvedData.streamUrl)}`;
+    // Proxy streams through Cloudflare Worker (VidFast / KissKH) to rewrite manifests & bypass 403 blocks
+    if (shouldProxyStream(resolvedData.streamUrl, resolvedData.provider)) {
+      finalStreamUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(resolvedData.streamUrl)}`;
+    }
 
     const streamResult = {
       streamUrl: finalStreamUrl,
