@@ -289,6 +289,7 @@ export default function Room() {
   const streamLoadingRef = useRef(null);
   const streamWatchdogRef = useRef(null);
   const pendingFallbackRef = useRef(null);
+  const seekBufferTimerRef = useRef(null);
   const [subLoading, setSubLoading] = useState(false);
   const [activeSubLang, setActiveSubLang] = useState('en');
   const SUB_LANG_PILLS = [
