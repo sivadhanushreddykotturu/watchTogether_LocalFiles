@@ -941,11 +941,20 @@ export default function Room() {
         } else if (typeof dashRef.current.setQualityFor === 'function') {
           dashRef.current.setQualityFor('video', origIdx);
         }
-      }
-      const v = videoRef.current;
-      if (v) {
-        const t = v.currentTime;
-        v.currentTime = t;
+        // Force instant buffer flush so new quality downloads immediately instead of
+        // playing out remaining old-quality buffered chunks first
+        const v = videoRef.current;
+        if (v) {
+          const wasPlaying = !v.paused;
+          const t = v.currentTime;
+          // Small forward seek clears the Dash.js buffer and forces immediate re-buffering at new quality
+          setTimeout(() => {
+            if (videoRef.current) {
+              videoRef.current.currentTime = t + 0.001;
+              if (wasPlaying) videoRef.current.play().catch(() => {});
+            }
+          }, 50);
+        }
       }
     }
     setCurrentHlsQuality(index);
@@ -2671,6 +2680,7 @@ export default function Room() {
               bufferToKeep: 60,
               bufferPruningInterval: 30,
               fastSwitchEnabled: true,
+              flushBufferAtTrackSwitch: true,
               reuseExistingSourceBuffers: true,
               enableSeekDecorrelationFix: true,
               setStallState: true,
