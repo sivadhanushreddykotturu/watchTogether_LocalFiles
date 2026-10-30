@@ -1612,7 +1612,7 @@ export default function Room() {
     const onWaiting = () => {
       // Don't trigger if initial stream loading card is already showing
       if (streamLoadingRef.current) return;
-      if (sourceRef.current?.type === 'hls' || sourceRef.current?.type === 'direct') {
+      if (sourceRef.current?.type === 'hls' || sourceRef.current?.type === 'dash' || sourceRef.current?.type === 'direct') {
         if (midBufferingTimerRef.current) clearTimeout(midBufferingTimerRef.current);
         midBufferingTimerRef.current = setTimeout(() => {
           const v = videoRef.current;
@@ -1933,7 +1933,7 @@ export default function Room() {
             if (typeof ytRef.current.pauseVideo === 'function') ytRef.current.pauseVideo();
           }
         }
-      } else if (s?.type === 'ph' || s?.type === 'hls' || s?.type === 'direct') {
+      } else if (s?.type === 'ph' || s?.type === 'hls' || s?.type === 'dash' || s?.type === 'direct') {
         toast(`${actor} started playing ${s.title ? `"${s.title}"` : (s.platform || 'video stream')}`);
       } else {
         toast(`${actor} switched back to local files`);
@@ -2654,7 +2654,11 @@ export default function Room() {
           }
         };
 
-        dashPlayer.initialize(video, source.url, true);
+        let playUrl = source.url;
+        if (playUrl.includes("sacdn.hakunaymatata.com") && !playUrl.includes("/proxy?")) {
+          playUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(playUrl)}`;
+        }
+        dashPlayer.initialize(video, playUrl, true);
         dashPlayer.on(dashLib.MediaPlayer.events.STREAM_INITIALIZED, () => {
           startPlayback();
           const bitrates = dashPlayer.getBitrateInfoListFor('video');

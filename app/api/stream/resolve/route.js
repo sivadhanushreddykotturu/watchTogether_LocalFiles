@@ -19,11 +19,15 @@ export async function GET(request) {
     const cached = await db.getStreamCache(mediaKey);
     if (cached && cached.streamUrl) {
       console.log(`[Stream API] ⚡ Cache HIT in MongoDB for ${mediaKey} (${cached.provider})`);
+      let streamUrl = cached.streamUrl;
+      if (!streamUrl.startsWith('https://d.ksdhanushreddy.workers.dev/proxy')) {
+        streamUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(streamUrl)}`;
+      }
       return NextResponse.json({
         ok: true,
         cached: true,
-        streamUrl: cached.streamUrl,
-        rawUrl: cached.rawUrl,
+        streamUrl,
+        rawUrl: cached.rawUrl || cached.streamUrl,
         streamType: cached.streamType,
         provider: cached.provider,
       });
