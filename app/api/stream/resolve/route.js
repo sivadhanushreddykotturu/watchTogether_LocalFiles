@@ -76,10 +76,8 @@ export async function GET(request) {
   if (resolvedData && resolvedData.streamUrl) {
     let finalStreamUrl = resolvedData.streamUrl;
 
-    // If HLS (.m3u8), proxy through Cloudflare Worker to bypass 403 referer blocks
-    if (resolvedData.streamType === 'hls' || resolvedData.streamUrl.includes('.m3u8')) {
-      finalStreamUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(resolvedData.streamUrl)}`;
-    }
+    // Proxy streams through Cloudflare Worker to rewrite manifests & bypass 403 blocks
+    finalStreamUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(resolvedData.streamUrl)}`;
 
     const streamResult = {
       streamUrl: finalStreamUrl,

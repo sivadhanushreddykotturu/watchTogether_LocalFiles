@@ -2633,7 +2633,7 @@ export default function Room() {
         dashRef.current = dashPlayer;
 
         // Propagate CloudFront signed query parameters to all DASH media segments/chunks
-        if (source.url && source.url.includes('?')) {
+        if (source.url && source.url.includes('Policy=') && !source.url.includes('/proxy?')) {
           const queryString = source.url.split('?')[1];
           dashPlayer.extend('RequestModifier', () => {
             return {
