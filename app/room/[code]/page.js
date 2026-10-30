@@ -2658,26 +2658,32 @@ export default function Room() {
         if (playUrl.includes("sacdn.hakunaymatata.com") && !playUrl.includes("/proxy?")) {
           playUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(playUrl)}`;
         }
+        const updateDashQualities = () => {
+          try {
+            const bitrates = dashPlayer.getBitrateInfoListFor('video');
+            if (bitrates && bitrates.length > 0) {
+              const list = [
+                { index: -1, label: 'Auto' },
+                ...bitrates.map((b) => ({
+                  index: b.qualityIndex,
+                  label: b.height ? `${b.height}p` : `${Math.round(b.bitrate / 1000)}k`,
+                })).sort((a, b) => {
+                  if (a.index === -1) return -1;
+                  if (b.index === -1) return 1;
+                  const hA = parseInt(a.label) || 0;
+                  const hB = parseInt(b.label) || 0;
+                  return hB - hA;
+                }),
+              ];
+              setHlsQualities(list);
+            }
+          } catch {}
+        };
+
         dashPlayer.initialize(video, playUrl, true);
         dashPlayer.on(dashLib.MediaPlayer.events.STREAM_INITIALIZED, () => {
           startPlayback();
-          const bitrates = dashPlayer.getBitrateInfoListFor('video');
-          if (bitrates && bitrates.length > 0) {
-            const list = [
-              { index: -1, label: 'Auto' },
-              ...bitrates.map((b) => ({
-                index: b.qualityIndex,
-                label: b.height ? `${b.height}p` : `${Math.round(b.bitrate / 1000)}k`,
-              })).sort((a, b) => {
-                if (a.index === -1) return -1;
-                if (b.index === -1) return 1;
-                const hA = parseInt(a.label) || 0;
-                const hB = parseInt(b.label) || 0;
-                return hB - hA;
-              }),
-            ];
-            setHlsQualities(list);
-          }
+          updateDashQualities();
         });
         dashPlayer.on(dashLib.MediaPlayer.events.QUALITY_CHANGE_RENDERED, (e) => {
           if (e.mediaType === 'video') {
@@ -2687,11 +2693,23 @@ export default function Room() {
               setAutoResolution(`${b.height}p`);
             }
           }
+          updateDashQualities();
         });
-        dashPlayer.on(dashLib.MediaPlayer.events.CAN_PLAY, startPlayback);
-        dashPlayer.on(dashLib.MediaPlayer.events.PLAYBACK_METADATA_LOADED, startPlayback);
+        dashPlayer.on(dashLib.MediaPlayer.events.CAN_PLAY, () => {
+          startPlayback();
+          updateDashQualities();
+        });
+        dashPlayer.on(dashLib.MediaPlayer.events.PLAYBACK_METADATA_LOADED, () => {
+          startPlayback();
+          updateDashQualities();
+        });
         dashPlayer.on(dashLib.MediaPlayer.events.ERROR, (e) => console.warn('[DASH] error:', e));
-        video.oncanplay = startPlayback;
+        video.oncanplay = () => {
+          startPlayback();
+          updateDashQualities();
+        };
+        setTimeout(updateDashQualities, 800);
+        setTimeout(updateDashQualities, 2000);
       } catch (err) {
         console.warn('Dash.js error:', err);
       }
@@ -4769,6 +4787,16 @@ export default function Room() {
                   >
                     {subLoading ? '⏳ Loading...' : '💬 Subtitles'} {subsOn && <span className="sub-active-dot" />}
                   </button>
+                  {hlsQualities.length > 0 && (
+                    <button
+                      type="button"
+                      className={'room-tv-btn quality-quick-btn' + (qualityPanelOpen ? ' active' : '')}
+                      onClick={() => setQualityPanelOpen(!qualityPanelOpen)}
+                      title="Video Quality Selection"
+                    >
+                      ⚙️ {currentHlsQuality === -1 ? (autoResolution ? `${autoResolution}` : 'Auto') : (hlsQualities.find((q) => q.index === currentHlsQuality)?.label || 'Auto')}
+                    </button>
+                  )}
 
                   <button
                     type="button"
