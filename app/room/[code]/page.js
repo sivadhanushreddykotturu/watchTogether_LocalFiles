@@ -951,8 +951,18 @@ export default function Room() {
 
   // ---------- multi-audio track switching ----------
   const changeAudioTrack = (trackId) => {
-    if (!hlsRef.current) return;
-    hlsRef.current.audioTrack = trackId;
+    if (hlsRef.current) {
+      hlsRef.current.audioTrack = trackId;
+    } else if (dashRef.current) {
+      try {
+        const target = hlsAudioTracks.find((t) => t.id === trackId);
+        if (target && target.rawTrack && typeof dashRef.current.setCurrentTrack === 'function') {
+          dashRef.current.setCurrentTrack(target.rawTrack);
+        }
+      } catch (e) {
+        console.warn('[DASH changeAudioTrack error]:', e);
+      }
+    }
     setCurrentAudioTrack(trackId);
     const track = hlsAudioTracks.find((t) => t.id === trackId);
     toast(`Audio Language: ${track?.name || track?.lang || 'Track ' + (trackId + 1)}`);
@@ -2689,6 +2699,24 @@ export default function Room() {
                 }),
               ];
               setHlsQualities(list);
+            }
+
+            // Discover DASH multi-audio tracks
+            if (typeof dashPlayer.getTracksFor === 'function') {
+              const aTracks = dashPlayer.getTracksFor('audio') || [];
+              if (aTracks.length > 0) {
+                const mapped = aTracks.map((t, idx) => ({
+                  id: t.index !== undefined ? t.index : idx,
+                  name: t.labels?.[0]?.text || t.lang || (t.roles?.join(', ') || `Audio ${idx + 1}`),
+                  lang: t.lang || '',
+                  rawTrack: t,
+                }));
+                setHlsAudioTracks(mapped);
+                const cur = typeof dashPlayer.getCurrentTrackFor === 'function' ? dashPlayer.getCurrentTrackFor('audio') : null;
+                if (cur) {
+                  setCurrentAudioTrack(cur.index !== undefined ? cur.index : 0);
+                }
+              }
             }
           } catch (e) {
             console.warn('[DASH] updateDashQualities error:', e);
@@ -4729,6 +4757,16 @@ export default function Room() {
                       title="Video Quality Selection"
                     >
                       ⚙️ {currentHlsQuality === -1 ? (autoResolution ? `${autoResolution}` : 'Auto') : (hlsQualities.find((q) => q.index === currentHlsQuality)?.label || 'Auto')}
+                    </button>
+                  )}
+                  {hlsAudioTracks.length > 1 && (
+                    <button
+                      type="button"
+                      className={'room-tv-btn audio-quick-btn' + (audioPanelOpen ? ' active' : '')}
+                      onClick={() => setAudioPanelOpen(!audioPanelOpen)}
+                      title="Audio Language Selection"
+                    >
+                      🎧 {(hlsAudioTracks.find((t) => t.id === currentAudioTrack)?.lang || 'AUD').toUpperCase().slice(0, 3)}
                     </button>
                   )}
 
