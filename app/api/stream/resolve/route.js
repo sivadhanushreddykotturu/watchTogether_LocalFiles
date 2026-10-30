@@ -41,6 +41,7 @@ export async function GET(request) {
         rawUrl: cached.rawUrl || cached.streamUrl,
         streamType: cached.streamType,
         provider: cached.provider,
+        subtitles: cached.subtitles || [],
       });
     }
   } catch (err) {
@@ -101,6 +102,7 @@ export async function GET(request) {
       rawUrl: resolvedData.streamUrl,
       streamType: resolvedData.streamType || (finalStreamUrl.includes('.mpd') ? 'dash' : 'hls'),
       provider: resolvedData.provider || 'VidLink',
+      subtitles: resolvedData.subtitles || [],
     };
 
     // Save to MongoDB so everyone in the room & future visitors play in 0ms
