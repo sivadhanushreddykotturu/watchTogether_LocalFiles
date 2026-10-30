@@ -23,6 +23,8 @@ async function connect() {
     await db.collection('rooms').createIndex({ code: 1 }, { unique: true });
     await db.collection('messages').createIndex({ roomCode: 1, at: 1 });
     await db.collection('messages').createIndex({ at: 1 }, { expireAfterSeconds: CHAT_TTL_SECONDS });
+    await db.collection('stream_cache').createIndex({ key: 1 }, { unique: true });
+    await db.collection('stream_cache').createIndex({ createdAt: 1 }, { expireAfterSeconds: 14400 });
     console.log('MongoDB connected.');
     if (!chatCrypto.isEnabled()) {
       console.warn('CHAT_ENCRYPTION_KEY not set — chat history will NOT be saved (messages stay live-only).');
@@ -181,4 +183,27 @@ async function getHistory(code, limit = 50) {
   } catch { return []; }
 }
 
-module.exports = { connect, isConnected, roomExists, getRoom, saveRoom, getUserRooms, deleteRoom, addMessage, getHistory };
+// ---- stream cache (VidFast & VidLink MongoDB caching) ----
+async function getStreamCache(key) {
+  if (!db || !key) return null;
+  try {
+    return await db.collection('stream_cache').findOne({ key });
+  } catch {
+    return null;
+  }
+}
+
+async function saveStreamCache(key, streamData) {
+  if (!db || !key || !streamData) return;
+  try {
+    await db.collection('stream_cache').updateOne(
+      { key },
+      { $set: { key, ...streamData, createdAt: new Date() } },
+      { upsert: true }
+    );
+  } catch (err) {
+    console.error('saveStreamCache error:', err.message);
+  }
+}
+
+module.exports = { connect, isConnected, roomExists, getRoom, saveRoom, getUserRooms, deleteRoom, addMessage, getHistory, getStreamCache, saveStreamCache };

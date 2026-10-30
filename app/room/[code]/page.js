@@ -261,6 +261,7 @@ export default function Room() {
   const ytTickRef = useRef(null);
   const ytStallRef = useRef(false); // "playing" but clock frozen = ad (or stall)
   const hlsRef = useRef(null);
+  const dashRef = useRef(null);
   const voiceRef = useRef(null); // VoiceSession, created lazily
   const voiceAudioRef = useRef(null); // hidden container for remote audio elements
 
@@ -2577,10 +2578,36 @@ export default function Room() {
       hlsRef.current.destroy();
       hlsRef.current = null;
     }
+    if (dashRef.current) {
+      try { dashRef.current.reset(); } catch {}
+      dashRef.current = null;
+    }
     setHlsQualities([]);
     setCurrentHlsQuality(-1);
     setHlsAudioTracks([]);
     setCurrentAudioTrack(-1);
+
+    // 1. DASH Native Stream (VidLink .mpd)
+    if ((source?.type === 'dash' || source?.url?.includes('.mpd')) && source.url) {
+      setPlayDisabled(false);
+      fileLoadedRef.current = true;
+      try {
+        const dashjs = require('dashjs');
+        const dashPlayer = dashjs.MediaPlayer().create();
+        dashRef.current = dashPlayer;
+        dashPlayer.initialize(video, source.url, true);
+        dashPlayer.on(dashjs.MediaPlayer.events.CAN_PLAY, () => {
+          if (latestStateRef.current.time) {
+            video.currentTime = latestStateRef.current.time;
+          }
+          if (latestStateRef.current.playing) {
+            video.play().catch(() => {});
+          }
+        });
+      } catch (err) {
+        console.warn('Dash.js error:', err);
+      }
+    }
 
     if (source?.type === 'hls' && source.url) {
       setPlayDisabled(false);
@@ -3538,14 +3565,16 @@ export default function Room() {
           type: 'movie',
           timeoutMs: 8000,
         });
-        if (hls && hls.hlsUrl) {
+        if (hls && (hls.streamUrl || hls.hlsUrl)) {
           stopStreamLoading();
+          const streamUrl = hls.streamUrl || hls.hlsUrl;
+          const sType = hls.streamType === 'dash' || streamUrl.includes('.mpd') ? 'dash' : 'hls';
           const payload = {
-            type: 'hls',
-            url: hls.hlsUrl,
-            rawUrl: hls.rawUrl,
+            type: sType,
+            url: streamUrl,
+            rawUrl: hls.rawUrl || streamUrl,
             title: item.title,
-            platform: 'VidFast Native HLS',
+            platform: `${hls.provider || 'Fast'} Native ${sType.toUpperCase()}`,
             mediaType: 'movie',
             tmdbId: item.tmdbId || item.id,
             poster: item.poster,
@@ -3773,14 +3802,16 @@ export default function Room() {
         episode: epPayload.episode,
         timeoutMs: 8000,
       });
-      if (hls && hls.hlsUrl) {
+      if (hls && (hls.streamUrl || hls.hlsUrl)) {
         stopStreamLoading();
+        const streamUrl = hls.streamUrl || hls.hlsUrl;
+        const sType = hls.streamType === 'dash' || streamUrl.includes('.mpd') ? 'dash' : 'hls';
         const payload = {
-          type: 'hls',
-          url: hls.hlsUrl,
-          rawUrl: hls.rawUrl,
+          type: sType,
+          url: streamUrl,
+          rawUrl: hls.rawUrl || streamUrl,
           title: epPayload.title,
-          platform: 'VidFast Native HLS',
+          platform: `${hls.provider || 'Fast'} Native ${sType.toUpperCase()}`,
           mediaType: 'tv',
           tmdbId: epPayload.tmdbId,
           season: epPayload.season,
