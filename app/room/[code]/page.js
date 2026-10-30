@@ -13,7 +13,7 @@ import { detectMediaTracks, parseExternalSubtitle, parseSrtOrVtt } from '../../.
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
 import { searchSpotify, resolveSpotifyTrack } from '../../../lib/spotify';
-import { parseMediaUrl, resolveMediaUrl, searchPornhub } from '../../../lib/mediaEmbeds';
+import { parseMediaUrl, resolveMediaUrl, searchPornhub, resolveNativeHlsStream } from '../../../lib/mediaEmbeds';
 import { buildVidfastUrl, buildVidloveUrl, searchTmdb, fetchTmdbTrending, fetchTmdbTvDetails, fetchTmdbSeason, fetchTmdbSources } from '../../../lib/tmdb';
 import TmdbEpisodeModal from '../../components/TmdbEpisodeModal';
 import { VoiceSession } from '../../../lib/voice';
@@ -3526,6 +3526,46 @@ export default function Room() {
         }
       }
 
+      // 2. Auto-resolve clean 1080p native HLS via local daemon -> Cloudflare Worker Proxy
+      updateStreamLoading({
+        title: item.title,
+        status: '🎬 Extracting clean stream (3-4s)...'
+      });
+      toast(`🎬 Resolving clean 1080p stream for "${item.title}"...`);
+      try {
+        const hls = await resolveNativeHlsStream({
+          tmdbId: item.tmdbId || item.id,
+          type: 'movie',
+          timeoutMs: 8000,
+        });
+        if (hls && hls.hlsUrl) {
+          stopStreamLoading();
+          const payload = {
+            type: 'hls',
+            url: hls.hlsUrl,
+            rawUrl: hls.rawUrl,
+            title: item.title,
+            platform: 'VidFast Native HLS',
+            mediaType: 'movie',
+            tmdbId: item.tmdbId || item.id,
+            poster: item.poster,
+            backdrop: item.backdrop,
+          };
+          if (playNow) {
+            socket.emit('source', { ...payload, playing: true });
+            toast(`🎬 Streaming "${item.title}" in clean 1080p`);
+            setYtSearchModalOpen(false);
+            setYtPanelOpen(false);
+          } else {
+            socket.emit('queue-add', { ...payload, playNow: false });
+            toast(`Added "${item.title}" to queue`);
+          }
+          return;
+        }
+      } catch (e) {
+        console.warn('Native HLS resolve error:', e);
+      }
+
       fallbackToVidlove();
       return;
     }
@@ -3718,16 +3758,98 @@ export default function Room() {
       }
     }
 
+    // Auto-resolve clean 1080p native HLS via local daemon -> Cloudflare Worker Proxy
+    const epLabel = `${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode}`;
+    updateStreamLoading({
+      title: epLabel,
+      status: '🎬 Extracting clean stream (3-4s)...'
+    });
+    toast(`🎬 Resolving clean stream for ${epLabel}...`);
+    try {
+      const hls = await resolveNativeHlsStream({
+        tmdbId: epPayload.tmdbId,
+        type: 'tv',
+        season: epPayload.season,
+        episode: epPayload.episode,
+        timeoutMs: 8000,
+      });
+      if (hls && hls.hlsUrl) {
+        stopStreamLoading();
+        const payload = {
+          type: 'hls',
+          url: hls.hlsUrl,
+          rawUrl: hls.rawUrl,
+          title: epPayload.title,
+          platform: 'VidFast Native HLS',
+          mediaType: 'tv',
+          tmdbId: epPayload.tmdbId,
+          season: epPayload.season,
+          episode: epPayload.episode,
+          episodeTitle: epPayload.episodeTitle,
+          showTitle: epPayload.showTitle,
+          poster: epPayload.poster,
+          backdrop: epPayload.backdrop,
+        };
+        if (playNow) {
+          socket.emit('source', { ...payload, playing: true });
+          toast(`🎬 Streaming ${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode} in clean 1080p`);
+          setTmdbEpisodeModalOpen(false);
+          setYtSearchModalOpen(false);
+          setYtPanelOpen(false);
+        } else {
+          socket.emit('queue-add', { ...payload, playNow: false });
+          toast(`Added S${epPayload.season}:E${epPayload.episode} to queue`);
+        }
+        return;
+      }
+    } catch (e) {
+      console.warn('Native HLS episode resolve error:', e);
+    }
+
     fallbackToVidlove();
   };
 
-  const handlePlayNextEpisode = () => {
+  const handlePlayNextEpisode = async () => {
     if (!source?.tmdbId || source?.mediaType !== 'tv') return;
     const socket = getSocket();
     if (!socket.connected) return;
 
     const nextEp = (Number(source.episode) || 1) + 1;
     const season = Number(source.season) || 1;
+    const cleanShowTitle = source.showTitle || source.title.split('·')[0].trim();
+
+    toast(`Loading Episode ${nextEp}...`);
+
+    let hls = null;
+    try {
+      hls = await resolveNativeHlsStream({
+        tmdbId: source.tmdbId,
+        type: 'tv',
+        season,
+        episode: nextEp,
+        timeoutMs: 8000,
+      });
+    } catch {}
+
+    if (hls && hls.hlsUrl) {
+      const payload = {
+        ...source,
+        type: 'hls',
+        url: hls.hlsUrl,
+        rawUrl: hls.rawUrl,
+        platform: 'VidFast Native HLS',
+        season,
+        episode: nextEp,
+        episodeTitle: `Episode ${nextEp}`,
+        showTitle: cleanShowTitle,
+        title: `${cleanShowTitle} · S${season}:E${nextEp}`,
+        playing: true,
+      };
+      socket.emit('source', payload);
+      toast(`Skipped to Episode ${nextEp} (clean 1080p)`);
+      return;
+    }
+
     const embedUrl = buildVidloveUrl({
       tmdbId: source.tmdbId,
       type: 'tv',
@@ -3735,7 +3857,6 @@ export default function Room() {
       episode: nextEp,
     });
 
-    const cleanShowTitle = source.showTitle || source.title.split('·')[0].trim();
     const payload = {
       ...source,
       type: 'embed',
