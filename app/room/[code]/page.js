@@ -3157,7 +3157,7 @@ export default function Room() {
         id: s.id || `remote-sub-${idx}`,
         label: s.label || `Subtitle ${idx + 1}`,
         type: 'remote',
-        url: s.url,
+        url: s.url || s.src,
         cues: [],
       }));
       const existingNonRemote = subTracksRef.current.filter((t) => t.type !== 'remote');

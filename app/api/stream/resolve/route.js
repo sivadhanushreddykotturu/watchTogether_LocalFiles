@@ -88,6 +88,20 @@ export async function GET(request) {
     }
   }
 
+  // 4. Server Direct Fallback: Pure HTTP KissKH (0ms overhead, zero Chrome/Puppeteer, works on EC2)
+  if (!resolvedData) {
+    try {
+      const { extractKisskhHttp } = require('@/lib/kisskh');
+      const kisskhRes = await extractKisskhHttp(id, type, season, episode);
+      if (kisskhRes && kisskhRes.ok && kisskhRes.streamUrl) {
+        console.log(`[Stream API] ⚡ Resolved directly via pure HTTP KissKH for ${mediaKey}`);
+        resolvedData = kisskhRes;
+      }
+    } catch (err) {
+      // Not on KissKH or failed
+    }
+  }
+
   // 4. If stream extracted, prepare and cache in MongoDB Atlas
   if (resolvedData && resolvedData.streamUrl) {
     let finalStreamUrl = resolvedData.streamUrl;
