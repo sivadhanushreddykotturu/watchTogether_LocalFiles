@@ -4190,6 +4190,24 @@ export default function Room() {
     }
     emitPlayback('seek');
   };
+  const [fsCtrlVisible, setFsCtrlVisible] = useState(true);
+  const [fsTime, setFsTime] = useState({ t: 0, d: 0 });
+  const fsCtrlTimerRef = useRef(null);
+  const pokeFsCtrl = () => {
+    setFsCtrlVisible(true);
+    clearTimeout(fsCtrlTimerRef.current);
+    fsCtrlTimerRef.current = setTimeout(() => setFsCtrlVisible(false), 3500);
+  };
+  useEffect(() => {
+    if (!(isFullscreen || pseudoFs)) return;
+    pokeFsCtrl();
+    const id = setInterval(() => {
+      const v = videoRef.current;
+      if (v) setFsTime({ t: v.currentTime || 0, d: v.duration || 0 });
+    }, 500);
+    return () => { clearInterval(id); clearTimeout(fsCtrlTimerRef.current); };
+  }, [isFullscreen, pseudoFs]);
+
   const handleVideoTap = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
@@ -4210,7 +4228,11 @@ export default function Room() {
     tap.t = now;
     tap.side = side;
     tap.total = 10;
-    tap.timer = setTimeout(() => { tap.side = 0; handleStageClick(); }, 350);
+    tap.timer = setTimeout(() => {
+      tap.side = 0;
+      if (isFullscreen || pseudoFsRef.current) { if (fsCtrlVisible) setFsCtrlVisible(false); else pokeFsCtrl(); }
+      else handleStageClick();
+    }, 350);
   };
 
   const handleStageClick = () => {
@@ -4945,8 +4967,40 @@ export default function Room() {
               </div>
             )}
 
+            {(isFullscreen || pseudoFs) && source && source.type !== 'embed' && source.type !== 'youtube' && (
+              <div className={'fs-controls' + (fsCtrlVisible ? ' show' : '')}>
+                <div className="fs-center">
+                  <button type="button" className="fs-ctl" onClick={() => { skipVideoBy(-10); pokeFsCtrl(); }} aria-label="Back 10 seconds">
+                    <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/><text x="12" y="15.5" fontSize="8" textAnchor="middle" fill="currentColor" stroke="none">10</text></svg>
+                  </button>
+                  <button type="button" className="fs-ctl big" onClick={() => { togglePlay(); pokeFsCtrl(); }} aria-label="Play or pause">
+                    {playing ? (
+                      <svg viewBox="0 0 24 24" width="38" height="38" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" width="38" height="38" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>
+                    )}
+                  </button>
+                  <button type="button" className="fs-ctl" onClick={() => { skipVideoBy(10); pokeFsCtrl(); }} aria-label="Forward 10 seconds">
+                    <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5"/><text x="12" y="15.5" fontSize="8" textAnchor="middle" fill="currentColor" stroke="none">10</text></svg>
+                  </button>
+                </div>
+                <div className="fs-bottom">
+                  <span>{fmt(fsTime.t)}</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max={fsTime.d || 0}
+                    step="1"
+                    value={Math.min(fsTime.t, fsTime.d || 0)}
+                    onChange={(e) => { const t = Number(e.target.value); setFsTime((p) => ({ ...p, t })); seekToSeconds(t); pokeFsCtrl(); }}
+                  />
+                  <span>{fmt(fsTime.d)}</span>
+                </div>
+              </div>
+            )}
+
             {source && (source.tmdbId || source.title) && (
-              <div className="room-tv-overlay">
+              <div className={'room-tv-overlay' + ((isFullscreen || pseudoFs) && !fsCtrlVisible ? ' fs-hidden' : '')}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                   <span className="room-tv-badge">
                     {source.platform || (source.type === 'hls' ? '⚡ Direct Stream' : 'Online')}

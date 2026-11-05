@@ -7794,3 +7794,14 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 .skip-flash { position: absolute; top: 50%; transform: translateY(-50%); padding: 14px 20px; border-radius: 999px; background: rgba(0,0,0,0.55); color: #fff; font-weight: 700; font-size: 16px; pointer-events: none; }
 .skip-flash.left { left: 12%; }
 .skip-flash.right { right: 12%; }
+
+/* on-screen fullscreen controls (play/pause, ±10s, seek) */
+.fs-controls { position: absolute; inset: 0; z-index: 20; pointer-events: none; opacity: 0; transition: opacity .2s; }
+.fs-controls.show { opacity: 1; }
+.fs-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 36px; }
+.fs-ctl { pointer-events: none; width: 56px; height: 56px; border-radius: 50%; border: 0; background: rgba(0,0,0,.5); color: #fff; display: flex; align-items: center; justify-content: center; }
+.fs-ctl.big { width: 72px; height: 72px; }
+.fs-controls.show .fs-ctl, .fs-controls.show .fs-bottom { pointer-events: auto; }
+.fs-bottom { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 10px 16px max(12px, env(safe-area-inset-bottom)); color: #fff; font-size: 12px; background: linear-gradient(transparent, rgba(0,0,0,.7)); pointer-events: none; }
+.fs-bottom input[type=range] { flex: 1; accent-color: #22c55e; }
+.room-tv-overlay.fs-hidden { opacity: 0 !important; transition: opacity .2s; }
