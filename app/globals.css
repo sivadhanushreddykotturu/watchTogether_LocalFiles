@@ -7788,3 +7788,9 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 @media (hover: hover) and (min-width: 769px) { .screen-fs-btn.touch-only { display: none; } }
 .screen-fs-btn { top: 56px; }
 .screen.pseudo-fs .screen-fs-btn { top: max(56px, calc(env(safe-area-inset-top) + 48px)); }
+
+/* tap layer over the <video>: double-tap sides to skip 10s */
+.video-tap-layer { position: absolute; inset: 0; z-index: 3; -webkit-tap-highlight-color: transparent; touch-action: manipulation; user-select: none; }
+.skip-flash { position: absolute; top: 50%; transform: translateY(-50%); padding: 14px 20px; border-radius: 999px; background: rgba(0,0,0,0.55); color: #fff; font-weight: 700; font-size: 16px; pointer-events: none; }
+.skip-flash.left { left: 12%; }
+.skip-flash.right { right: 12%; }

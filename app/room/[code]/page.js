@@ -4172,6 +4172,47 @@ export default function Room() {
     }, 2500);
   };
 
+  // Netflix-style tap layer: double-tap left/right = -10s/+10s, single tap = play/pause
+  const [skipFlash, setSkipFlash] = useState(null); // { dir: -1|1, n: number }
+  const tapRef = useRef({ t: 0, side: 0, timer: null, total: 0 });
+  const skipVideoBy = (delta) => {
+    const v = videoRef.current;
+    if (!v || !fileLoadedRef.current) return;
+    userIntentRef.current = true;
+    lastLocalSeekRef.current = Date.now();
+    const target = Math.min(v.duration || Infinity, Math.max(0, v.currentTime + delta));
+    latestStateRef.current.time = target;
+    v.currentTime = target;
+    if (hlsRef.current) { try { hlsRef.current.startLoad(target); } catch {} }
+    if (extAudioRef.current && extAudioRef.current.src) {
+      extAudioRef.current.currentTime = target;
+      if (!v.paused) extAudioRef.current.play().catch(() => {});
+    }
+    emitPlayback('seek');
+  };
+  const handleVideoTap = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const side = x < 0.4 ? -1 : x > 0.6 ? 1 : 0;
+    const tap = tapRef.current;
+    const now = Date.now();
+    if (side !== 0 && tap.side === side && now - tap.t < 350) {
+      clearTimeout(tap.timer);
+      tap.t = now;
+      tap.total += 10;
+      skipVideoBy(10 * side);
+      setSkipFlash({ dir: side, n: tap.total });
+      clearTimeout(tap.flashTimer);
+      tap.flashTimer = setTimeout(() => { setSkipFlash(null); tap.total = 0; tap.side = 0; }, 700);
+      return;
+    }
+    clearTimeout(tap.timer);
+    tap.t = now;
+    tap.side = side;
+    tap.total = 10;
+    tap.timer = setTimeout(() => { tap.side = 0; handleStageClick(); }, 350);
+  };
+
   const handleStageClick = () => {
     togglePlay();
     const nextAction = playing ? 'pause' : 'play';
@@ -4892,6 +4933,16 @@ export default function Room() {
                   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 )}
               </button>
+            )}
+
+            {source && source.type !== 'embed' && source.type !== 'youtube' && (
+              <div className="video-tap-layer" onClick={handleVideoTap}>
+                {skipFlash && (
+                  <div className={'skip-flash ' + (skipFlash.dir < 0 ? 'left' : 'right')}>
+                    {skipFlash.dir < 0 ? '⏪' : '⏩'} {skipFlash.dir < 0 ? '-' : '+'}{skipFlash.n}s
+                  </div>
+                )}
+              </div>
             )}
 
             {source && (source.tmdbId || source.title) && (
