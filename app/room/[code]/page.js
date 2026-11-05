@@ -4509,22 +4509,11 @@ export default function Room() {
       }
     }
 
-    // 2. iPhone Safari fallback: div.requestFullscreen not supported, use video native fullscreen
-    if (v && typeof v.webkitEnterFullscreen === 'function') {
-      try {
-        if (v.textTracks && v.textTracks.length > 0 && subsOnRef.current) {
-          v.textTracks[0].mode = 'showing';
-        }
-        v.webkitEnterFullscreen();
-        setIsFullscreen(true);
-        return;
-      } catch (err) {
-        console.warn('Video webkitEnterFullscreen failed:', err);
-      }
-    }
-
-    // 3. Fallback only if native fullscreen is blocked by browser environment
+    // 2. iPhone (no div fullscreen): fill the whole viewport with our own player
+    // instead of iOS's native video player, so Episodes / Next Ep / Subtitles /
+    // chat pop-ups all stay available, Netflix-style.
     setPseudo(true);
+    try { document.documentElement.requestFullscreen?.().catch(() => {}); } catch {}
   };
 
   const togglePip = async () => {
@@ -4889,10 +4878,10 @@ export default function Room() {
               </div>
             )}
 
-            {(source?.type === 'embed' || pseudoFs || isFullscreen) && (
+            {source && (
               <button
                 type="button"
-                className={'screen-fs-btn' + (isFullscreen || pseudoFs ? ' active' : '')}
+                className={'screen-fs-btn' + (source?.type === 'embed' || pseudoFs || isFullscreen ? '' : ' touch-only') + (isFullscreen || pseudoFs ? ' active' : '')}
                 onClick={fullscreen}
                 title={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Fullscreen'}
                 aria-label={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Fullscreen'}
@@ -5893,6 +5882,7 @@ export default function Room() {
 
 {/* TMDB Season & Episode Browser Modal */}
       <TmdbEpisodeModal
+        portalTarget={isFullscreen ? screenRef.current : null}
         isOpen={tmdbEpisodeModalOpen}
         onClose={() => setTmdbEpisodeModalOpen(false)}
         series={selectedSeriesForEpisodes}

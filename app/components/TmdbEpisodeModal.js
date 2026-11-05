@@ -1,10 +1,12 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { fetchTmdbTvDetails, fetchTmdbSeason } from '../../lib/tmdb';
 
 export default function TmdbEpisodeModal({
   isOpen,
+  portalTarget,
   onClose,
   series, // { tmdbId, title || name, poster, backdrop, overview, year, rating }
   onSelectEpisode, // (item, playNow) => void
@@ -113,7 +115,7 @@ export default function TmdbEpisodeModal({
     );
   };
 
-  return (
+  const content = (
     <div className="tmdb-modal-backdrop" onClick={onClose}>
       <div className="tmdb-modal" onClick={(e) => e.stopPropagation()}>
         {/* Header Hero Banner */}
@@ -287,4 +289,5 @@ export default function TmdbEpisodeModal({
       </div>
     </div>
   );
+  return portalTarget ? createPortal(content, portalTarget) : content;
 }

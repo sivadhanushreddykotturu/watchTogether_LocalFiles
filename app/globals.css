@@ -7783,3 +7783,8 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   .tmdb-episodes-container { padding: 8px 12px !important; }
   .tmdb-ep-thumb-wrap { min-height: 60px !important; }
 }
+
+/* Always-visible fullscreen button on touch screens (the top bar scrolls and can hide Maximize) */
+@media (hover: hover) and (min-width: 769px) { .screen-fs-btn.touch-only { display: none; } }
+.screen-fs-btn { top: 56px; }
+.screen.pseudo-fs .screen-fs-btn { top: max(56px, calc(env(safe-area-inset-top) + 48px)); }
