@@ -169,6 +169,41 @@ export default function Room() {
   const [activeAudioTrackId, setActiveAudioTrackId] = useState('default');
   const [subsOn, setSubsOn] = useState(false);
   const [subText, setSubText] = useState('');
+  const [nativeVttUrl, setNativeVttUrl] = useState(null);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const hideOnDesktop = () => {
+      if (v.textTracks) {
+        for (let i = 0; i < v.textTracks.length; i++) {
+          if (!v.webkitDisplayingFullscreen) {
+            v.textTracks[i].mode = 'hidden';
+          }
+        }
+      }
+    };
+    v.addEventListener('loadedmetadata', hideOnDesktop);
+    hideOnDesktop();
+    return () => v.removeEventListener('loadedmetadata', hideOnDesktop);
+  }, [nativeVttUrl]);
+
+  const cuesToVttUrl = (cues) => {
+    if (!cues || cues.length === 0) return null;
+    const pad = (n, z = 2) => String(n).padStart(z, '0');
+    const fmt = (ms) => {
+      const h = Math.floor(ms / 3600000);
+      const m = Math.floor((ms % 3600000) / 60000);
+      const s = Math.floor((ms % 60000) / 1000);
+      const mm = ms % 1000;
+      return `${pad(h)}:${pad(m)}:${pad(s)}.${pad(mm, 3)}`;
+    };
+    let vtt = 'WEBVTT\n\n';
+    cues.forEach((c, idx) => {
+      vtt += `${idx + 1}\n${fmt(c.start)} --> ${fmt(c.end)}\n${c.text}\n\n`;
+    });
+    return URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
+  };
   const [subOffset, setSubOffset] = useState(0);
   const [subPanelOpen, setSubPanelOpen] = useState(false);
   const [subStyle, setSubStyle] = useState(SUB_STYLE_DEFAULT);
@@ -524,6 +559,7 @@ export default function Room() {
       setSubsOn(false);
       cuesRef.current = [];
       setSubText('');
+      setNativeVttUrl(null);
       if (announce) toast('Subtitles: Off');
     } else {
       const track = subTracksRef.current.find((t) => t.id === trackId);
@@ -545,6 +581,7 @@ export default function Room() {
               track.cues = parsed;
               if (activeTrackIdRef.current === trackId) {
                 cuesRef.current = parsed;
+                setNativeVttUrl(cuesToVttUrl(parsed));
                 subsOnRef.current = true;
                 setSubsOn(true);
                 if (announce) toast(`Subtitles: ${track.label}`);
@@ -556,6 +593,7 @@ export default function Room() {
             });
         } else {
           cuesRef.current = track.cues || [];
+          setNativeVttUrl(cuesToVttUrl(track.cues || []));
           subsOnRef.current = true;
           setSubsOn(true);
           if (announce) toast(`Subtitles: ${track.label}`);
@@ -2155,6 +2193,22 @@ export default function Room() {
       }
     };
     document.addEventListener('fullscreenchange', onFsChange);
+    document.addEventListener('webkitfullscreenchange', onFsChange);
+    const vForFs = videoRef.current;
+    const onVFsBegin = () => {
+      setIsFullscreen(true);
+      if (vForFs?.textTracks && vForFs.textTracks.length > 0) {
+        vForFs.textTracks[0].mode = 'showing';
+      }
+    };
+    const onVFsEnd = () => {
+      setIsFullscreen(false);
+      try { if (screen.orientation?.unlock) screen.orientation.unlock(); } catch {}
+    };
+    if (vForFs) {
+      vForFs.addEventListener('webkitbeginfullscreen', onVFsBegin);
+      vForFs.addEventListener('webkitendfullscreen', onVFsEnd);
+    }
 
     // --- Picture-in-Picture: track support + window state (events bubble to document) ---
     setPipSupported(Boolean(document.pictureInPictureEnabled));
@@ -4042,6 +4096,7 @@ export default function Room() {
           showTitle: epPayload.showTitle,
           poster: epPayload.poster,
           backdrop: epPayload.backdrop,
+          subtitles: hls.subtitles || [],
         };
         if (playNow) {
           socket.emit('source', { ...payload, playing: true });
@@ -4084,18 +4139,21 @@ export default function Room() {
       });
     } catch {}
 
-    if (hls && hls.hlsUrl) {
+    if (hls && (hls.hlsUrl || hls.streamUrl)) {
+      const streamUrl = hls.streamUrl || hls.hlsUrl;
+      const sType = hls.streamType === 'dash' || streamUrl.includes('.mpd') ? 'dash' : 'hls';
       const payload = {
         ...source,
-        type: 'hls',
-        url: hls.hlsUrl,
-        rawUrl: hls.rawUrl,
-        platform: 'VidFast Native HLS',
+        type: sType,
+        url: streamUrl,
+        rawUrl: hls.rawUrl || streamUrl,
+        platform: `${hls.provider || 'Fast'} Native ${sType.toUpperCase()}`,
         season,
         episode: nextEp,
         episodeTitle: `Episode ${nextEp}`,
         showTitle: cleanShowTitle,
         title: `${cleanShowTitle} · S${season}:E${nextEp}`,
+        subtitles: hls.subtitles || [],
         playing: true,
       };
       socket.emit('source', payload);
@@ -4411,22 +4469,62 @@ export default function Room() {
     }
   };
 
-  const fullscreen = () => {
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
+  const fullscreen = async () => {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    if (fsEl) {
       const exit = document.exitFullscreen || document.webkitExitFullscreen;
-      try { const p = exit.call(document); if (p && p.catch) p.catch(() => {}); } catch { /* ignore */ }
+      try { if (exit) await exit.call(document); } catch {}
+      try { if (screen.orientation?.unlock) screen.orientation.unlock(); } catch {}
+      setIsFullscreen(false);
       return;
     }
-    if (pseudoFsRef.current) { setPseudo(false); return; }
-    const el = screenRef.current;
-    const req = el && (el.requestFullscreen || el.webkitRequestFullscreen);
-    if (!req) { setPseudo(true); return; }
-    try {
-      const p = req.call(el);
-      if (p && p.catch) p.catch(() => setPseudo(true));
-    } catch {
-      setPseudo(true);
+
+    const v = videoRef.current;
+    if (v && v.webkitDisplayingFullscreen) {
+      try { v.webkitExitFullscreen(); } catch {}
+      setIsFullscreen(false);
+      return;
     }
+
+    if (pseudoFsRef.current) {
+      setPseudo(false);
+      return;
+    }
+
+    const el = screenRef.current;
+    // 1. Standard native container fullscreen (Android Chrome, iPad, Desktop)
+    const req = el && (el.requestFullscreen || el.webkitRequestFullscreen);
+    if (req) {
+      try {
+        await req.call(el, { navigationUI: 'hide' });
+        setIsFullscreen(true);
+        try {
+          if (screen.orientation && screen.orientation.lock) {
+            await screen.orientation.lock('landscape').catch(() => {});
+          }
+        } catch {}
+        return;
+      } catch (err) {
+        console.warn('Standard element requestFullscreen failed:', err);
+      }
+    }
+
+    // 2. iPhone Safari fallback: div.requestFullscreen not supported, use video native fullscreen
+    if (v && typeof v.webkitEnterFullscreen === 'function') {
+      try {
+        if (v.textTracks && v.textTracks.length > 0 && subsOnRef.current) {
+          v.textTracks[0].mode = 'showing';
+        }
+        v.webkitEnterFullscreen();
+        setIsFullscreen(true);
+        return;
+      } catch (err) {
+        console.warn('Video webkitEnterFullscreen failed:', err);
+      }
+    }
+
+    // 3. Fallback only if native fullscreen is blocked by browser environment
+    setPseudo(true);
   };
 
   const togglePip = async () => {
@@ -4723,7 +4821,18 @@ export default function Room() {
                   }
                 }
               }}
-            ></video>
+            >
+              {subsOn && nativeVttUrl && (
+                <track
+                  key={nativeVttUrl}
+                  kind="subtitles"
+                  src={nativeVttUrl}
+                  srcLang="en"
+                  label="Subtitles"
+                  default
+                />
+              )}
+            </video>
             <audio ref={extAudioRef} playsInline style={{ display: 'none' }}></audio>
             <div ref={voiceAudioRef} style={{ display: 'none' }} aria-hidden="true"></div>
 
@@ -4785,7 +4894,7 @@ export default function Room() {
                 type="button"
                 className={'screen-fs-btn' + (isFullscreen || pseudoFs ? ' active' : '')}
                 onClick={fullscreen}
-                title={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Maximize (keeps SubDL subtitles visible)'}
+                title={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Fullscreen'}
                 aria-label={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Fullscreen'}
               >
                 {isFullscreen || pseudoFs ? (
@@ -4870,7 +4979,7 @@ export default function Room() {
                     type="button"
                     className={'room-tv-btn fs-btn' + (isFullscreen || pseudoFs ? ' active' : '')}
                     onClick={fullscreen}
-                    title={isFullscreen || pseudoFs ? 'Exit Fullscreen' : 'Maximize (keeps SubDL subtitles visible)'}
+                    title={isFullscreen || pseudoFs ? 'Exit Fullscreen' : 'Fullscreen'}
                   >
                     {isFullscreen || pseudoFs ? (
                       <>
@@ -5781,6 +5890,26 @@ export default function Room() {
                   <circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" />
                 </svg>
               </button>
+
+{/* TMDB Season & Episode Browser Modal */}
+      <TmdbEpisodeModal
+        isOpen={tmdbEpisodeModalOpen}
+        onClose={() => setTmdbEpisodeModalOpen(false)}
+        series={selectedSeriesForEpisodes}
+        onSelectEpisode={handleSelectEpisode}
+        currentSeason={
+          source?.mediaType === 'tv' &&
+          String(source?.tmdbId) === String(selectedSeriesForEpisodes?.tmdbId || selectedSeriesForEpisodes?.id)
+            ? Number(source.season) || 1
+            : 1
+        }
+        currentEpisode={
+          source?.mediaType === 'tv' &&
+          String(source?.tmdbId) === String(selectedSeriesForEpisodes?.tmdbId || selectedSeriesForEpisodes?.id)
+            ? Number(source.episode) || 1
+            : 1
+        }
+      />
 
               <button className="t-btn" onClick={fullscreen} title="Fullscreen">
                 <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -6735,25 +6864,7 @@ export default function Room() {
         </div>
       )}
 
-      {/* TMDB Season & Episode Browser Modal */}
-      <TmdbEpisodeModal
-        isOpen={tmdbEpisodeModalOpen}
-        onClose={() => setTmdbEpisodeModalOpen(false)}
-        series={selectedSeriesForEpisodes}
-        onSelectEpisode={handleSelectEpisode}
-        currentSeason={
-          source?.mediaType === 'tv' &&
-          String(source?.tmdbId) === String(selectedSeriesForEpisodes?.tmdbId || selectedSeriesForEpisodes?.id)
-            ? Number(source.season) || 1
-            : 1
-        }
-        currentEpisode={
-          source?.mediaType === 'tv' &&
-          String(source?.tmdbId) === String(selectedSeriesForEpisodes?.tmdbId || selectedSeriesForEpisodes?.id)
-            ? Number(source.episode) || 1
-            : 1
-        }
-      />
+      
 
       <div className="toast-stack">
         {toasts.map((t) => <div key={t.id} className="toast">{renderWithAppleEmojis(t.text, 13)}</div>)}
