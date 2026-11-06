@@ -4555,7 +4555,23 @@ export default function Room() {
     }
 
     const el = screenRef.current;
-    // 1. Standard native container fullscreen (Android Chrome, iPad, Desktop)
+
+    // 1. iPhone / Safari true native video fullscreen for direct video (HLS/MP4/TorBox/KissKH/Dash)
+    // fills the entire hardware display like Netflix (hiding browser URL bar & tabs)
+    if (v && typeof v.webkitEnterFullscreen === 'function' && source?.type !== 'embed') {
+      try {
+        if (v.textTracks && v.textTracks.length > 0) {
+          v.textTracks[0].mode = subsOnRef.current ? 'showing' : 'hidden';
+        }
+        v.webkitEnterFullscreen();
+        setIsFullscreen(true);
+        return;
+      } catch (err) {
+        console.warn('webkitEnterFullscreen failed:', err);
+      }
+    }
+
+    // 2. Standard native container fullscreen (Android Chrome, iPad, Desktop)
     const req = el && (el.requestFullscreen || el.webkitRequestFullscreen);
     if (req) {
       try {
@@ -5707,6 +5723,26 @@ export default function Room() {
                 </div>
               </>
             )}
+            {/* TMDB Season & Episode Browser Modal */}
+      <TmdbEpisodeModal
+        portalTarget={screenRef.current}
+        isOpen={tmdbEpisodeModalOpen}
+        onClose={() => setTmdbEpisodeModalOpen(false)}
+        series={selectedSeriesForEpisodes}
+        onSelectEpisode={handleSelectEpisode}
+        currentSeason={
+          source?.mediaType === 'tv' &&
+          String(source?.tmdbId) === String(selectedSeriesForEpisodes?.tmdbId || selectedSeriesForEpisodes?.id)
+            ? Number(source.season) || 1
+            : 1
+        }
+        currentEpisode={
+          source?.mediaType === 'tv' &&
+          String(source?.tmdbId) === String(selectedSeriesForEpisodes?.tmdbId || selectedSeriesForEpisodes?.id)
+            ? Number(source.episode) || 1
+            : 1
+        }
+      />
           </div>
 
           {source?.type !== 'embed' && (
@@ -5984,27 +6020,6 @@ export default function Room() {
                   <circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" />
                 </svg>
               </button>
-
-{/* TMDB Season & Episode Browser Modal */}
-      <TmdbEpisodeModal
-        portalTarget={isFullscreen ? screenRef.current : null}
-        isOpen={tmdbEpisodeModalOpen}
-        onClose={() => setTmdbEpisodeModalOpen(false)}
-        series={selectedSeriesForEpisodes}
-        onSelectEpisode={handleSelectEpisode}
-        currentSeason={
-          source?.mediaType === 'tv' &&
-          String(source?.tmdbId) === String(selectedSeriesForEpisodes?.tmdbId || selectedSeriesForEpisodes?.id)
-            ? Number(source.season) || 1
-            : 1
-        }
-        currentEpisode={
-          source?.mediaType === 'tv' &&
-          String(source?.tmdbId) === String(selectedSeriesForEpisodes?.tmdbId || selectedSeriesForEpisodes?.id)
-            ? Number(source.episode) || 1
-            : 1
-        }
-      />
 
               <button className="t-btn" onClick={fullscreen} title="Fullscreen">
                 <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
