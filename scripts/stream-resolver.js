@@ -370,3 +370,5 @@ server.listen(PORT, () => {
   console.log(`Remote WebSocket bridge connected to ${REMOTE_SERVER}`);
   console.log(`======================================================\n`);
 });
+
+module.exports = { resolveFastestStream };
