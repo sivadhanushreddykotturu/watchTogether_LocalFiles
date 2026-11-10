@@ -4985,10 +4985,10 @@ export default function Room() {
               </div>
             )}
 
-            {source && (
+            {source?.type === 'embed' && (
               <button
                 type="button"
-                className={'screen-fs-btn' + (source?.type === 'embed' || pseudoFs || isFullscreen ? '' : ' touch-only') + (isFullscreen || pseudoFs ? ' active' : '')}
+                className={'screen-fs-btn' + (isFullscreen || pseudoFs ? ' active' : '')}
                 onClick={fullscreen}
                 title={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Fullscreen'}
                 aria-label={isFullscreen || pseudoFs ? 'Exit fullscreen' : 'Fullscreen'}
@@ -5083,46 +5083,6 @@ export default function Room() {
                       </button>
                     </>
                   )}
-
-                  {hlsQualities.length > 0 && (
-                    <button
-                      type="button"
-                      className={'room-tv-btn quality-quick-btn' + (qualityPanelOpen ? ' active' : '')}
-                      onClick={() => setQualityPanelOpen(!qualityPanelOpen)}
-                      title="Video Quality Selection"
-                    >
-                      ⚙️ {currentHlsQuality === -1 ? (autoResolution ? `${autoResolution}` : 'Auto') : (hlsQualities.find((q) => q.index === currentHlsQuality)?.label || 'Auto')}
-                    </button>
-                  )}
-                  {hlsAudioTracks.length > 1 && (
-                    <button
-                      type="button"
-                      className={'room-tv-btn audio-quick-btn' + (audioPanelOpen ? ' active' : '')}
-                      onClick={() => setAudioPanelOpen(!audioPanelOpen)}
-                      title="Audio Language Selection"
-                    >
-                      🎧 {(hlsAudioTracks.find((t) => t.id === currentAudioTrack)?.lang || 'AUD').toUpperCase().slice(0, 3)}
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    className={'room-tv-btn fs-btn' + (isFullscreen || pseudoFs ? ' active' : '')}
-                    onClick={fullscreen}
-                    title={isFullscreen || pseudoFs ? 'Exit Fullscreen' : 'Fullscreen'}
-                  >
-                    {isFullscreen || pseudoFs ? (
-                      <>
-                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>
-                        <span>Exit</span>
-                      </>
-                    ) : (
-                      <>
-                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
-                        <span>Maximize</span>
-                      </>
-                    )}
-                  </button>
 
                   {source.type === 'embed' && (
                     <button
@@ -6261,8 +6221,20 @@ export default function Room() {
                 </svg>
               </button>
 
-              <button className="t-btn" onClick={fullscreen} title="Fullscreen">
-                <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              <button
+                className="t-btn"
+                onClick={fullscreen}
+                title={isFullscreen || pseudoFs ? 'Exit Fullscreen' : 'Fullscreen'}
+              >
+                {isFullscreen || pseudoFs ? (
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>
+                  </svg>
+                )}
               </button>
             </div>
           </div>
