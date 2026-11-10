@@ -172,7 +172,7 @@ export async function GET(request) {
     });
   }
 
-  return NextResponse.json({ ok: false, error: 'Failed to extract stream from providers' }, { status: 504 });
+  return NextResponse.json({ ok: false, error: 'Failed to extract stream from providers' }, { status: 404 });
   } catch (err) {
     console.error('[Stream API Error]:', err);
     return NextResponse.json({ ok: false, error: err.message || 'Internal server error' }, { status: 500 });
