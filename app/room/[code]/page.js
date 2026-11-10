@@ -312,13 +312,6 @@ export default function Room() {
   const [embedRoomPaused, setEmbedRoomPaused] = useState(false);
   const [embedPausedActor, setEmbedPausedActor] = useState('');
   const [peerSyncData, setPeerSyncData] = useState({}); // { socketId: { name, color, time, playing } }
-  const [torboxDevMode, setTorboxDevMode] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    try {
-      const val = localStorage.getItem('reelsync:torbox_dev');
-      return val === null ? true : val === 'true';
-    } catch { return true; }
-  });
   const [embedKey, setEmbedKey] = useState(0);
   const [streamLoading, setStreamLoading] = useState(null); // { title: string, status: string, canFallback?: boolean }
   const streamLoadingRef = useRef(null);
@@ -3785,73 +3778,7 @@ export default function Room() {
         }
       };
 
-      if (torboxDevMode) {
-        updateStreamLoading({
-          title: item.title,
-          status: '⚡ Checking TorBox cache...'
-        });
-        toast(`⚡ Checking TorBox cache for "${item.title}"...`);
-        try {
-          const res = await fetch('/api/torbox/resolve', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              title: item.title,
-              year: item.releaseYear || item.year,
-              imdbId: item.imdbId,
-              tmdbId: item.tmdbId || item.id,
-            }),
-          });
-          const data = await res.json();
-          if (data.success && data.cached && (data.hlsUrl || data.streamUrl || data.directUrl)) {
-            const streamType = data.streamType || (data.canDirect ? 'direct' : 'hls');
-            const streamUrl = data.streamUrl || (streamType === 'direct' ? data.directUrl : data.hlsUrl);
-            updateStreamLoading({
-              title: item.title,
-              status: streamType === 'direct' ? '⚡ Direct NVMe stream ready...' : '⚡ Buffering stream...'
-            });
-            startStreamWatchdog(item.title, fallbackToLocal);
 
-            const payload = {
-              type: streamType,
-              url: streamUrl,
-              streamType,
-              hlsUrl: data.hlsUrl,
-              directUrl: data.directUrl,
-              canDirect: data.canDirect,
-              subtitleUrl: data.subtitleUrl || null,
-              subtitles: data.subtitles || [],
-              title: item.title,
-              platform: `TorBox (${data.quality || '1080p'})`,
-              mediaType: 'movie',
-              tmdbId: item.tmdbId || item.id,
-              poster: item.poster,
-              backdrop: item.backdrop,
-            };
-            if (playNow) {
-              socket.emit('source', { ...payload, playing: true });
-              toast(`⚡ Streaming "${item.title}" via TorBox (${data.quality || '1080p'})`);
-              setYtSearchModalOpen(false);
-              setYtPanelOpen(false);
-            } else {
-              stopStreamLoading();
-              socket.emit('queue-add', { ...payload, playNow: false });
-              toast(`Added "${item.title}" (TorBox) to queue`);
-            }
-            return;
-          } else {
-            updateStreamLoading({
-              title: item.title,
-              status: 'Not cached on TorBox · Extracting clean stream...'
-            });
-            setTimeout(() => stopStreamLoading(), 1400);
-            toast('Not cached on TorBox. Checking direct streams...');
-          }
-        } catch (err) {
-          stopStreamLoading();
-          console.warn('TorBox resolve error, falling back to Vidlove:', err);
-        }
-      }
 
       // 2. Auto-resolve clean 1080p native HLS via local daemon -> Cloudflare Worker Proxy
       updateStreamLoading({
@@ -3987,81 +3914,7 @@ export default function Room() {
       }
     };
 
-    if (torboxDevMode) {
-      const epLabel = `${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode}`;
-      updateStreamLoading({
-        title: epLabel,
-        status: '⚡ Checking TorBox cache...'
-      });
-      toast(`⚡ Checking TorBox cache for ${epLabel}...`);
-      try {
-        const res = await fetch('/api/torbox/resolve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: epPayload.showTitle,
-            season: epPayload.season,
-            episode: epPayload.episode,
-            tmdbId: epPayload.tmdbId,
-            mediaType: 'tv',
-            year: epPayload.year || selectedSeriesForEpisodes?.year || selectedSeriesForEpisodes?.releaseYear,
-          }),
-        });
-        const data = await res.json();
-        if (data.success && data.cached && (data.hlsUrl || data.streamUrl || data.directUrl)) {
-          const streamType = data.streamType || (data.canDirect ? 'direct' : 'hls');
-          const streamUrl = data.streamUrl || (streamType === 'direct' ? data.directUrl : data.hlsUrl);
-          updateStreamLoading({
-            title: epLabel,
-            status: streamType === 'direct' ? '⚡ Direct NVMe stream ready...' : '⚡ Buffering stream...'
-          });
-          startStreamWatchdog(epLabel, fallbackToLocal);
 
-          const payload = {
-            type: streamType,
-            url: streamUrl,
-            streamType,
-            hlsUrl: data.hlsUrl,
-            directUrl: data.directUrl,
-            canDirect: data.canDirect,
-            subtitleUrl: data.subtitleUrl || null,
-            subtitles: data.subtitles || [],
-            title: epPayload.title,
-            platform: `TorBox (${data.quality || '1080p'})`,
-            mediaType: 'tv',
-            tmdbId: epPayload.tmdbId,
-            season: epPayload.season,
-            episode: epPayload.episode,
-            episodeTitle: epPayload.episodeTitle,
-            showTitle: epPayload.showTitle,
-            poster: epPayload.poster,
-            backdrop: epPayload.backdrop,
-          };
-          if (playNow) {
-            socket.emit('source', { ...payload, playing: true });
-            toast(`⚡ Streaming ${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode} via TorBox`);
-            setTmdbEpisodeModalOpen(false);
-            setYtSearchModalOpen(false);
-            setYtPanelOpen(false);
-          } else {
-            stopStreamLoading();
-            socket.emit('queue-add', { ...payload, playNow: false });
-            toast(`Added S${epPayload.season}:E${epPayload.episode} (TorBox) to queue`);
-          }
-          return;
-        } else {
-          updateStreamLoading({
-            title: epLabel,
-            status: 'Episode not cached · Extracting clean stream...'
-          });
-          setTimeout(() => stopStreamLoading(), 1400);
-          toast('Episode not cached on TorBox. Checking direct streams...');
-        }
-      } catch (err) {
-        stopStreamLoading();
-        console.warn('TorBox TV resolve fallback to Vidlove:', err);
-      }
-    }
 
     // Auto-resolve clean 1080p native HLS via local daemon -> Cloudflare Worker Proxy
     const epLabel = `${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode}`;
@@ -4756,23 +4609,7 @@ export default function Room() {
                 </button>
               )}
 
-              <button
-                type="button"
-                className="room-menu-item"
-                role="menuitemcheckbox"
-                aria-checked={torboxDevMode}
-                onClick={() => {
-                  const next = !torboxDevMode;
-                  setTorboxDevMode(next);
-                  try { localStorage.setItem('reelsync:torbox_dev', String(next)); } catch {}
-                  toast(next ? '⚡ TorBox Direct Stream (Dev Mode) ON' : 'Vidlove Embed Mode ON');
-                }}
-                title={torboxDevMode ? 'Direct Stream ON (Queries TorBox for 100% sync HLS streams)' : 'Direct Stream OFF (Uses Vidlove embeds)'}
-              >
-                <span style={{ fontSize: '14px', lineHeight: 1 }}>⚡</span>
-                <span>Direct Stream (Dev)</span>
-                <span className={'min-switch sm' + (torboxDevMode ? ' on' : '')} aria-hidden="true"><span className="switch-dot" /></span>
-              </button>
+
 
               <div className="room-menu-row">
                 <span>Account</span>
