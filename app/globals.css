@@ -5312,8 +5312,16 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   transition: opacity 0.25s ease;
 }
 
+.room-tv-overlay.autohide,
+.room-tv-overlay.fs-hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(-12px) !important;
+  visibility: hidden !important;
+}
+
 .web-embed-wrap:hover .room-tv-overlay,
-.room-tv-overlay.visible {
+.room-tv-overlay.visible:not(.autohide):not(.fs-hidden) {
   opacity: 1;
 }
 
@@ -7085,10 +7093,10 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 
 /* the stream info bar: leave room for the fullscreen button (58px), and only
    its buttons take taps so the player underneath stays usable */
-.room-tv-overlay { padding-right: 58px; pointer-events: none; }
+.room-tv-overlay { padding: 0 16px; pointer-events: none; transition: opacity 0.35s ease, transform 0.35s ease, visibility 0.35s ease; }
 .room-tv-overlay button { pointer-events: auto; }
 @media (hover: none), (max-width: 768px) {
-  .room-tv-overlay { opacity: 1; height: 48px; padding-right: 52px; }
+  .room-tv-overlay { height: 48px; padding: 0 12px; }
   .room-tv-overlay .yt-top-title-wrap { display: none; }
   .room-tv-overlay .yt-top-actions {
     margin-left: 0;
@@ -7569,9 +7577,9 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   margin-left: 2px;
 }
 
-.screen:hover .room-tv-overlay,
-.room-tv-overlay:hover,
-.room-tv-overlay.visible {
+.screen:hover .room-tv-overlay:not(.autohide):not(.fs-hidden),
+.room-tv-overlay:hover:not(.autohide):not(.fs-hidden),
+.room-tv-overlay.visible:not(.autohide):not(.fs-hidden) {
   opacity: 1 !important;
 }
 
@@ -7837,7 +7845,20 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 .fs-controls.show .fs-ctl, .fs-controls.show .fs-bottom { pointer-events: auto; }
 .fs-bottom { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 10px 16px max(12px, env(safe-area-inset-bottom)); color: #fff; font-size: 12px; background: linear-gradient(transparent, rgba(0,0,0,.7)); pointer-events: none; }
 .fs-bottom input[type=range] { flex: 1; accent-color: #22c55e; }
-.room-tv-overlay.fs-hidden { opacity: 0 !important; transition: opacity .2s; }
+.room-tv-overlay.fs-hidden,
+.room-tv-overlay.autohide {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(-12px) !important;
+  visibility: hidden !important;
+  transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s ease;
+}
+.screen.idle-playing {
+  cursor: none !important;
+}
+.screen.idle-playing * {
+  cursor: none !important;
+}
 
 
 /* ── Solo Cinema Mode & Watch Mode Toggle ── */

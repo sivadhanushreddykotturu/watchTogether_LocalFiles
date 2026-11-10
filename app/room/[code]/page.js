@@ -4178,25 +4178,57 @@ export default function Room() {
     }
     emitPlayback('seek');
   };
+  const [headerVisible, setHeaderVisible] = useState(true);
   const [fsCtrlVisible, setFsCtrlVisible] = useState(true);
   const [fsTime, setFsTime] = useState({ t: 0, d: 0 });
+  const headerTimerRef = useRef(null);
   const fsCtrlTimerRef = useRef(null);
-  const pokeFsCtrl = () => {
+
+  const pokeHeader = () => {
+    setHeaderVisible(true);
     setFsCtrlVisible(true);
+    clearTimeout(headerTimerRef.current);
     clearTimeout(fsCtrlTimerRef.current);
-    fsCtrlTimerRef.current = setTimeout(() => setFsCtrlVisible(false), 3500);
+    if (playing) {
+      headerTimerRef.current = setTimeout(() => {
+        setHeaderVisible(false);
+        setFsCtrlVisible(false);
+      }, 3000);
+    }
   };
+  const pokeFsCtrl = pokeHeader;
+
+  // Auto-hide top overlay and controls after 3s when playing; keep visible when paused
+  useEffect(() => {
+    if (playing) {
+      clearTimeout(headerTimerRef.current);
+      headerTimerRef.current = setTimeout(() => {
+        setHeaderVisible(false);
+        setFsCtrlVisible(false);
+      }, 3000);
+    } else {
+      clearTimeout(headerTimerRef.current);
+      setHeaderVisible(true);
+      setFsCtrlVisible(true);
+    }
+    return () => {
+      clearTimeout(headerTimerRef.current);
+      clearTimeout(fsCtrlTimerRef.current);
+    };
+  }, [playing]);
+
   useEffect(() => {
     if (!(isFullscreen || pseudoFs)) return;
-    pokeFsCtrl();
+    pokeHeader();
     const id = setInterval(() => {
       const v = videoRef.current;
       if (v) setFsTime({ t: v.currentTime || 0, d: v.duration || 0 });
     }, 500);
-    return () => { clearInterval(id); clearTimeout(fsCtrlTimerRef.current); };
+    return () => { clearInterval(id); clearTimeout(headerTimerRef.current); };
   }, [isFullscreen, pseudoFs]);
 
   const handleVideoTap = (e) => {
+    pokeHeader();
     const rect = e.currentTarget.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
     const side = x < 0.4 ? -1 : x > 0.6 ? 1 : 0;
@@ -4218,8 +4250,11 @@ export default function Room() {
     tap.total = 10;
     tap.timer = setTimeout(() => {
       tap.side = 0;
-      if (isFullscreen || pseudoFsRef.current) { if (fsCtrlVisible) setFsCtrlVisible(false); else pokeFsCtrl(); }
-      else handleStageClick();
+      if (!headerVisible && playing) {
+        pokeHeader();
+      } else {
+        handleStageClick();
+      }
     }, 350);
   };
 
@@ -4899,7 +4934,13 @@ export default function Room() {
             </button>
           )}
 
-          <div className={'screen' + (pseudoFs ? ' pseudo-fs' : '') + (!source && playDisabled ? ' start-mode' : '')} ref={screenRef}>
+          <div
+            className={'screen' + (pseudoFs ? ' pseudo-fs' : '') + (!source && playDisabled ? ' start-mode' : '') + (!headerVisible && playing ? ' idle-playing' : '')}
+            ref={screenRef}
+            onMouseMove={pokeHeader}
+            onTouchStart={pokeHeader}
+            onPointerDown={pokeHeader}
+          >
             <video
               ref={videoRef}
               playsInline
@@ -5044,7 +5085,7 @@ export default function Room() {
             )}
 
             {source && (source.tmdbId || source.title) && (
-              <div className={'room-tv-overlay' + ((isFullscreen || pseudoFs) && !fsCtrlVisible ? ' fs-hidden' : '')}>
+              <div className={'room-tv-overlay' + (!headerVisible && playing ? ' autohide fs-hidden' : '')}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                   <span className="room-tv-badge">
                     {source.platform || (source.type === 'hls' ? '⚡ Direct Stream' : 'Online')}
