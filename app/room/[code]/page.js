@@ -138,7 +138,12 @@ export default function Room() {
   const [playDisabled, setPlayDisabled] = useState(true);
   const [nowInfo, setNowInfo] = useState({ playing: false, time: 0, at: Date.now() });
   const [unread, setUnread] = useState(0);
-  const [chatOpen, setChatOpen] = useState(true);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [watchMode, setWatchMode] = useState('solo'); // 'solo' by default, 'party' when toggled
+  const [bingeOverlay, setBingeOverlay] = useState(null); // { countdown, nextEp, season, showTitle, mediaKey }
+  const bingeDismissedForRef = useRef('');
+  const [trendingPreview, setTrendingPreview] = useState([]);
+  const [continueItem, setContinueItem] = useState(null);
   const [dimmed, setDimmed] = useState(false);
   const [floatingBubbles, setFloatingBubbles] = useState([]);
   const [reactions, setReactions] = useState([]);
@@ -187,6 +192,43 @@ export default function Room() {
     hideOnDesktop();
     return () => v.removeEventListener('loadedmetadata', hideOnDesktop);
   }, [nativeVttUrl]);
+
+  // Solo mode default & continue watching initialization
+  useEffect(() => {
+    try {
+      const savedMode = sessionStorage.getItem('reelsync:watchMode');
+      if (savedMode === 'party') {
+        setWatchMode('party');
+        setChatOpen(true);
+        chatOpenRef.current = true;
+      } else {
+        setWatchMode('solo');
+        setChatOpen(false);
+        chatOpenRef.current = false;
+      }
+    } catch {}
+
+    try {
+      const raw = localStorage.getItem('reelsync:continue_watching');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.tmdbId && (parsed.pct || 0) < 95) {
+          setContinueItem(parsed);
+        }
+      }
+    } catch {}
+
+    let active = true;
+    fetchTmdbTrending({ type: 'all' })
+      .then((items) => {
+        if (active && Array.isArray(items) && items.length > 0) {
+          setTrendingPreview(items.slice(0, 8));
+        }
+      })
+      .catch(() => {});
+
+    return () => { active = false; };
+  }, []);
 
   const cuesToVttUrl = (cues) => {
     if (!cues || cues.length === 0) return null;
@@ -1657,6 +1699,61 @@ export default function Room() {
         const drift = Math.abs(ext.currentTime - v.currentTime);
         if (drift > 0.25) {
           ext.currentTime = v.currentTime;
+        }
+      }
+
+      // Next Episode Binge detection for TV Series (credits countdown)
+      if (sourceRef.current?.mediaType === 'tv' && sourceRef.current?.tmdbId) {
+        const curEp = Number(sourceRef.current.episode) || 1;
+        const curSeason = Number(sourceRef.current.season) || 1;
+        const mediaKey = `tv:${sourceRef.current.tmdbId}:${curSeason}:${curEp}`;
+        const totalDur = durationAny();
+        const curTime = currentTimeAny();
+        const timeLeft = totalDur - curTime;
+
+        if (totalDur > 70 && timeLeft > 0.5 && timeLeft <= 35 && bingeDismissedForRef.current !== mediaKey) {
+          const countSec = Math.max(1, Math.min(10, Math.ceil(timeLeft - 1)));
+          setBingeOverlay({
+            mediaKey,
+            season: curSeason,
+            nextEp: curEp + 1,
+            showTitle: sourceRef.current.showTitle || sourceRef.current.title?.split('·')[0]?.trim() || 'Next Episode',
+            countdown: countSec,
+          });
+
+          // Auto play next episode when countdown finishes
+          if (timeLeft <= 1.5) {
+            bingeDismissedForRef.current = mediaKey;
+            setBingeOverlay(null);
+            handlePlayNextEpisode();
+          }
+        } else if (timeLeft > 40 || timeLeft <= 0.5) {
+          setBingeOverlay((prev) => (prev ? null : prev));
+        }
+      }
+
+      // Periodic continue watching progress save
+      if (sourceRef.current?.tmdbId) {
+        const cTime = currentTimeAny();
+        const dTime = durationAny();
+        if (cTime > 10 && dTime > 30) {
+          const pct = Math.round((cTime / dTime) * 100);
+          try {
+            localStorage.setItem('reelsync:continue_watching', JSON.stringify({
+              tmdbId: sourceRef.current.tmdbId,
+              mediaType: sourceRef.current.mediaType || 'movie',
+              season: sourceRef.current.season || 1,
+              episode: sourceRef.current.episode || 1,
+              title: sourceRef.current.showTitle || sourceRef.current.title,
+              showTitle: sourceRef.current.showTitle || sourceRef.current.title,
+              poster: sourceRef.current.poster,
+              backdrop: sourceRef.current.backdrop,
+              time: Math.floor(cTime),
+              duration: Math.floor(dTime),
+              pct,
+              savedAt: Date.now(),
+            }));
+          } catch {}
         }
       }
     };
@@ -3993,6 +4090,36 @@ export default function Room() {
     toast(`⚠️ Episode ${nextEp} is not available on streaming providers.`);
   };
 
+  const triggerBingeNext = () => {
+    if (source?.tmdbId) {
+      const curEp = Number(source.episode) || 1;
+      const curSeason = Number(source.season) || 1;
+      bingeDismissedForRef.current = `tv:${source.tmdbId}:${curSeason}:${curEp}`;
+    }
+    setBingeOverlay(null);
+    handlePlayNextEpisode();
+  };
+
+  const dismissBingeNext = () => {
+    if (source?.tmdbId) {
+      const curEp = Number(source.episode) || 1;
+      const curSeason = Number(source.season) || 1;
+      bingeDismissedForRef.current = `tv:${source.tmdbId}:${curSeason}:${curEp}`;
+    }
+    setBingeOverlay(null);
+  };
+
+  const handleResumeContinueWatching = () => {
+    if (!continueItem) return;
+    handleSelectSearchResult({
+      ...continueItem,
+      id: continueItem.tmdbId,
+      mediaType: continueItem.mediaType || 'movie',
+      season: continueItem.season || 1,
+      episode: continueItem.episode || 1,
+    }, true);
+  };
+
   const pokeTopBar = () => {
     setYtTopBarVisible(true);
     clearTimeout(ytTopBarTimerRef.current);
@@ -4486,31 +4613,87 @@ export default function Room() {
 
         <div className="room-id">
           <span className="room-title-name">
-            {sessionRef.current?.name ? `${sessionRef.current.name}'s Watch Party` : 'Watch Party'}
+            {watchMode === 'solo' ? 'ReelSync Cinema' : (sessionRef.current?.name ? `${sessionRef.current.name}'s Party` : 'Watch Party')}
           </span>
-          <div className="room-id-meta">
-            <button type="button" className="room-code-chip" onClick={copyCode} title="Copy room code">
-              <span className="slate-code">{code}</span>
-              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="9" y="9" width="12" height="12" rx="2" />
-                <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-              </svg>
-            </button>
-            <span className="room-watching">
-              <span className="live-pulse-dot" />
-              {users.length} watching
-            </span>
-          </div>
+          {watchMode === 'party' ? (
+            <div className="room-id-meta">
+              <button type="button" className="room-code-chip" onClick={copyCode} title="Copy room code">
+                <span className="slate-code">{code}</span>
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="9" y="9" width="12" height="12" rx="2" />
+                  <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                </svg>
+              </button>
+              <span className="room-watching">
+                <span className="live-pulse-dot" />
+                {users.length} watching
+              </span>
+            </div>
+          ) : (
+            <div className="room-id-meta">
+              <span className="room-watching">
+                <span className="live-pulse-dot" style={{ background: '#6366f1' }} />
+                Solo Mode
+              </span>
+            </div>
+          )}
         </div>
 
-        <div className="room-presence desktop-only" aria-label={`${users.length} people in the room`}>
-          {users.slice(0, 4).map((u, i) => (
-            <span key={u.id || i} className="dash-stack-avatar" style={{ background: u.color }} title={u.name}>
-              {u.name ? u.name[0].toUpperCase() : '?'}
-            </span>
-          ))}
-          {users.length > 4 && <span className="dash-stack-avatar more">+{users.length - 4}</span>}
+        <div className="watch-mode-toggle" role="tablist" aria-label="Viewing Mode">
+          <button
+            type="button"
+            className={'watch-mode-btn' + (watchMode === 'solo' ? ' active' : '')}
+            onClick={() => {
+              setWatchMode('solo');
+              try { sessionStorage.setItem('reelsync:watchMode', 'solo'); } catch {}
+              setChatOpen(false);
+              toast('👤 Solo Mode: Cinema view active');
+            }}
+            title="Solo Mode: Distraction-free cinema playback"
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span>Solo</span>
+          </button>
+          <button
+            type="button"
+            className={'watch-mode-btn' + (watchMode === 'party' ? ' active' : '')}
+            onClick={() => {
+              setWatchMode('party');
+              try { sessionStorage.setItem('reelsync:watchMode', 'party'); } catch {}
+              setChatOpen(true);
+              copyInviteLink();
+              toast('👥 Party Mode: Watch with friends enabled');
+            }}
+            title="Party Mode: Watch with friends, chat & sync"
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span>With Friends</span>
+            {users.length > 1 && <span className="mode-badge-count">{users.length}</span>}
+          </button>
         </div>
+
+        <button
+          type="button"
+          className="header-browse-btn"
+          onClick={() => { setSearchPlatform('tmdb'); setYtSearchModalOpen(true); }}
+          title="Browse Movies & Series"
+        >
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+            <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+          </svg>
+          <span>Explore</span>
+        </button>
+
+        {watchMode === 'party' && (
+          <div className="room-presence desktop-only" aria-label={`${users.length} people in the room`}>
+            {users.slice(0, 4).map((u, i) => (
+              <span key={u.id || i} className="dash-stack-avatar" style={{ background: u.color }} title={u.name}>
+                {u.name ? u.name[0].toUpperCase() : '?'}
+              </span>
+            ))}
+            {users.length > 4 && <span className="dash-stack-avatar more">+{users.length - 4}</span>}
+          </div>
+        )}
 
         <span className="spacer"></span>
 
@@ -4617,7 +4800,7 @@ export default function Room() {
       </header>
 
       {/* Host Knock Requests Section (Reference UI Panel #2) */}
-      {isHost && knockRequests.length > 0 && (
+      {isHost && watchMode === 'party' && knockRequests.length > 0 && (
         <div className="stage-requests-panel">
           <div className="srp-header">
             <span className="srp-title">Requests</span>
@@ -4663,11 +4846,11 @@ export default function Room() {
         </div>
       )}
 
-      <div className={'stage' + (chatOpen ? '' : ' chat-collapsed')}>
+      <div className={'stage' + (watchMode === 'solo' ? ' solo-mode chat-collapsed' : (chatOpen ? '' : ' chat-collapsed'))}>
         <section className="screen-col">
           <div className="beam" aria-hidden="true"></div>
 
-          {!chatOpen && (
+          {!chatOpen && watchMode === 'party' && (
             <button
               className="floating-chat-toggle"
               onClick={() => {
@@ -4869,14 +5052,6 @@ export default function Room() {
                     </>
                   )}
 
-                  <button
-                    type="button"
-                    className={'room-tv-btn sub-quick-btn' + (subsOn ? ' active' : '') + (subLoading ? ' loading' : '')}
-                    onClick={handleToggleSubPanel}
-                    title="Choose Subtitle Track (SubDL)"
-                  >
-                    {subLoading ? '⏳ Loading...' : '💬 Subtitles'} {subsOn && <span className="sub-active-dot" />}
-                  </button>
                   {hlsQualities.length > 0 && (
                     <button
                       type="button"
@@ -5213,7 +5388,7 @@ export default function Room() {
               </div>
             )}
 
-            {reactions.length > 0 && (
+            {reactions.length > 0 && watchMode === 'party' && (
               <div className="reaction-stream" aria-hidden="true">
                 {reactions.map((r) => {
                   const appleUrl = getAppleEmojiUrl(r.emoji);
@@ -5252,7 +5427,7 @@ export default function Room() {
               </div>
             )}
 
-            {floatingBubbles.length > 0 && (
+            {floatingBubbles.length > 0 && watchMode === 'party' && (
               <div className="floating-bubbles-layer" aria-live="polite">
                 {floatingBubbles.map((b) => (
                   <div key={b.id} className="floating-bubble">
@@ -5285,6 +5460,54 @@ export default function Room() {
               </div>
             )}
 
+            {/* Netflix-Grade Next Episode Binge Overlay */}
+            {bingeOverlay && (
+              <div className="next-ep-binge-card" role="alert">
+                <div className="binge-card-header">
+                  <div className="binge-ring-wrap">
+                    <svg viewBox="0 0 36 36" className="binge-ring-svg">
+                      <path
+                        className="binge-ring-bg"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      />
+                      <path
+                        className="binge-ring-stroke"
+                        strokeDasharray={`${Math.round((bingeOverlay.countdown / 10) * 100)}, 100`}
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      />
+                    </svg>
+                    <span className="binge-ring-number">{bingeOverlay.countdown}</span>
+                  </div>
+                  <div className="binge-header-text">
+                    <span className="binge-up-next">NEXT EPISODE IN {bingeOverlay.countdown}s</span>
+                    <h4 className="binge-ep-title">
+                      S{bingeOverlay.season}:E{bingeOverlay.nextEp} · {bingeOverlay.showTitle}
+                    </h4>
+                  </div>
+                </div>
+                <div className="binge-actions">
+                  <button
+                    type="button"
+                    className="binge-btn-play"
+                    onClick={triggerBingeNext}
+                  >
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                      <path d="M8 5.14v13.72c0 .86.94 1.38 1.66.92l10.78-6.86c.69-.44.69-1.4 0-1.84L9.66 4.22A1.08 1.08 0 0 0 8 5.14z"/>
+                    </svg>
+                    <span>Play Now</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="binge-btn-dismiss"
+                    onClick={dismissBingeNext}
+                    title="Stay on credits"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
             {transcodingAudio && (
               <div className="transcode-indicator" aria-live="polite">
                 <span className="transcode-spinner"></span>
@@ -5292,18 +5515,160 @@ export default function Room() {
               </div>
             )}
 
-            <div className={'picker' + (pickerOpen && !source ? '' : ' hidden')}>
-              <label className="pick-orb" htmlFor="fileInput" title="Choose video file">
-                <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor" style={{ transform: 'translateX(2px)' }}>
-                  <path d="M8 5.14v13.72c0 .86.94 1.38 1.66.92l10.78-6.86c.69-.44.69-1.4 0-1.84L9.66 4.22A1.08 1.08 0 0 0 8 5.14z"/>
-                </svg>
-              </label>
-              <h2 className="picker-title">Reel it in</h2>
-              <p className="picker-text">Pick your copy of the file this room is watching. It stays on your machine — only playback is synced.</p>
-              <p className="picker-format">MP4 (H.264), WebM, and MKV with embedded subtitles & audio tracks.</p>
-              <input type="file" id="fileInput" ref={fileInputRef} accept="video/*,.mkv,.mp4,.webm" hidden onChange={onPickFile} />
-              <p className="picker-hint">{pickerHint}</p>
-            </div>
+            {/* Cinema Start Hub: Quick Search, Continue Watching & Trending */}
+            {!source && (
+              <div className="cinema-start-hub">
+                <div className="csh-card">
+                  <div className="csh-badge">
+                    <span className="csh-badge-dot" />
+                    <span>{watchMode === 'solo' ? 'Solo Cinema Mode' : 'Watch Party Active'}</span>
+                  </div>
+
+                  <h2 className="csh-title">What would you like to watch?</h2>
+                  <p className="csh-desc">
+                    Stream movies, series &amp; anime in clean 1080p with instant subtitles, or load your local video file.
+                  </p>
+
+                  {/* Continue Watching Banner */}
+                  {continueItem && (
+                    <div className="csh-continue-card">
+                      <div className="csh-continue-left">
+                        {continueItem.poster ? (
+                          <img src={continueItem.poster} alt="" className="csh-continue-thumb" />
+                        ) : (
+                          <div className="csh-continue-thumb" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1e293b' }}>🎬</div>
+                        )}
+                        <div className="csh-continue-meta">
+                          <span className="csh-continue-tag">Continue Watching</span>
+                          <span className="csh-continue-title">{continueItem.title}</span>
+                          <span className="csh-continue-sub">
+                            {continueItem.mediaType === 'tv' ? `S${continueItem.season || 1}:E${continueItem.episode || 1} · ` : ''}
+                            {fmt(continueItem.time || 0)} / {fmt(continueItem.duration || 0)} ({continueItem.pct || 0}%)
+                          </span>
+                          <div className="csh-continue-bar">
+                            <div className="csh-continue-bar-fill" style={{ width: `${continueItem.pct || 0}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="csh-continue-btn"
+                        onClick={handleResumeContinueWatching}
+                      >
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                          <path d="M8 5.14v13.72c0 .86.94 1.38 1.66.92l10.78-6.86c.69-.44.69-1.4 0-1.84L9.66 4.22A1.08 1.08 0 0 0 8 5.14z"/>
+                        </svg>
+                        <span>Resume</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Instant Search Bar */}
+                  <div
+                    className="csh-search-box"
+                    onClick={() => {
+                      setSearchPlatform('tmdb');
+                      setYtSearchModalOpen(true);
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                      <circle cx="11" cy="11" r="8" />
+                      <path d="M21 21l-4.35-4.35" />
+                    </svg>
+                    <span className="csh-search-placeholder">Search movies, series, anime, or paste a link…</span>
+                    <kbd className="csh-search-kbd">Enter</kbd>
+                  </div>
+
+                  {/* 3 Quick Action Cards */}
+                  <div className="csh-actions">
+                    <button
+                      type="button"
+                      className="csh-action-btn primary"
+                      onClick={() => {
+                        setSearchPlatform('tmdb');
+                        setYtSearchModalOpen(true);
+                      }}
+                    >
+                      <span className="csh-action-icon">🎬</span>
+                      <div className="csh-action-info">
+                        <span className="csh-action-title">Browse Catalog</span>
+                        <span className="csh-action-sub">Movies, Shows &amp; Anime</span>
+                      </div>
+                    </button>
+
+                    <label className="csh-action-btn" htmlFor="fileInput">
+                      <span className="csh-action-icon">📂</span>
+                      <div className="csh-action-info">
+                        <span className="csh-action-title">Local Video File</span>
+                        <span className="csh-action-sub">MKV, MP4, WebM</span>
+                      </div>
+                    </label>
+                    <input type="file" id="fileInput" ref={fileInputRef} accept="video/*,.mkv,.mp4,.webm" hidden onChange={onPickFile} />
+
+                    <button
+                      type="button"
+                      className="csh-action-btn"
+                      onClick={() => {
+                        const url = prompt('Paste stream, YouTube, TorBox, or direct video URL:');
+                        if (url && url.trim()) {
+                          setQueueInput(url.trim());
+                          handleAddToQueue(new Event('submit'), true);
+                        }
+                      }}
+                    >
+                      <span className="csh-action-icon">🔗</span>
+                      <div className="csh-action-info">
+                        <span className="csh-action-title">Paste Stream URL</span>
+                        <span className="csh-action-sub">HLS, DASH, TorBox</span>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* Quick Trending Row */}
+                  {trendingPreview.length > 0 && (
+                    <div className="csh-trending-wrap">
+                      <div className="csh-trending-head">
+                        <span>🔥 Trending Now</span>
+                        <button
+                          type="button"
+                          className="csh-more-btn"
+                          onClick={() => {
+                            setSearchPlatform('tmdb');
+                            setYtSearchModalOpen(true);
+                          }}
+                        >
+                          View all →
+                        </button>
+                      </div>
+                      <div className="csh-trending-grid">
+                        {trendingPreview.slice(0, 6).map((item) => (
+                          <div
+                            key={item.id}
+                            className="csh-trending-card"
+                            onClick={() => handleSelectSearchResult(item, true)}
+                            title={item.title || item.name}
+                          >
+                            <div className="csh-poster-wrap">
+                              {item.poster ? (
+                                <img src={item.poster} alt="" className="csh-poster-img" loading="lazy" />
+                              ) : (
+                                <div className="csh-poster-fallback">🎬</div>
+                              )}
+                              <div className="csh-play-overlay">
+                                <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+                                  <path d="M8 5.14v13.72c0 .86.94 1.38 1.66.92l10.78-6.86c.69-.44.69-1.4 0-1.84L9.66 4.22A1.08 1.08 0 0 0 8 5.14z"/>
+                                </svg>
+                              </div>
+                            </div>
+                            <span className="csh-card-title">{item.title || item.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className={'resume' + (resumeOpen && !source ? '' : ' hidden')}>
               <button className="btn primary big" onClick={resume}>Catch up with the room</button>
@@ -5744,7 +6109,7 @@ export default function Room() {
                 </span>
               </div>
 
-              {source?.type === 'youtube' && (
+              {source?.type === 'youtube' && watchMode === 'party' && (
                 <button
                   className="t-btn yt-btn active"
                   onClick={() => setYtPanelOpen(!ytPanelOpen)}
