@@ -629,7 +629,7 @@ function attach(io) {
 
     // --- source switch: local files <-> YouTube <-> HLS / PH Stream <-> Web Embed <-> Direct Stream. Resetting the source also
     // resets the playhead; everyone (including the setter) applies it uniformly.
-    socket.on('source', ({ type, videoId, embedUrl, url, hlsUrl, directUrl, canDirect, streamType, title, platform, viewkey, playing = true, tmdbId, mediaType, season, episode, episodeTitle, showTitle, poster, backdrop, subtitleUrl, subtitles } = {}) => {
+    socket.on('source', ({ type, videoId, embedUrl, url, hlsUrl, directUrl, canDirect, streamType, title, platform, viewkey, playing = true, tmdbId, mediaType, season, episode, episodeTitle, showTitle, poster, backdrop, subtitleUrl, subtitles, time = 0 } = {}) => {
       const room = rooms.get(socket.data.room);
       if (!room) return;
       if (room.controlLock && room.host !== socket.id) return; // locked: host only
@@ -685,14 +685,15 @@ function attach(io) {
         room.state.source = null; // back to local files
         room.state.playing = false;
       }
-      room.state.time = 0;
+      const targetTime = Number(time) >= 0 ? Number(time) : 0;
+      room.state.time = targetTime;
       room.state.updatedAt = Date.now();
 
       const user = room.users.get(socket.id);
       io.to(room.code).emit('source', {
         source: room.state.source,
         playing: room.state.playing,
-        time: 0,
+        time: targetTime,
         name: user ? user.name : 'Someone',
       });
       db.saveRoom(room.code, room.state); // background write

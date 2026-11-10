@@ -3820,7 +3820,7 @@ export default function Room() {
     }, 450);
   };
 
-  const handleSelectSearchResult = async (item, playNow = true) => {
+  const handleSelectSearchResult = async (item, playNow = true, startTime = 0) => {
     if (!item || (!item.id && !item.viewkey && !item.spotifyId && !item.tmdbId)) return;
     const socket = getSocket();
     if (!socket.connected) return;
@@ -3880,8 +3880,9 @@ export default function Room() {
             backdrop: item.backdrop,
             subtitles: hls.subtitles || [],
           };
+          const seekTime = Number(startTime) || Number(item.time) || 0;
           if (playNow) {
-            socket.emit('source', { ...payload, playing: true });
+            socket.emit('source', { ...payload, playing: true, time: seekTime });
             toast(`🎬 Streaming "${item.title}" in clean 1080p`);
             setYtSearchModalOpen(false);
             setYtPanelOpen(false);
@@ -3964,7 +3965,7 @@ export default function Room() {
     }
   };
 
-  const handleSelectEpisode = async (epPayload, playNow = true) => {
+  const handleSelectEpisode = async (epPayload, playNow = true, startTime = 0) => {
     const socket = getSocket();
     if (!socket.connected) return;
 
@@ -4024,8 +4025,9 @@ export default function Room() {
           backdrop: epPayload.backdrop,
           subtitles: hls.subtitles || [],
         };
+        const seekTime = Number(startTime) || Number(epPayload.time) || 0;
         if (playNow) {
-          socket.emit('source', { ...payload, playing: true });
+          socket.emit('source', { ...payload, playing: true, time: seekTime });
           toast(`🎬 Streaming ${epPayload.showTitle} S${epPayload.season}:E${epPayload.episode} in clean 1080p`);
           setTmdbEpisodeModalOpen(false);
           setYtSearchModalOpen(false);
@@ -4111,13 +4113,43 @@ export default function Room() {
 
   const handleResumeContinueWatching = () => {
     if (!continueItem) return;
-    handleSelectSearchResult({
-      ...continueItem,
-      id: continueItem.tmdbId,
-      mediaType: continueItem.mediaType || 'movie',
-      season: continueItem.season || 1,
-      episode: continueItem.episode || 1,
-    }, true);
+    const seekTarget = Number(continueItem.time) || 0;
+    toast(`Resuming ${continueItem.title || 'episode'}...`);
+
+    if (continueItem.mediaType === 'tv') {
+      const epPayload = {
+        tmdbId: continueItem.tmdbId,
+        season: Number(continueItem.season) || 1,
+        episode: Number(continueItem.episode) || 1,
+        title: `${continueItem.showTitle || continueItem.title} · S${continueItem.season || 1}:E${continueItem.episode || 1}`,
+        showTitle: continueItem.showTitle || continueItem.title,
+        episodeTitle: `Episode ${continueItem.episode || 1}`,
+        poster: continueItem.poster,
+        backdrop: continueItem.backdrop,
+        time: seekTarget,
+      };
+      handleSelectEpisode(epPayload, true, seekTarget);
+    } else {
+      handleSelectSearchResult({
+        ...continueItem,
+        id: continueItem.tmdbId,
+        mediaType: 'movie',
+        time: seekTarget,
+      }, true, seekTarget);
+    }
+
+    if (seekTarget > 3) {
+      setTimeout(() => {
+        try { seekToSeconds(seekTarget); } catch {}
+      }, 1400);
+      setTimeout(() => {
+        try {
+          if (videoRef.current && Math.abs(videoRef.current.currentTime - seekTarget) > 3) {
+            seekToSeconds(seekTarget);
+          }
+        } catch {}
+      }, 3000);
+    }
   };
 
   const pokeTopBar = () => {
@@ -4846,8 +4878,8 @@ export default function Room() {
         </div>
       )}
 
-      <div className={'stage' + (watchMode === 'solo' ? ' solo-mode chat-collapsed' : (chatOpen ? '' : ' chat-collapsed'))}>
-        <section className="screen-col">
+      <div className={'stage' + (watchMode === 'solo' ? ' solo-mode chat-collapsed' : (chatOpen ? '' : ' chat-collapsed')) + (!source && playDisabled ? ' start-mode' : '')}>
+        <section className={'screen-col' + (!source && playDisabled ? ' start-mode' : '')}>
           <div className="beam" aria-hidden="true"></div>
 
           {!chatOpen && watchMode === 'party' && (
@@ -4867,7 +4899,7 @@ export default function Room() {
             </button>
           )}
 
-          <div className={'screen' + (pseudoFs ? ' pseudo-fs' : '')} ref={screenRef}>
+          <div className={'screen' + (pseudoFs ? ' pseudo-fs' : '') + (!source && playDisabled ? ' start-mode' : '')} ref={screenRef}>
             <video
               ref={videoRef}
               playsInline
@@ -5532,7 +5564,12 @@ export default function Room() {
                   {/* Continue Watching Banner */}
                   {continueItem && (
                     <div className="csh-continue-card">
-                      <div className="csh-continue-left">
+                      <div
+                        className="csh-continue-left"
+                        onClick={handleResumeContinueWatching}
+                        style={{ cursor: 'pointer' }}
+                        title="Resume playback"
+                      >
                         {continueItem.poster ? (
                           <img src={continueItem.poster} alt="" className="csh-continue-thumb" />
                         ) : (
@@ -5550,16 +5587,41 @@ export default function Room() {
                           </div>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        className="csh-continue-btn"
-                        onClick={handleResumeContinueWatching}
-                      >
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-                          <path d="M8 5.14v13.72c0 .86.94 1.38 1.66.92l10.78-6.86c.69-.44.69-1.4 0-1.84L9.66 4.22A1.08 1.08 0 0 0 8 5.14z"/>
-                        </svg>
-                        <span>Resume</span>
-                      </button>
+                      <div className="csh-continue-actions">
+                        {continueItem.mediaType === 'tv' && (
+                          <button
+                            type="button"
+                            className="csh-episodes-browse-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedSeriesForEpisodes({
+                                tmdbId: continueItem.tmdbId,
+                                title: continueItem.showTitle || continueItem.title,
+                                name: continueItem.showTitle || continueItem.title,
+                                poster: continueItem.poster,
+                                backdrop: continueItem.backdrop,
+                              });
+                              setTmdbEpisodeModalOpen(true);
+                            }}
+                            title="Browse all episodes"
+                          >
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2">
+                              <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M7 8h10M7 12h10M7 16h6" />
+                            </svg>
+                            <span className="csh-ep-label">Episodes</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="csh-continue-btn"
+                          onClick={handleResumeContinueWatching}
+                        >
+                          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                            <path d="M8 5.14v13.72c0 .86.94 1.38 1.66.92l10.78-6.86c.69-.44.69-1.4 0-1.84L9.66 4.22A1.08 1.08 0 0 0 8 5.14z"/>
+                          </svg>
+                          <span>Resume</span>
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -5923,7 +5985,7 @@ export default function Room() {
       />
           </div>
 
-          {source?.type !== 'embed' && (
+          {(source || !playDisabled) && source?.type !== 'embed' && (
             <div className="transport-wrap">
             {ytPanelOpen && (
               <>
