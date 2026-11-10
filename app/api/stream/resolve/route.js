@@ -49,56 +49,59 @@ export async function GET(request) {
   }
 
   let resolvedData = null;
+  const startTime = Date.now();
+  let primaryPromise = null;
 
-  // 2. Query connected Local Resolver Daemon via WebSocket bridge
+  // 2. Query Primary 1080p Providers (VidLink / CineSrc / VidFast) with strict 5-second priority race
   if (typeof global !== 'undefined' && typeof global.__reelsync_resolve === 'function') {
+    console.log(`[Stream API] ⚡ Launching primary 1080p providers for ${mediaKey}...`);
+    primaryPromise = global.__reelsync_resolve({ id, type, s: season, e: episode, timeoutMs: 12000 });
+  } else {
+    const qs = new URLSearchParams({ id: String(id), type, s: String(season), e: String(episode) });
+    primaryPromise = fetch(`http://localhost:4545/resolve?${qs.toString()}`, { signal: AbortSignal.timeout(6000) })
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null);
+  }
+
+  // 3. Wait up to 5.0 seconds for primary 1080p providers on EVERY device
+  if (primaryPromise) {
     try {
-      console.log(`[Stream API] ⚡ Requesting stream from connected resolver bridge for ${mediaKey}...`);
-      const bridgeRes = await global.__reelsync_resolve({ id, type, s: season, e: episode, timeoutMs: 12000 });
-      if (bridgeRes && bridgeRes.ok && bridgeRes.streamUrl) {
-        resolvedData = bridgeRes;
+      const fiveSecTimeout = new Promise(resolve => setTimeout(() => resolve(null), 5000));
+      const fastWinner = await Promise.race([primaryPromise, fiveSecTimeout]);
+      if (fastWinner && fastWinner.ok && fastWinner.streamUrl) {
+        console.log(`[Stream API] ⚡ Primary 1080p Winner: ${fastWinner.provider} (${fastWinner.streamType})`);
+        resolvedData = fastWinner;
       }
     } catch (err) {
-      console.warn('[Stream API] Resolver bridge query error:', err.message);
+      console.warn('[Stream API] Primary race error:', err.message);
     }
   }
 
-  // 3. Fallback: Query local daemon on port 4545 (if running on same host)
+  // 4. Fallback: If 5.0 seconds elapsed and primary hasn't returned yet, query KissKH fallback
   if (!resolvedData) {
-    try {
-      const qs = new URLSearchParams({
-        id: String(id),
-        type,
-        s: String(season),
-        e: String(episode),
-      });
+    const elapsed = Date.now() - startTime;
+    if (elapsed < 5000) {
+      await new Promise(r => setTimeout(r, 5000 - elapsed));
+    }
 
-      const daemonRes = await fetch(`http://localhost:4545/resolve?${qs.toString()}`, {
-        signal: AbortSignal.timeout(5000),
-      });
+    if (primaryPromise) {
+      const lateWinner = await Promise.race([primaryPromise, Promise.resolve(null)]);
+      if (lateWinner && lateWinner.ok && lateWinner.streamUrl) {
+        resolvedData = lateWinner;
+      }
+    }
 
-      if (daemonRes.ok) {
-        const data = await daemonRes.json();
-        if (data.ok && data.streamUrl) {
-          resolvedData = data;
+    if (!resolvedData) {
+      try {
+        const { extractKisskhHttp } = require('@/lib/kisskh');
+        const kisskhRes = await extractKisskhHttp(id, type, season, episode);
+        if (kisskhRes && kisskhRes.ok && kisskhRes.streamUrl) {
+          console.log(`[Stream API] ⚡ KissKH Fallback Match for ${mediaKey}`);
+          resolvedData = kisskhRes;
         }
+      } catch (err) {
+        // Not on KissKH or rejected by strict title/type match
       }
-    } catch (err) {
-      // Local daemon unavailable or timed out
-    }
-  }
-
-  // 4. Server Direct Fallback: Pure HTTP KissKH (0ms overhead, zero Chrome/Puppeteer, works on EC2)
-  if (!resolvedData) {
-    try {
-      const { extractKisskhHttp } = require('@/lib/kisskh');
-      const kisskhRes = await extractKisskhHttp(id, type, season, episode);
-      if (kisskhRes && kisskhRes.ok && kisskhRes.streamUrl) {
-        console.log(`[Stream API] ⚡ Resolved directly via pure HTTP KissKH for ${mediaKey}`);
-        resolvedData = kisskhRes;
-      }
-    } catch (err) {
-      // Not on KissKH or failed
     }
   }
 
