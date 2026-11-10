@@ -1,6 +1,8 @@
 
 import { NextResponse } from 'next/server';
-const db = require('@/db');
+import db from '@/db';
+import { extractVidlinkHttp } from '@/lib/vidlink';
+import { extractKisskhHttp } from '@/lib/kisskh';
 
 function shouldProxyStream(url, provider) {
   if (!url) return false;
@@ -71,10 +73,9 @@ export async function GET(request) {
 
   // Pure HTTP VidLink (runs directly on server in ~500ms, 0 Chrome, works 24/7 on any device)
   try {
-    const { extractVidlinkHttp } = require('@/lib/vidlink');
     primaryPromises.push(extractVidlinkHttp(id, type, season, episode).catch(() => null));
   } catch (e) {
-    console.warn('[Stream API] VidLink module load error:', e.message);
+    console.warn('[Stream API] VidLink execution error:', e.message);
   }
 
   // Local Resolver daemon (if running on developer laptop or internal sidecar)
@@ -129,7 +130,6 @@ export async function GET(request) {
     }
 
     try {
-      const { extractKisskhHttp } = require('@/lib/kisskh');
       const kisskhRes = await extractKisskhHttp(id, type, season, episode);
       if (kisskhRes && kisskhRes.ok && kisskhRes.streamUrl) {
         console.log(`[Stream API] ⚡ KissKH Fallback Match for ${mediaKey}`);
