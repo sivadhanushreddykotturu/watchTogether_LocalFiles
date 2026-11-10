@@ -3119,31 +3119,6 @@ export default function Room() {
         }
       }
 
-      // Populate remote SubDL subtitles
-      const remoteSubs = Array.isArray(source.subtitles) ? [...source.subtitles] : [];
-      if (source.subtitleUrl && !remoteSubs.some((s) => s.url === source.subtitleUrl)) {
-        remoteSubs.unshift({
-          id: 'subdl-primary',
-          label: 'English (SubDL)',
-          url: source.subtitleUrl,
-        });
-      }
-
-      if (remoteSubs.length > 0) {
-        const mapped = remoteSubs.map((s, idx) => ({
-          id: s.id || `remote-sub-${idx}`,
-          label: s.label || `Subtitle ${idx + 1}`,
-          type: 'remote',
-          url: s.url,
-          cues: [],
-        }));
-        const existingNonRemote = subTracksRef.current.filter((t) => t.type !== 'remote');
-        const nextTracks = [...existingNonRemote, ...mapped];
-        subTracksRef.current = nextTracks;
-        setSubTracks(nextTracks);
-        selectTrack(mapped[0].id, false);
-      }
-
       return () => {
         if (hlsRef.current) {
           hlsRef.current.destroy();
@@ -3188,7 +3163,7 @@ export default function Room() {
     }
   }, [source?.type, source?.url, source?.audioUrl]);
 
-  // Decoupled subtitle tracks population from remote sources (does not restart or reload video playback)
+  // Decoupled subtitle tracks population from remote sources (VidLink / KissKH / SubDL)
   useEffect(() => {
     const remoteSubs = Array.isArray(source?.subtitles) ? [...source.subtitles] : [];
     if (source?.subtitleUrl && !remoteSubs.some((s) => s.url === source.subtitleUrl)) {
@@ -3196,6 +3171,7 @@ export default function Room() {
         id: 'subdl-primary',
         label: 'English (SubDL)',
         url: source.subtitleUrl,
+        default: true,
       });
     }
 
@@ -3205,29 +3181,28 @@ export default function Room() {
         label: s.label || `Subtitle ${idx + 1}`,
         type: 'remote',
         url: s.url || s.src,
+        default: Boolean(s.default),
         cues: [],
       }));
       const existingNonRemote = subTracksRef.current.filter((t) => t.type !== 'remote');
       const nextTracks = [...existingNonRemote, ...mapped];
       subTracksRef.current = nextTracks;
       setSubTracks(nextTracks);
-      // Select track quietly without interrupting video time or triggering room restarts
-      selectTrack(mapped[0].id, false);
+      // Quietly select preferred track (default or English or first available)
+      const preferred = mapped.find((t) => t.default || /english/i.test(t.label)) || mapped[0];
+      selectTrack(preferred.id, false);
+    } else {
+      subTracksRef.current = subTracksRef.current.filter((t) => t.type !== 'remote');
+      setSubTracks((prev) => prev.filter((t) => t.type !== 'remote'));
+      setActiveTrackId('off');
+      activeTrackIdRef.current = 'off';
+      subsOnRef.current = false;
+      setSubsOn(false);
+      setSubText('');
+      setActiveSubLang('en');
+      setSubLoading(false);
     }
-  }, [source?.subtitleUrl, source?.subtitles]);
-
-  // Reset remote subtitle tracks and subtitle state when playing source changes (no background fetching)
-  useEffect(() => {
-    subTracksRef.current = subTracksRef.current.filter((t) => t.type !== 'remote');
-    setSubTracks((prev) => prev.filter((t) => t.type !== 'remote'));
-    setActiveTrackId('off');
-    activeTrackIdRef.current = 'off';
-    subsOnRef.current = false;
-    setSubsOn(false);
-    setSubText('');
-    setActiveSubLang('en');
-    setSubLoading(false);
-  }, [source?.url, source?.embedUrl, source?.videoId, source?.tmdbId, source?.season, source?.episode]);
+  }, [source?.url, source?.embedUrl, source?.videoId, source?.tmdbId, source?.season, source?.episode, source?.subtitleUrl, source?.subtitles]);
 
   // autoscroll chat on new messages or when switching to chat tab or expanding sidebar
   useEffect(() => {
@@ -3790,7 +3765,7 @@ export default function Room() {
         const hls = await resolveNativeHlsStream({
           tmdbId: item.tmdbId || item.id,
           type: 'movie',
-          timeoutMs: 8000,
+          timeoutMs: 15000,
         });
         if (hls && (hls.streamUrl || hls.hlsUrl)) {
           stopStreamLoading();
@@ -3806,6 +3781,7 @@ export default function Room() {
             tmdbId: item.tmdbId || item.id,
             poster: item.poster,
             backdrop: item.backdrop,
+            subtitles: hls.subtitles || [],
           };
           if (playNow) {
             socket.emit('source', { ...payload, playing: true });
@@ -3929,7 +3905,7 @@ export default function Room() {
         type: 'tv',
         season: epPayload.season,
         episode: epPayload.episode,
-        timeoutMs: 8000,
+        timeoutMs: 15000,
       });
       if (hls && (hls.streamUrl || hls.hlsUrl)) {
         stopStreamLoading();
@@ -3988,7 +3964,7 @@ export default function Room() {
         type: 'tv',
         season,
         episode: nextEp,
-        timeoutMs: 8000,
+        timeoutMs: 15000,
       });
     } catch {}
 
