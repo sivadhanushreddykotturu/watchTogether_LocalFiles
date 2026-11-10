@@ -1,4 +1,7 @@
 
+import { NextResponse } from 'next/server';
+const db = require('@/db');
+
 function shouldProxyStream(url, provider) {
   if (!url) return false;
   // If already proxied
@@ -9,44 +12,56 @@ function shouldProxyStream(url, provider) {
   if (provider === 'CineSrc' || url.includes('cinesrc.st') || url.includes('bright67.online')) return false;
   return true;
 }
-import { NextResponse } from 'next/server';
-const db = require('@/db');
 
 export async function GET(request) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get('id');
-  const type = searchParams.get('type') || 'movie';
-  const season = searchParams.get('s') || searchParams.get('season') || '1';
-  const episode = searchParams.get('e') || searchParams.get('episode') || '1';
-
-  if (!id) {
-    return NextResponse.json({ ok: false, error: 'Missing TMDB ID' }, { status: 400 });
-  }
-
-  const mediaKey = type === 'tv' ? `tv:${id}:${season}:${episode}` : `movie:${id}`;
-
-  // 1. Check MongoDB cache first (instant 0ms response, no scraping)
   try {
-    const cached = await db.getStreamCache(mediaKey);
-    if (cached && cached.streamUrl) {
-      console.log(`[Stream API] ⚡ Cache HIT in MongoDB for ${mediaKey} (${cached.provider})`);
-      let streamUrl = cached.streamUrl;
-      if (shouldProxyStream(streamUrl, cached.provider)) {
-        streamUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(streamUrl)}`;
-      }
-      return NextResponse.json({
-        ok: true,
-        cached: true,
-        streamUrl,
-        rawUrl: cached.rawUrl || cached.streamUrl,
-        streamType: cached.streamType,
-        provider: cached.provider,
-        subtitles: cached.subtitles || [],
-      });
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+    const type = searchParams.get('type') || 'movie';
+    const season = searchParams.get('s') || searchParams.get('season') || '1';
+    const episode = searchParams.get('e') || searchParams.get('episode') || '1';
+
+    if (!id) {
+      return NextResponse.json({ ok: false, error: 'Missing TMDB ID' }, { status: 400 });
     }
-  } catch (err) {
-    console.warn('MongoDB cache check warning:', err.message);
-  }
+
+    const mediaKey = type === 'tv' ? `tv:${id}:${season}:${episode}` : `movie:${id}`;
+
+    // 1. Check MongoDB cache first (instant 0ms response, no scraping)
+    try {
+      const cached = await db.getStreamCache(mediaKey);
+      if (cached && cached.streamUrl) {
+        console.log(`[Stream API] ⚡ Cache HIT in MongoDB for ${mediaKey} (${cached.provider})`);
+        let streamUrl = cached.streamUrl;
+        if (shouldProxyStream(streamUrl, cached.provider)) {
+          streamUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(streamUrl)}`;
+        }
+
+        const subtitles = Array.isArray(cached.subtitles)
+          ? cached.subtitles.map(s => ({
+              id: String(s.id || ''),
+              lang: String(s.lang || ''),
+              label: String(s.label || ''),
+              url: String(s.url || ''),
+              src: String(s.src || s.url || ''),
+              rawSrc: String(s.rawSrc || ''),
+              default: Boolean(s.default),
+            }))
+          : [];
+
+        return NextResponse.json({
+          ok: true,
+          cached: true,
+          streamUrl,
+          rawUrl: cached.rawUrl || cached.streamUrl,
+          streamType: cached.streamType,
+          provider: cached.provider,
+          subtitles,
+        });
+      }
+    } catch (err) {
+      console.warn('MongoDB cache check warning:', err.message);
+    }
 
   let resolvedData = null;
   const startTime = Date.now();
@@ -158,4 +173,8 @@ export async function GET(request) {
   }
 
   return NextResponse.json({ ok: false, error: 'Failed to extract stream from providers' }, { status: 504 });
+  } catch (err) {
+    console.error('[Stream API Error]:', err);
+    return NextResponse.json({ ok: false, error: err.message || 'Internal server error' }, { status: 500 });
+  }
 }
