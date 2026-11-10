@@ -8,6 +8,7 @@ process.loadEnvFile(path.join(APP_DIR, '.env'));
 
 const { io } = require(path.join(APP_DIR, 'node_modules', 'socket.io-client'));
 const { extractKisskhHttp } = require(path.join(APP_DIR, 'lib', 'kisskh.js'));
+const { extractVidlinkHttp } = require(path.join(APP_DIR, 'lib', 'vidlink.js'));
 
 const PORT = 4545;
 const CHROME_PATH = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -104,74 +105,9 @@ async function extractVidfast(browser, tmdbId, type = 'movie', season = 1, episo
   });
 }
 
-// Provider 2: VidLink (DASH .mpd with direct signed CloudFront URL)
-async function extractVidlink(browser, tmdbId, type = 'movie', season = 1, episode = 1, trackPage = p => p) {
-  const page = await browser.newPage();
-  trackPage(page);
-
-  const targetUrl = type === 'tv'
-    ? `https://vidlink.pro/tv/${tmdbId}/${season}/${episode}`
-    : `https://vidlink.pro/movie/${tmdbId}`;
-
-  return new Promise((resolve, reject) => {
-    let resolved = false;
-
-    const timeout = setTimeout(async () => {
-      if (!resolved) {
-        resolved = true;
-        await page.close().catch(() => {});
-        reject(new Error('VidLink timeout'));
-      }
-    }, 12000);
-
-    page.on('response', async (res) => {
-      const u = res.url();
-      if ((u.includes('index_web.mpd') || u.includes('.mpd')) && !resolved) {
-        const signedUrl = buildDirectSignedUrl(u);
-        if (signedUrl) {
-          resolved = true;
-          clearTimeout(timeout);
-          await page.close().catch(() => {});
-          resolve({
-            ok: true,
-            provider: 'VidLink',
-            streamType: 'dash',
-            streamUrl: signedUrl,
-          });
-          return;
-        }
-      }
-
-      if (u.includes('/api/b/') && !resolved) {
-        try {
-          const text = await res.text().catch(() => null);
-          if (text) {
-            const json = JSON.parse(text);
-            if (json?.stream?.playlist) {
-              const cookieStr = json?.stream?.playlistHeaders?.Cookie || '';
-              const signedUrl = buildDirectSignedUrl(json.stream.playlist, cookieStr);
-              if (signedUrl) {
-                resolved = true;
-                clearTimeout(timeout);
-                await page.close().catch(() => {});
-                resolve({
-                  ok: true,
-                  provider: 'VidLink',
-                  streamType: 'dash',
-                  streamUrl: signedUrl,
-                });
-                return;
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('[VidLink Parse Warn]:', e.message);
-        }
-      }
-    });
-
-    page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 12000 }).catch(() => {});
-  });
+// Provider 2: VidLink (DASH .mpd with direct signed CloudFront URL - Pure HTTP 0-Chrome)
+async function extractVidlink(browser, tmdbId, type = 'movie', season = 1, episode = 1) {
+  return extractVidlinkHttp(tmdbId, type, season, episode);
 }
 
 // Provider 3: CineSrc (HLS .m3u8 with direct 1080p / 720p public CORS)
