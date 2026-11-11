@@ -1,4 +1,4 @@
-/* ReelSync Design System:
+﻿/* ReelSync Design System:
    Minimalist Modern Architecture with Multi-Theme Support
    - White & Light Slate Gray Mode
    - Sleek Charcoal & Dark Zinc Mode */
@@ -763,95 +763,111 @@ input[type="text"]::placeholder { color: #525b70; }
 .resume.hidden { display: none !important; }
 .resume .btn { width: auto; }
 
-/* ---------------- subtitles ---------------- */
+/* ---------------- subtitles (Netflix-style) ---------------- */
 
+/* Container: centered, stacks lines vertically — no box bg */
 .sub-overlay {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  max-width: 82%;
-  padding: 0 4px;
-  border-radius: 4px;
-
-  border-radius: 6px;
+  max-width: 80%;
   text-align: center;
-  white-space: pre-line;
-  font-weight: 600;
-  line-height: 1.4;
-  font-family: "Netflix Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  font-weight: 700;
-  line-height: 1.25;
-  letter-spacing: 0.02em;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
   transition: bottom 0.2s cubic-bezier(0.16, 1, 0.3, 1), font-size 0.15s ease;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
-.sub-overlay.netflix-style,
-.sub-overlay:not(.has-bg) {
+/* Each subtitle line = its own Netflix-style pill */
+.sub-line {
+  display: inline-block;
+  font-family: var(--font-inter, "Inter"), "Netflix Sans", "Trebuchet MS", Arial, sans-serif;
+  font-weight: 700;
+  font-size: var(--sub-size, 24px);
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  color: #FFFFFF;
+  /* Netflix uses per-line semi-transparent dark background */
+  background: rgba(0, 0, 0, 0.78);
+  padding: 0.08em 0.4em 0.14em;
+  border-radius: 3px;
+  /* ultra-crisp rendering */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  /* force GPU compositing for crisp edges */
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  /* don't wrap individual pill lines */
+  white-space: nowrap;
+}
+
+/* When user picks a custom color */
+.sub-overlay .sub-line {
+  color: var(--sub-color, #FFFFFF);
+}
+
+/* "Shadow-only" mode — no pill bg, just crisp drop-shadow outline */
+.sub-overlay.netflix-style .sub-line,
+.sub-overlay:not(.has-bg) .sub-line {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  white-space: nowrap;
   text-shadow:
-    0 0 3px #000,
-    0 1px 2px rgba(0, 0, 0, 0.95),
-    0 2px 4px rgba(0, 0, 0, 0.95),
-    -1px -1px 0 #000,
-    1px -1px 0 #000,
-    -1px 1px 0 #000,
-    1px 1px 0 #000,
-    0 2px 6px rgba(0, 0, 0, 0.85);
-  -webkit-text-stroke: 0.5px rgba(0, 0, 0, 0.75);
+    -1px -1px 0 rgba(0,0,0,0.9),
+     1px -1px 0 rgba(0,0,0,0.9),
+    -1px  1px 0 rgba(0,0,0,0.9),
+     1px  1px 0 rgba(0,0,0,0.9),
+     0 0 4px rgba(0,0,0,0.95),
+     0 2px 4px rgba(0,0,0,0.9);
+  -webkit-text-stroke: 0.4px rgba(0,0,0,0.85);
   paint-order: stroke fill;
 }
 
-/* Subtle elevation when player controls/transport are visible so seek bar never blocks dialogue */
+/* Lift subs when seek bar is visible so it never covers dialogue */
 .screen:not(.idle-playing) .sub-overlay {
   bottom: calc(var(--sub-pos, 8%) + 24px) !important;
 }
 
-.sub-overlay.has-bg {
-  background: rgba(0, 0, 0, 0.6) !important;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  padding: 4px 14px;
+/* Legacy full-bg mode (user opted in via toggle) */
+.sub-overlay.has-bg .sub-line {
+  background: rgba(0, 0, 0, 0.75) !important;
+  padding: 0.08em 0.5em 0.14em;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  border-radius: 4px;
 }
-
-/* Mobile responsive sizing: prevent giant subtitles in portrait mode */
+/* Mobile responsive sizing */
 @media (max-width: 768px) and (orientation: portrait) {
-  .sub-overlay {
-    font-size: clamp(12px, calc(var(--sub-size, 20px) * 0.65), 14.5px) !important;
-    max-width: 92%;
-    padding: 2px 8px;
-    line-height: 1.3;
-    letter-spacing: 0.01em;
+  .sub-overlay { max-width: 94%; }
+  .sub-line {
+    font-size: clamp(12px, calc(var(--sub-size, 24px) * 0.62), 15px) !important;
+    white-space: normal;
   }
 }
 
 @media (max-width: 768px) and (orientation: landscape) {
-  .sub-overlay {
-    font-size: clamp(13px, calc(var(--sub-size, 20px) * 0.82), 19px) !important;
-    max-width: 86%;
+  .sub-overlay { max-width: 88%; }
+  .sub-line {
+    font-size: clamp(13px, calc(var(--sub-size, 24px) * 0.8), 20px) !important;
   }
 }
 
 @media (max-width: 480px) {
-  .sub-overlay {
-    font-size: clamp(12px, calc(var(--sub-size, 20px) * 0.65), 14.5px) !important;
+  .sub-line {
+    font-size: clamp(12px, calc(var(--sub-size, 24px) * 0.62), 15px) !important;
+    white-space: normal;
   }
 }
 
 video::cue {
-  background: transparent;
+  background: rgba(0, 0, 0, 0.78);
   color: #fff;
-  font-family: "Netflix Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-inter, "Inter"), "Netflix Sans", Arial, sans-serif;
   font-weight: 700;
-  text-shadow:
-    0 0 3px #000,
-    0 1px 2px rgba(0, 0, 0, 0.95),
-    0 2px 4px rgba(0, 0, 0, 0.95),
-    -1px -1px 0 #000,
-    1px -1px 0 #000,
-    -1px 1px 0 #000,
-    1px 1px 0 #000;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 .sub-overlay-base {

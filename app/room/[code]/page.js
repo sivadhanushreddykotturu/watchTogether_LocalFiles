@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
@@ -43,7 +43,7 @@ export { getAppleEmojiUrl };
 
 // ---------- subtitles & media ----------
 const SUB_COLORS = ['#ffffff', '#facc15', '#86efac', '#67e8f9'];
-const SUB_STYLE_DEFAULT = { size: 20, color: '#ffffff', bg: false, pos: 8 };
+const SUB_STYLE_DEFAULT = { size: 24, color: '#ffffff', bg: false, pos: 8 };
 const SUB_POSITIONS = [[5, 'Low'], [8, 'Mid'], [14, 'High']];
 
 function canPlayHevc() {
@@ -5627,13 +5627,13 @@ export default function Room() {
                 style={{
                   '--sub-size': subStyle.size + 'px',
                   '--sub-pos': subStyle.pos + '%',
-                  fontSize: 'var(--sub-size)',
-                  color: subStyle.color,
+                  '--sub-color': subStyle.color,
                   bottom: 'var(--sub-pos)',
-                  background: subStyle.bg ? 'rgba(0, 0, 0, 0.65)' : 'transparent',
                 }}
               >
-                {subText}
+                {subText.split('\n').filter(Boolean).map((line, i) => (
+                  <span key={i} className="sub-line">{line}</span>
+                ))}
               </div>
             )}
 

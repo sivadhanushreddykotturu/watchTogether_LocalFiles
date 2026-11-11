@@ -1,11 +1,12 @@
-import React from 'react';
-import { Bebas_Neue, Instrument_Sans, JetBrains_Mono } from 'next/font/google';
+﻿import React from 'react';
+import { Bebas_Neue, Instrument_Sans, JetBrains_Mono, Inter } from 'next/font/google';
 import { ClerkProvider } from '@clerk/nextjs';
 import './globals.css';
 
 const display = Bebas_Neue({ weight: '400', subsets: ['latin'], variable: '--font-display' });
 const body = Instrument_Sans({ weight: ['400', '500', '600'], subsets: ['latin'], variable: '--font-body' });
 const mono = JetBrains_Mono({ weight: ['400', '600'], subsets: ['latin'], variable: '--font-mono' });
+const inter = Inter({ weight: ['700', '800'], subsets: ['latin'], variable: '--font-inter', display: 'swap' });
 
 export const metadata = {
   title: 'ReelSync — watch local files together',
@@ -38,7 +39,7 @@ export default function RootLayout({
 }): React.JSX.Element {
   return (
     <ClerkProvider>
-      <html lang="en" data-theme="dark" suppressHydrationWarning className={`${display.variable} ${body.variable} ${mono.variable}`}>
+      <html lang="en" data-theme="dark" suppressHydrationWarning className={`${display.variable} ${body.variable} ${mono.variable} ${inter.variable}`}>
         <body>
           {children}
         </body>
