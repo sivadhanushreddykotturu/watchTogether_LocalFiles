@@ -14,6 +14,7 @@ import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
 import { searchSpotify, resolveSpotifyTrack } from '../../../lib/spotify';
 import { parseMediaUrl, resolveMediaUrl, searchPornhub, resolveNativeHlsStream } from '../../../lib/mediaEmbeds';
+import { getTorboxKey, setTorboxKey, clearTorboxKey, verifyTorboxKey, getTorboxQuality, setTorboxQuality, TORBOX_QUALITIES } from '../../../lib/torboxKey';
 import { buildVidfastUrl, buildVidloveUrl, searchTmdb, fetchTmdbTrending, fetchTmdbTvDetails, fetchTmdbSeason, fetchTmdbSources } from '../../../lib/tmdb';
 import TmdbEpisodeModal from '../../components/TmdbEpisodeModal';
 import { VoiceSession } from '../../../lib/voice';
@@ -173,6 +174,17 @@ export default function Room() {
   const gifPickerRef = useRef(null);
   const [roomMenuOpen, setRoomMenuOpen] = useState(false);
   const roomMenuRef = useRef(null);
+  // TorBox (viewer's own API key, kept only in this browser)
+  const [torboxConnected, setTorboxConnected] = useState(false);
+  const [torboxPanelOpen, setTorboxPanelOpen] = useState(false);
+  const [torboxKeyInput, setTorboxKeyInput] = useState('');
+  const [torboxBusy, setTorboxBusy] = useState(false);
+  const [torboxInfo, setTorboxInfo] = useState(''); // e.g. "Pro" or an error message
+  const [torboxQuality, setTorboxQualityState] = useState('5'); // default 1080p
+  useEffect(() => {
+    setTorboxConnected(Boolean(getTorboxKey()));
+    setTorboxQualityState(getTorboxQuality());
+  }, []);
   const [transportMore, setTransportMore] = useState(false);
   const [reactTrayOpen, setReactTrayOpen] = useState(false);
   const [speed, setSpeed] = useState(1);
@@ -595,6 +607,32 @@ export default function Room() {
     const id = ++toastSeq.current;
     setToasts((prev) => [...prev.slice(-3), { id, text }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
+  };
+
+  const saveTorboxKey = async () => {
+    const key = torboxKeyInput.trim();
+    if (!key || torboxBusy) return;
+    setTorboxBusy(true);
+    setTorboxInfo('');
+    const check = await verifyTorboxKey(key);
+    setTorboxBusy(false);
+    if (!check?.ok) {
+      setTorboxInfo(check?.error || 'Invalid API key');
+      return;
+    }
+    setTorboxKey(key);
+    setTorboxKeyInput('');
+    setTorboxConnected(true);
+    setTorboxInfo(check.isPro ? `${check.plan} plan` : `${check.plan} plan — streaming needs Pro`);
+    toast(check.isPro ? 'TorBox connected' : 'TorBox saved, but streaming needs a Pro plan');
+  };
+
+  const removeTorboxKey = () => {
+    clearTorboxKey();
+    setTorboxConnected(false);
+    setTorboxKeyInput('');
+    setTorboxInfo('');
+    toast('TorBox disconnected');
   };
 
   const selectTrack = (trackId, announce = true) => {
@@ -4978,6 +5016,66 @@ export default function Room() {
               )}
 
 
+
+              <button
+                type="button"
+                className="room-menu-item"
+                role="menuitem"
+                aria-expanded={torboxPanelOpen}
+                onClick={() => setTorboxPanelOpen((v) => !v)}
+                title="Use your own TorBox account for movies and series (files under 5 GB)"
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                <span>TorBox</span>
+                <span className={'torbox-state' + (torboxConnected ? ' on' : '')}>{torboxConnected ? 'Connected' : 'Off'}</span>
+              </button>
+
+              {torboxPanelOpen && (
+                <div className="torbox-panel">
+                  {torboxConnected ? (
+                    <>
+                      <p className="torbox-hint">
+                        Movies and series now try your TorBox account first (cached files up to 5 GB), then fall back to the usual sources.
+                        {torboxInfo ? ` ${torboxInfo}.` : ''}
+                      </p>
+                      <label className="torbox-field">
+                        <span>Stream quality</span>
+                        <select
+                          className="torbox-input"
+                          value={torboxQuality}
+                          onChange={(e) => { setTorboxQualityState(e.target.value); setTorboxQuality(e.target.value); }}
+                        >
+                          {TORBOX_QUALITIES.map((q) => (
+                            <option key={q.value} value={q.value}>{q.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <p className="torbox-hint">Applies to the next thing you play. Higher quality needs a faster connection (1080p ≈ 5–8 Mbps, 4K ≈ 13+ Mbps).</p>
+                      <button type="button" className="torbox-btn danger" onClick={removeTorboxKey}>Remove API key</button>
+                    </>
+                  ) : (
+                    <>
+                      <input
+                        type="password"
+                        className="torbox-input"
+                        placeholder="Paste your TorBox API key"
+                        value={torboxKeyInput}
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(e) => setTorboxKeyInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') saveTorboxKey(); }}
+                      />
+                      <button type="button" className="torbox-btn" disabled={torboxBusy || !torboxKeyInput.trim()} onClick={saveTorboxKey}>
+                        {torboxBusy ? 'Checking…' : 'Save key'}
+                      </button>
+                      <p className="torbox-hint">
+                        Stored only in this browser. Needs a TorBox Pro plan. Stream links include your key and are shared with the room.
+                      </p>
+                      {torboxInfo && <p className="torbox-error">{torboxInfo}</p>}
+                    </>
+                  )}
+                </div>
+              )}
 
               <div className="room-menu-row">
                 <span>Account</span>

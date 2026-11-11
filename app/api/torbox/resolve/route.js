@@ -5,6 +5,119 @@ import { promisify } from 'util';
 const execFileAsync = promisify(execFile);
 const YTS_DOMAINS = ['yts.am', 'yts.pm', 'yts.do', 'yts.rs'];
 
+// Hard cap: never pick (or add to the account) anything larger than 5 GB.
+const MAX_BYTES = 5 * 1024 * 1024 * 1024;
+const withinCap = (bytes) => !bytes || Number(bytes) <= MAX_BYTES;
+
+// Always hand the browser an HLS stream from TorBox's transcoder (H.264 + AAC),
+// never a raw MKV/HEVC file, so playback behaves the same everywhere.
+const FORCE_HLS = true;
+
+const VIDEO_EXT = /\.(mkv|mp4|m4v|avi|webm|mov)$/i;
+const normName = (s) =>
+  String(s || '').toLowerCase().replace(/['’]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const baseName = (path) => String(path || '').split('/').pop();
+
+function qualityOf(name) {
+  if (/2160p|4k|uhd/i.test(name)) return '2160p';
+  if (/1080p/i.test(name)) return '1080p';
+  if (/720p/i.test(name)) return '720p';
+  return '';
+}
+
+// Look through the viewer's own TorBox library for a finished video file that matches the
+// title (movie: title + year, series: title + SxxExx). The 5 GB cap applies to the FILE, so a
+// small episode/movie inside a big pack still qualifies. Returns { torrentId, file, quality } or null.
+async function findInLibrary({ token, title, year, isTv, season, episode }) {
+  try {
+    // bypass_cache: the list is otherwise up to 600 s stale, so something just added in Stremio could be missed.
+    const res = await fetch('https://api.torbox.app/v1/api/torrents/mylist?bypass_cache=true', {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    const list = (await res.json())?.data;
+    if (!Array.isArray(list)) return null;
+
+    const wanted = ` ${normName(title)} `;
+    const sNum = Number(season) || 1;
+    const eNum = Number(episode) || 1;
+    const epRe = isTv ? new RegExp(`(?:\\bs0*${sNum}e0*${eNum}\\b|\\b${sNum}x0*${eNum}\\b)`, 'i') : null;
+    const yearStr = year ? String(year) : '';
+    const rank = { '1080p': 3, '720p': 2, '2160p': 1, '': 0 };
+
+    let best = null;
+    for (const t of list) {
+      if (!t || !Array.isArray(t.files)) continue;
+      if (!(t.download_finished || t.cached)) continue; // skip stalled / unfinished
+      const torrentTitleOk = ` ${normName(t.name)} `.includes(wanted);
+      for (const f of t.files) {
+        const base = baseName(f.name);
+        if (!VIDEO_EXT.test(base) || /\bsample\b/i.test(f.name)) continue;
+        if (!withinCap(f.size) || Number(f.size) < 50 * 1024 * 1024) continue;
+        const nameOk = ` ${normName(base)} `.includes(wanted);
+        if (isTv) {
+          if (!epRe.test(base)) continue;
+          if (!nameOk && !torrentTitleOk) continue;
+        } else {
+          if (!nameOk) continue;
+          if (yearStr && !base.includes(yearStr)) continue;
+        }
+        const quality = qualityOf(base) || qualityOf(t.name || '');
+        const cand = { torrentId: t.id, file: { id: f.id, name: f.name, size: f.size }, quality, score: rank[quality] ?? 0 };
+        if (!best || cand.score > best.score || (cand.score === best.score && cand.file.size > best.file.size)) best = cand;
+      }
+    }
+    return best;
+  } catch {
+    return null;
+  }
+}
+
+// TorBox resolution indexes: 0=144p 1=240p 2=360p 3=480p 4=720p 5=1080p 6=1440p 7=2160p, null=original.
+// TorBox never upscales, so asking for 1080p on a 720p file just plays 720p.
+const DEFAULT_RES = 5; // 1080p keeps the stream around 5-8 Mbps instead of ~13+ for 4K
+function parseRes(v) {
+  if (v === null || v === 'null' || v === 'original') return 'null';
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 && n <= 7 ? String(n) : String(DEFAULT_RES);
+}
+
+async function createHls(token, torrentId, fileId, resIdx = String(DEFAULT_RES)) {
+  try {
+    const res = await fetch(
+      `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${fileId}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=${resIdx}`,
+      { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12000) }
+    );
+    if (!res.ok) return null;
+    return (await res.json())?.data?.hls_url || null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchTmdbMeta(tmdbId, isTv) {
+  const key = process.env.TMDB_API_KEY;
+  if (!key) return null;
+  try {
+    const kind = isTv ? 'tv' : 'movie';
+    const res = await fetch(
+      `https://api.themoviedb.org/3/${kind}/${encodeURIComponent(tmdbId)}?api_key=${key}${isTv ? '&append_to_response=external_ids' : ''}`,
+      { signal: AbortSignal.timeout(4000) }
+    );
+    if (!res.ok) return null;
+    const j = await res.json();
+    const date = (isTv ? j.first_air_date : j.release_date) || '';
+    return {
+      title: isTv ? j.name : j.title,
+      year: date ? date.slice(0, 4) : undefined,
+      imdbId: isTv ? j.external_ids?.imdb_id : j.imdb_id,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function searchYts(query, imdbId) {
   for (const domain of YTS_DOMAINS) {
     try {
@@ -111,14 +224,60 @@ function isUniversalWebVideo(fileName) {
 
 export async function POST(req) {
   try {
-    const { title, year, imdbId, tmdbId, mediaType, season, episode } = await req.json();
-    const token = process.env.TORBOX_API_KEY;
+    let { title, year, imdbId, tmdbId, mediaType, season, episode, dryRun, resolutionIndex } = await req.json();
+    const resIdx = parseRes(resolutionIndex);
+    // The key is the viewer's own, saved in their browser and sent per request.
+    const token = (req.headers.get('x-torbox-key') || '').trim();
 
     if (!token) {
-      return NextResponse.json({ success: false, error: 'TORBOX_API_KEY not configured' }, { status: 500 });
+      return NextResponse.json({ success: false, error: 'TorBox API key not set' }, { status: 401 });
     }
 
     const isTv = mediaType === 'tv' || (season !== undefined && episode !== undefined);
+
+    // Callers usually only know the TMDB id, so look up the title/year/imdb id here.
+    if (tmdbId && !title) {
+      const meta = await fetchTmdbMeta(tmdbId, isTv);
+      if (meta) {
+        title = meta.title;
+        year = year || meta.year;
+        imdbId = imdbId || meta.imdbId;
+      }
+    }
+    if (!title) {
+      return NextResponse.json({ success: false, cached: false, reason: 'Missing title' });
+    }
+
+    // 1) Your own TorBox library first: no torrent-site search, instant if it's already there.
+    const own = await findInLibrary({ token, title, year, isTv, season, episode });
+    if (own) {
+      const label = isTv ? `${title} S${String(Number(season) || 1).padStart(2, '0')}:E${String(Number(episode) || 1).padStart(2, '0')}` : title;
+      if (dryRun) {
+        return NextResponse.json({ success: true, dryRun: true, source: 'library', torrentId: own.torrentId, file: own.file, quality: own.quality || null, title: label });
+      }
+      const ownHls = await createHls(token, own.torrentId, own.file.id, resIdx);
+      if (ownHls) {
+        return NextResponse.json({
+          success: true,
+          cached: true,
+          source: 'library',
+          streamType: 'hls',
+          streamUrl: ownHls,
+          directUrl: null,
+          hlsUrl: ownHls,
+          canDirect: false,
+          quality: own.quality || '1080p',
+          fileSize: own.file.size,
+          fileName: own.file.name,
+          title: label,
+        });
+      }
+    }
+    if (dryRun) {
+      return NextResponse.json({ success: false, dryRun: true, reason: 'Not in your TorBox library under 5 GB (a torrent-site search would follow)' });
+    }
+
+    // 2) Not in the library: fall through to the torrent search + TorBox cache check below.
 
     // ──────────────────────────────────────────
     // TV SERIES RESOLVER
@@ -188,14 +347,16 @@ export async function POST(req) {
       const hashes = pbTorrents.slice(0, 30).map((t) => t.info_hash.toLowerCase());
 
       // Batch check TorBox cache
-      const cacheRes = await fetch('https://api.torbox.app/v1/api/torrents/checkcached?format=list', {
+      // list_files=true: we get each cached torrent's files + sizes before adding anything,
+      // so a big season pack still qualifies when the episode file inside is under the cap.
+      const cacheRes = await fetch('https://api.torbox.app/v1/api/torrents/checkcached?format=list&list_files=true', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ hashes }),
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(8000),
       });
 
       if (!cacheRes.ok) {
@@ -211,8 +372,17 @@ export async function POST(req) {
       const epRegex = new RegExp(`(?:s${sStr}e${eStr}|${sNum}x${eStr}|episode\\s*0?${eNum}\\b)`, 'i');
       const seasonRegex = new RegExp(`(?:s${sStr}\\b|season\\s*0?${sNum}\\b)`, 'i');
 
+      // The 5 GB cap is per file: either the whole torrent is small, or it lists an episode file that is.
+      const hasFittingEpisodeFile = (c) =>
+        Array.isArray(c.files) &&
+        c.files.some((f) => VIDEO_EXT.test(f.name || '') && !/\bsample\b/i.test(f.name) && epRegex.test(baseName(f.name)) && withinCap(f.size));
+      const fitsCap = (c) => withinCap(c.size) || hasFittingEpisodeFile(c);
+
       // Filter cached torrents strictly matching the show title first
-      const validCached = cachedList.filter((c) => matchesShowTitle(c.name || '', candidateTitles));
+      const validCached = cachedList.filter((c) => matchesShowTitle(c.name || '', candidateTitles) && fitsCap(c));
+      if (validCached.length === 0) {
+        return NextResponse.json({ success: false, cached: false, reason: `No cached copy of S${sStr}E${eStr} with a file under 5 GB` });
+      }
 
       // Prioritize x264/h264 over heavy x265/hevc so TorBox's live transcoder never chokes with 504 timeouts
       const scoreCodec = (name) => {
@@ -229,6 +399,11 @@ export async function POST(req) {
       // 2. Or complete season pack (e.g. S01 Complete)
       if (!targetTorrent) {
         targetTorrent = sortedCandidates.find((c) => seasonRegex.test(c.name || '') && !/s\d+e\d+/i.test(c.name || ''));
+      }
+
+      // 3. Or any pack (e.g. "Complete Series") whose file list contains this episode under the cap
+      if (!targetTorrent) {
+        targetTorrent = sortedCandidates.find(hasFittingEpisodeFile);
       }
 
       // Strictly fail if neither exists so we NEVER play a wrong episode
@@ -281,7 +456,11 @@ export async function POST(req) {
         return NextResponse.json({ success: false, cached: false, reason: `Episode S${sStr}E${eStr} file not found in torrent` });
       }
 
-      const canDirect = isUniversalWebVideo(epFile.name);
+      if (!withinCap(epFile.size)) {
+        return NextResponse.json({ success: false, cached: false, reason: 'Episode file is larger than 5 GB' });
+      }
+
+      const canDirect = !FORCE_HLS && isUniversalWebVideo(epFile.name);
       let directUrl = null;
       let hlsUrl = null;
 
@@ -300,7 +479,7 @@ export async function POST(req) {
         // MKV / HEVC: Requires TorBox HLS live transcoding
         try {
           const hlsRes = await fetch(
-            `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${epFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=null`,
+            `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${epFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=${resIdx}`,
             {
               headers: { Authorization: `Bearer ${token}` },
               signal: AbortSignal.timeout(12000),
@@ -368,9 +547,14 @@ export async function POST(req) {
     }
 
     const movie = await searchYts(title, resolvedImdb);
-    const torrents = movie?.torrents || [];
+    const allTorrents = movie?.torrents || [];
+    const torrents = allTorrents.filter((t) => withinCap(t.size_bytes));
     if (torrents.length === 0) {
-      return NextResponse.json({ success: false, cached: false, reason: 'No torrent candidates found' });
+      return NextResponse.json({
+        success: false,
+        cached: false,
+        reason: allTorrents.length ? 'Every release is larger than 5 GB' : 'No torrent candidates found',
+      });
     }
 
     const sortedTorrents = [...torrents].sort((a, b) => {
@@ -395,9 +579,9 @@ export async function POST(req) {
     }
 
     const cacheJson = await cacheRes.json();
-    const cachedList = Array.isArray(cacheJson.data) ? cacheJson.data : [];
+    const cachedList = (Array.isArray(cacheJson.data) ? cacheJson.data : []).filter((c) => withinCap(c.size));
     if (cachedList.length === 0) {
-      return NextResponse.json({ success: false, cached: false, reason: 'No cached stream available on TorBox' });
+      return NextResponse.json({ success: false, cached: false, reason: 'No cached stream under 5 GB available on TorBox' });
     }
 
     const cachedHashes = new Set(cachedList.map((c) => c.hash.toLowerCase()));
@@ -442,7 +626,11 @@ export async function POST(req) {
       return NextResponse.json({ success: false, cached: false, reason: 'No video file found in torrent' });
     }
 
-    const canDirect = isUniversalWebVideo(videoFile.name);
+    if (!withinCap(videoFile.size)) {
+      return NextResponse.json({ success: false, cached: false, reason: 'Video file is larger than 5 GB' });
+    }
+
+    const canDirect = !FORCE_HLS && isUniversalWebVideo(videoFile.name);
     let directUrl = null;
     let hlsUrl = null;
 
@@ -459,7 +647,7 @@ export async function POST(req) {
     } else {
       try {
         const hlsRes = await fetch(
-          `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${videoFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=null`,
+          `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${videoFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=${resIdx}`,
           {
             headers: { Authorization: `Bearer ${token}` },
             signal: AbortSignal.timeout(12000),
