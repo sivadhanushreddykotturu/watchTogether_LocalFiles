@@ -257,6 +257,7 @@ export default function Room() {
   const [currentAudioTrack, setCurrentAudioTrack] = useState(-1);
   const [audioPanelOpen, setAudioPanelOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [fitMode, setFitMode] = useState('contain');
   const [isFullscreen, setIsFullscreen] = useState(false);
   // iPhone Safari can't fullscreen a <div>, only its own native video player
   // (which hides our chat/reaction overlays), so we fill the viewport instead.
@@ -270,7 +271,7 @@ export default function Room() {
 
   // player-chrome behavior: controls wake on cursor/touch activity, fade when idle
   function pokeZoomUi() {
-    if (!document.fullscreenElement) return;
+    // show zoom controls on activity in both windowed and fullscreen modes
     setZoomUiVisible(true);
     clearTimeout(zoomUiTimerRef.current);
     zoomUiTimerRef.current = setTimeout(() => setZoomUiVisible(false), 2500);
@@ -1434,6 +1435,27 @@ export default function Room() {
     setZoom((z) => Math.min(2, Math.max(1, Math.round((z + delta) * 100) / 100)));
   }
 
+  function resetZoom() {
+    setZoom(1);
+    setFitMode('contain');
+    try {
+      localStorage.setItem('reelsync:fitMode', 'contain');
+    } catch {}
+    toast('📺 Reset to 100% (Fit Original)');
+  }
+
+  const toggleFitMode = () => {
+    setFitMode((prev) => {
+      const next = prev === 'contain' ? 'cover' : 'contain';
+      setZoom(1);
+      try {
+        localStorage.setItem('reelsync:fitMode', next);
+      } catch {}
+      toast(next === 'cover' ? '📺 Fill Mode: Black bars cropped (Edge-to-Edge)' : '📺 Fit Mode: Original aspect ratio');
+      return next;
+    });
+  }
+
   function beat() {
     const socket = getSocket();
 
@@ -2262,6 +2284,8 @@ export default function Room() {
     try {
       const savedZoom = Number(localStorage.getItem('reelsync:zoom'));
       if (savedZoom >= 1 && savedZoom <= 2) setZoom(savedZoom);
+      const savedFit = localStorage.getItem('reelsync:fitMode');
+      if (savedFit === 'contain' || savedFit === 'cover') setFitMode(savedFit);
     } catch { /* ignore */ }
 
     const onFsChange = () => {
@@ -2376,6 +2400,7 @@ export default function Room() {
         if (e.code === 'KeyG') nudgeSubtitles(-subStep);
         if (e.code === 'KeyH') nudgeSubtitles(subStep);
         if (e.code === 'KeyV') cycleSubtitles();
+        if (e.code === 'KeyZ') toggleFitMode();
         if (e.code === 'KeyL' || e.code === 'KeyD') setDimmed((prev) => !prev);
         return;
       }
@@ -2415,6 +2440,7 @@ export default function Room() {
       if (e.code === 'KeyG') nudgeSubtitles(-subStep);
       if (e.code === 'KeyH') nudgeSubtitles(subStep);
       if (e.code === 'KeyV') cycleSubtitles(); // VLC: V cycles subtitle tracks
+      if (e.code === 'KeyZ') toggleFitMode();
       if (e.code === 'KeyB') cycleAudioTrack(); // VLC: B cycles audio tracks
       if (e.code === 'KeyF') fullscreen();
       if (e.code === 'KeyL' || e.code === 'KeyD') setDimmed((prev) => !prev);
@@ -4186,6 +4212,7 @@ export default function Room() {
 
   const pokeHeader = () => {
     setHeaderVisible(true);
+    pokeZoomUi();
     setFsCtrlVisible(true);
     clearTimeout(headerTimerRef.current);
     clearTimeout(fsCtrlTimerRef.current);
@@ -4209,6 +4236,7 @@ export default function Room() {
     } else {
       clearTimeout(headerTimerRef.current);
       setHeaderVisible(true);
+    pokeZoomUi();
       setFsCtrlVisible(true);
     }
     return () => {
@@ -4935,7 +4963,7 @@ export default function Room() {
           )}
 
           <div
-            className={'screen' + (pseudoFs ? ' pseudo-fs' : '') + (!source && playDisabled ? ' start-mode' : '') + (!headerVisible && playing ? ' idle-playing' : '')}
+            className={'screen' + (pseudoFs ? ' pseudo-fs' : '') + (!source && playDisabled ? ' start-mode' : '') + (!headerVisible && playing ? ' idle-playing' : '') + (fitMode === 'cover' ? ' fit-cover' : '')}
             ref={screenRef}
             onMouseMove={pokeHeader}
             onTouchStart={pokeHeader}
@@ -4947,7 +4975,7 @@ export default function Room() {
               referrerPolicy="no-referrer"
               crossOrigin={source?.type === 'direct' ? undefined : 'anonymous'}
               className={source?.type === 'youtube' || source?.type === 'embed' ? 'hidden' : ''}
-              style={{ transform: `scale(${zoom})` }}
+              style={{ transform: `scale(${zoom})`, objectFit: fitMode }}
               onError={() => {
                 const err = videoRef.current?.error;
                 if (err && source?.type === 'direct') {
@@ -5471,11 +5499,11 @@ export default function Room() {
               </div>
             )}
 
-            {isFullscreen && source?.type !== 'embed' && (
-              <div className={'zoom-controls' + (zoomUiVisible ? ' show' : '')}>
+            {source && source?.type !== 'embed' && (
+              <div className={'zoom-controls' + ((zoomUiVisible || zoom > 1 || fitMode === 'cover') && headerVisible ? ' show' : ' fs-hidden')}>
                 <button type="button" onClick={() => nudgeZoom(0.25)} title="Zoom in (crops black bars)">+</button>
-                <button type="button" className="zoom-level" onClick={() => setZoom(1)} title="Reset zoom">{Math.round(zoom * 100)}%</button>
-                <button type="button" onClick={() => nudgeZoom(-0.25)} title="Zoom out" disabled={zoom <= 1}>−</button>
+                <button type="button" className="zoom-level" onClick={resetZoom} title="Reset zoom">{fitMode === 'cover' ? 'FILL' : `${Math.round(zoom * 100)}%`}</button>
+                <button type="button" onClick={() => nudgeZoom(-0.25)} title="Zoom out" disabled={zoom <= 1 && fitMode !== 'cover'}>−</button>
               </div>
             )}
 
@@ -6260,6 +6288,26 @@ export default function Room() {
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
                   <circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" />
                 </svg>
+              </button>
+
+              <button
+                type="button"
+                className={'t-btn fit-btn' + (fitMode === 'cover' ? ' active' : '')}
+                onClick={toggleFitMode}
+                title={fitMode === 'cover' ? 'Fit to Screen (Z) · Show original frame' : 'Fill Screen (Z) · Crop black bars'}
+                aria-label={fitMode === 'cover' ? 'Fit to Screen' : 'Fill Screen'}
+              >
+                {fitMode === 'cover' ? (
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="4" width="20" height="16" rx="2" />
+                    <path d="M7 10l5-5 5 5M7 14l5 5 5-5" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="4" width="20" height="16" rx="2" />
+                    <path d="M2 9h20M2 15h20" strokeDasharray="2 2" />
+                  </svg>
+                )}
               </button>
 
               <button

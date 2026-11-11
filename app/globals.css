@@ -683,9 +683,14 @@ input[type="text"]::placeholder { color: #525b70; }
 .screen video {
   width: 100%;
   height: 100%;
-  max-height: calc(100vh - 210px);
+  max-height: 100%;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   background: #000;
   object-fit: contain;
+}
+
+.screen.fit-cover video {
+  object-fit: cover !important;
 }
 
 /* fullscreen: pure cinema — no chrome */
@@ -985,6 +990,7 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 .t-btn.cc { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; position: relative; }
 .t-btn.cc.active { color: var(--accent); border-color: var(--accent); }
 .t-btn.pip-btn.active { color: var(--accent); border-color: var(--accent); }
+.t-btn.fit-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .t-btn.cc .cc-dot {
   position: absolute;
   top: 5px;
@@ -1762,7 +1768,19 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
   pointer-events: none;
   transition: opacity 0.3s ease, visibility 0.3s ease;
 }
-.zoom-controls.show {
+.zoom-controls.show,
+.screen:hover .zoom-controls:not(.fs-hidden) {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+.screen.idle-playing .zoom-controls,
+.zoom-controls.fs-hidden {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+.zoom-controls-state {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
@@ -6304,7 +6322,8 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
     flex-direction: column !important;
   }
   .stage.start-mode .screen,
-  .screen.start-mode {
+  .screen.start-mode,
+  .stage.solo-mode .screen {
     flex: 1 !important;
     height: 100% !important;
     max-height: none !important;
@@ -7924,7 +7943,7 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
 /* Solo Mode Stage Layout */
 .stage.solo-mode {
   grid-template-columns: 1fr !important;
-  max-width: 1400px;
+  max-width: none !important;
   margin: 0 auto;
   width: 100%;
 }
