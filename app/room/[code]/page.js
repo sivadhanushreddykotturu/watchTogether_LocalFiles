@@ -66,9 +66,21 @@ const fmtOffset = (o) => (o > 0 ? `+${o} ms` : o < 0 ? `−${Math.abs(o)} ms` : 
 
 // 18+ search: the sources you can switch between, and Eporner's sort orders
 const ADULT_SOURCES = [
+  { id: 'adult', label: 'All' }, // both sources side by side
   { id: 'ph', label: 'Pornhub' },
   { id: 'ep', label: 'Eporner' },
 ];
+
+// Alternates two result lists (a1, b1, a2, b2, …) so neither source buries the other
+function interleave(a, b) {
+  const out = [];
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    if (a[i]) out.push(a[i]);
+    if (b[i]) out.push(b[i]);
+  }
+  return out;
+}
 const EP_SORTS = [
   { id: 'top-weekly', label: 'Top this week' },
   { id: 'most-popular', label: 'Most popular' },
@@ -126,12 +138,12 @@ export default function Room() {
   const [ytPanelOpen, setYtPanelOpen] = useState(false);
   const [ytUrl, setYtUrl] = useState('');
   const [ytSearchModalOpen, setYtSearchModalOpen] = useState(false);
-  const [searchPlatform, setSearchPlatform] = useState('tmdb'); // 'tmdb' | 'youtube' | 'ph' | 'ep' (ph + ep are the 18+ sources)
+  const [searchPlatform, setSearchPlatform] = useState('tmdb'); // 'tmdb' | 'youtube' | 'adult' (18+: Pornhub + Eporner) | 'ph' | 'ep'
   const [searchPage, setSearchPage] = useState(1); // 18+ sources are paged
   const [searchHasMore, setSearchHasMore] = useState(false);
   const [searchTotalPages, setSearchTotalPages] = useState(1);
   const [epOrder, setEpOrder] = useState('top-weekly'); // Eporner sort order
-  const isAdultSearch = searchPlatform === 'ph' || searchPlatform === 'ep';
+  const isAdultSearch = searchPlatform === 'adult' || searchPlatform === 'ph' || searchPlatform === 'ep';
   const [tmdbFilter, setTmdbFilter] = useState('all'); // 'all' | 'movie' | 'tv' | 'anime' | 'kdrama'
   const [tmdbEpisodeModalOpen, setTmdbEpisodeModalOpen] = useState(false);
   const [selectedSeriesForEpisodes, setSelectedSeriesForEpisodes] = useState(null);
@@ -146,7 +158,7 @@ export default function Room() {
   const [ytError, setYtError] = useState('');
 
   useEffect(() => {
-    if (!adultMode && (searchPlatform === 'ph' || searchPlatform === 'ep')) {
+    if (!adultMode && (searchPlatform === 'adult' || searchPlatform === 'ph' || searchPlatform === 'ep')) {
       setSearchPlatform('youtube');
     }
   }, [adultMode, searchPlatform]);
@@ -4025,6 +4037,23 @@ export default function Room() {
         } else {
           results = await searchTmdb(q, { type: currentTmdbFilter, signal: ctrl.signal });
         }
+      } else if (platform === 'adult') {
+        // Both 18+ sources at once. One being unreachable must not blank the other.
+        // Eporner also browses with an empty query; Pornhub needs a query, so it sits out of browse.
+        const [phRes, epRes] = await Promise.allSettled([
+          q ? searchPornhub(q, ctrl.signal, page) : Promise.resolve([]),
+          searchEporner(q, ctrl.signal, { page, order }),
+        ]);
+        if (ctrl.signal.aborted) return;
+        if (phRes.status === 'rejected' && epRes.status === 'rejected') throw new Error('Both 18+ sources failed');
+        const phList = phRes.status === 'fulfilled' ? phRes.value : [];
+        const ep = epRes.status === 'fulfilled' ? epRes.value : { results: [], hasMore: false };
+        results = interleave(ep.results, phList);
+        setSearchHasMore(ep.hasMore || phList.length >= 12);
+        setSearchTotalPages(0);
+        if (q && (phRes.status === 'rejected' || epRes.status === 'rejected')) {
+          toast(`${phRes.status === 'rejected' ? 'Pornhub' : 'Eporner'} didn't respond — showing ${phRes.status === 'rejected' ? 'Eporner' : 'Pornhub'} only`);
+        }
       } else if (platform === 'ep') {
         // Eporner also browses with an empty query (top of the chosen sort order)
         const ep = await searchEporner(q, ctrl.signal, { page, order });
@@ -4104,7 +4133,7 @@ export default function Room() {
   const changeEpOrder = (order) => {
     setEpOrder(order);
     clearTimeout(searchDebounceRef.current);
-    executeSearch(ytSearchQuery, 'ep', undefined, 1, order);
+    executeSearch(ytSearchQuery, searchPlatform, undefined, 1, order);
   };
 
   // Source switcher (+ sort for Eporner) shown under the search box while the 18+ tab is open
@@ -4123,8 +4152,8 @@ export default function Room() {
           </button>
         ))}
       </div>
-      {searchPlatform === 'ep' && (
-        <div className="adult-src-row" role="group" aria-label="Sort">
+      {(searchPlatform === 'ep' || searchPlatform === 'adult') && (
+        <div className="adult-src-row" role="group" aria-label="Eporner sort order">
           {EP_SORTS.map((o) => (
             <button
               key={o.id}
@@ -4161,7 +4190,7 @@ export default function Room() {
   const handleSearchInputChange = (text) => {
     setYtSearchQuery(text);
     clearTimeout(searchDebounceRef.current);
-    if (!text.trim() && searchPlatform !== 'tmdb' && searchPlatform !== 'ep') {
+    if (!text.trim() && searchPlatform !== 'tmdb' && searchPlatform !== 'ep' && searchPlatform !== 'adult') {
       setYtSearchResults([]);
       setYtSearching(false);
       return;
@@ -4169,7 +4198,7 @@ export default function Room() {
     // Eporner allows about one search a second, so wait a little longer before searching while typing
     searchDebounceRef.current = setTimeout(() => {
       executeSearch(text, undefined, undefined, 1);
-    }, searchPlatform === 'ep' ? 800 : 450);
+    }, searchPlatform === 'ep' || searchPlatform === 'adult' ? 800 : 450);
   };
 
   const handleSelectSearchResult = async (item, playNow = true, startTime = 0) => {
@@ -7211,7 +7240,7 @@ export default function Room() {
                         role="tab"
                         aria-selected={isAdultSearch}
                         className={'seg-btn' + (isAdultSearch ? ' active' : '')}
-                        onClick={() => { if (!isAdultSearch) switchSearchPlatform('ph'); }}
+                        onClick={() => { if (!isAdultSearch) switchSearchPlatform('adult'); }}
                       >
                         18+
                       </button>
@@ -7252,6 +7281,8 @@ export default function Room() {
                           ? 'Search Pornhub videos…'
                           : searchPlatform === 'ep'
                           ? 'Search Eporner, or browse below…'
+                          : searchPlatform === 'adult'
+                          ? 'Search Pornhub + Eporner…'
                           : 'Search YouTube videos…'
                       }
                       value={ytSearchQuery}
@@ -7337,7 +7368,9 @@ export default function Room() {
                                   ? '📺 Series'
                                   : video.mediaType === 'movie'
                                   ? `🎬 Movie ${video.year ? `(${video.year})` : ''}`
-                                  : video.author || (searchPlatform === 'ph' ? 'Pornhub' : searchPlatform === 'ep' ? 'Eporner' : 'YouTube')}
+                                  : video.platform === 'PH' ? 'Pornhub'
+                                  : video.platform === 'EP' ? 'Eporner'
+                                  : video.author || 'YouTube'}
                               </div>
                             </div>
                             <div className="qsi-actions">
@@ -7555,6 +7588,8 @@ export default function Room() {
                       ? 'Search by title or tag…'
                       : searchPlatform === 'ep'
                       ? 'Search Eporner by title or tag, or browse…'
+                      : searchPlatform === 'adult'
+                      ? 'Search Pornhub and Eporner by title or tag…'
                       : 'Search YouTube…'
                   }
                   aria-label="Search"
@@ -7590,7 +7625,7 @@ export default function Room() {
                     YouTube
                   </button>
                   {adultMode && (
-                    <button type="button" role="tab" aria-selected={isAdultSearch} className={'seg-btn' + (isAdultSearch ? ' active' : '')} onClick={() => { if (!isAdultSearch) switchSearchPlatform('ph'); }}>
+                    <button type="button" role="tab" aria-selected={isAdultSearch} className={'seg-btn' + (isAdultSearch ? ' active' : '')} onClick={() => { if (!isAdultSearch) switchSearchPlatform('adult'); }}>
                       18+
                     </button>
                   )}
@@ -7621,7 +7656,7 @@ export default function Room() {
                 ) : isAdultSearch ? (
                   <>
                     {renderAdultControls()}
-                    {searchPlatform === 'ph' && !ytSearchQuery && (
+                    {(searchPlatform === 'ph' || searchPlatform === 'adult') && !ytSearchQuery && (
                       <div className="sm-chips" role="group" aria-label="Suggestions">
                         {['Trending', 'Japanese', 'Anime', 'VR', '4K', 'Cosplay'].map((tag) => (
                           <button
@@ -7746,8 +7781,9 @@ export default function Room() {
                           <div className="sm-video-text">
                             <div className="sm-title two-line" title={video.title}>{video.title}</div>
                             <div className="sm-meta">
-                              {video.author}
-                              {video.author && video.views ? ' · ' : ''}
+                              {/* 18+ results say which site they came from, since "All" mixes two */}
+                              {(video.platform === 'PH' ? 'Pornhub' : video.platform === 'EP' ? 'Eporner' : video.author) || ''}
+                              {(video.platform === 'PH' || video.platform === 'EP' || video.author) && video.views ? ' · ' : ''}
                               {video.views}
                             </div>
                           </div>
@@ -7773,7 +7809,7 @@ export default function Room() {
               ) : (
                 <div className="sm-state">
                   <p className="sm-state-title">
-                    {searchPlatform === 'ph' || searchPlatform === 'ep' ? 'Search to get started' : 'Search YouTube to watch together'}
+                    {isAdultSearch ? 'Search to get started' : 'Search YouTube to watch together'}
                   </p>
                   <p className="sm-state-sub">Type above or pick a suggestion. Results play for the whole room.</p>
                 </div>
