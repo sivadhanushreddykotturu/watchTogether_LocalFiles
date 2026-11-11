@@ -43,7 +43,7 @@ export { getAppleEmojiUrl };
 
 // ---------- subtitles & media ----------
 const SUB_COLORS = ['#ffffff', '#facc15', '#86efac', '#67e8f9'];
-const SUB_STYLE_DEFAULT = { size: 24, color: '#ffffff', bg: false, pos: 8 };
+const SUB_STYLE_DEFAULT = { size: 32, color: '#ffffff', bg: false, pos: 8 };
 const SUB_POSITIONS = [[5, 'Low'], [8, 'Mid'], [14, 'High']];
 
 function canPlayHevc() {
