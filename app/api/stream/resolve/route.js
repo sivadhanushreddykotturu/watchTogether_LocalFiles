@@ -22,6 +22,8 @@ export async function GET(request) {
     const type = searchParams.get('type') || 'movie';
     const season = searchParams.get('s') || searchParams.get('season') || '1';
     const episode = searchParams.get('e') || searchParams.get('episode') || '1';
+    const fallbackParam = (searchParams.get('fallback') || searchParams.get('provider') || '').toLowerCase();
+    const forceKisskh = fallbackParam === 'kisskh' || searchParams.get('skip') === 'vidlink';
 
     if (!id) {
       return NextResponse.json({ ok: false, error: 'Missing TMDB ID' }, { status: 400 });
@@ -33,33 +35,38 @@ export async function GET(request) {
     try {
       const cached = await db.getStreamCache(mediaKey);
       if (cached && cached.streamUrl) {
-        console.log(`[Stream API] ⚡ Cache HIT in MongoDB for ${mediaKey} (${cached.provider})`);
-        let streamUrl = cached.streamUrl;
-        if (shouldProxyStream(streamUrl, cached.provider)) {
-          streamUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(streamUrl)}`;
+        if (forceKisskh && cached.provider !== 'KissKH') {
+          console.log(`[Stream API] Skipping cached ${cached.provider} stream because KissKH fallback requested.`);
+        } else {
+          console.log(`[Stream API] ⚡ Cache HIT in MongoDB for ${mediaKey} (${cached.provider})`);
+          let streamUrl = cached.streamUrl;
+          if (shouldProxyStream(streamUrl, cached.provider)) {
+            streamUrl = `https://d.ksdhanushreddy.workers.dev/proxy?url=${encodeURIComponent(streamUrl)}`;
+          }
+
+          const subtitles = Array.isArray(cached.subtitles)
+            ? cached.subtitles.map(s => ({
+                id: String(s.id || ''),
+                lang: String(s.lang || ''),
+                label: String(s.label || ''),
+                url: String(s.url || ''),
+                src: String(s.src || s.url || ''),
+                rawSrc: String(s.rawSrc || ''),
+                default: Boolean(s.default),
+              }))
+            : [];
+
+          return NextResponse.json({
+            ok: true,
+            cached: true,
+            streamUrl,
+            rawUrl: cached.rawUrl || cached.streamUrl,
+            streamType: cached.streamType,
+            provider: cached.provider,
+            codec: cached.codec || 'h264',
+            subtitles,
+          });
         }
-
-        const subtitles = Array.isArray(cached.subtitles)
-          ? cached.subtitles.map(s => ({
-              id: String(s.id || ''),
-              lang: String(s.lang || ''),
-              label: String(s.label || ''),
-              url: String(s.url || ''),
-              src: String(s.src || s.url || ''),
-              rawSrc: String(s.rawSrc || ''),
-              default: Boolean(s.default),
-            }))
-          : [];
-
-        return NextResponse.json({
-          ok: true,
-          cached: true,
-          streamUrl,
-          rawUrl: cached.rawUrl || cached.streamUrl,
-          streamType: cached.streamType,
-          provider: cached.provider,
-          subtitles,
-        });
       }
     } catch (err) {
       console.warn('MongoDB cache check warning:', err.message);
@@ -68,6 +75,17 @@ export async function GET(request) {
   let resolvedData = null;
   const startTime = Date.now();
 
+  if (forceKisskh) {
+    try {
+      const kisskhRes = await extractKisskhHttp(id, type, season, episode);
+      if (kisskhRes && kisskhRes.ok && kisskhRes.streamUrl) {
+        console.log(`[Stream API] ⚡ KissKH Direct Fallback Match for ${mediaKey}`);
+        resolvedData = kisskhRes;
+      }
+    } catch (err) {
+      console.warn('[Stream API] KissKH direct error:', err.message);
+    }
+  } else {
   // 2. Query Primary 1080p Providers (Pure HTTP VidLink on server + Local Resolver daemon for CineSrc/VidFast)
   const primaryPromises = [];
 
@@ -139,6 +157,7 @@ export async function GET(request) {
       // Not on KissKH or rejected by strict title/type match
     }
   }
+  }
 
   // 4. If stream extracted, prepare and cache in MongoDB Atlas
   if (resolvedData && resolvedData.streamUrl) {
@@ -154,6 +173,7 @@ export async function GET(request) {
       rawUrl: resolvedData.streamUrl,
       streamType: resolvedData.streamType || (finalStreamUrl.includes('.mpd') ? 'dash' : 'hls'),
       provider: resolvedData.provider || 'VidLink',
+      codec: resolvedData.codec || (finalStreamUrl.includes('.mpd') ? (resolvedData.codec || 'h264') : 'h264'),
       subtitles: resolvedData.subtitles || [],
     };
 

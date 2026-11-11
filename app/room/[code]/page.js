@@ -43,8 +43,22 @@ export { getAppleEmojiUrl };
 
 // ---------- subtitles & media ----------
 const SUB_COLORS = ['#ffffff', '#facc15', '#86efac', '#67e8f9'];
-const SUB_STYLE_DEFAULT = { size: 20, color: '#ffffff', bg: false, pos: 18 };
-const SUB_POSITIONS = [[12, 'Low'], [18, 'Mid'], [26, 'High']];
+const SUB_STYLE_DEFAULT = { size: 20, color: '#ffffff', bg: false, pos: 8 };
+const SUB_POSITIONS = [[5, 'Low'], [8, 'Mid'], [14, 'High']];
+
+function canPlayHevc() {
+  if (typeof window === 'undefined' || typeof MediaSource === 'undefined') return false;
+  try {
+    return (
+      MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L120.90"') ||
+      MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L120.90"') ||
+      MediaSource.isTypeSupported('video/mp4; codecs="hevc"') ||
+      MediaSource.isTypeSupported('video/mp4; codecs="hvc1"')
+    );
+  } catch {
+    return false;
+  }
+}
 
 // VLC semantics: positive = subtitles appear later.
 const fmtOffset = (o) => (o > 0 ? `+${o} ms` : o < 0 ? `−${Math.abs(o)} ms` : '0 ms');
@@ -2280,8 +2294,8 @@ export default function Room() {
     try {
       const saved = JSON.parse(localStorage.getItem('reelsync:substyle') || 'null');
       if (saved) {
-        const pos = saved.pos && saved.pos > 10 ? saved.pos : 18;
-        const bg = saved.bg !== undefined && saved.pos > 10 ? saved.bg : false;
+        const pos = (saved.pos === 18 || saved.pos === 10 || !saved.pos) ? 8 : saved.pos;
+        const bg = Boolean(saved.bg);
         setSubStyle({ ...SUB_STYLE_DEFAULT, ...saved, pos, bg });
       }
     } catch { /* ignore corrupt prefs */ }
@@ -2793,6 +2807,79 @@ export default function Room() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source?.videoId, source?.type]);
 
+  const fallbackLockRef = useRef(false);
+
+  const triggerKisskhFallback = async (currentSource) => {
+    if (!currentSource || fallbackLockRef.current) return;
+    fallbackLockRef.current = true;
+    toast('HEVC stream unsupported by browser, switched to fallback player');
+
+    try {
+      if (dashRef.current) {
+        try { dashRef.current.reset(); } catch {}
+        dashRef.current = null;
+      }
+
+      const tmdbId = currentSource.tmdbId;
+      const mediaType = currentSource.mediaType || (currentSource.season ? 'tv' : 'movie');
+      const season = currentSource.season || 1;
+      const episode = currentSource.episode || 1;
+      const savedTime = videoRef.current?.currentTime || currentSource.time || 0;
+
+      if (!tmdbId) {
+        fallbackLockRef.current = false;
+        return;
+      }
+
+      const kisskh = await resolveNativeHlsStream({
+        tmdbId,
+        type: mediaType,
+        season,
+        episode,
+        fallback: 'kisskh',
+        provider: 'kisskh',
+        timeoutMs: 12000,
+      });
+
+      if (kisskh && (kisskh.streamUrl || kisskh.hlsUrl)) {
+        const streamUrl = kisskh.streamUrl || kisskh.hlsUrl;
+        const newSource = {
+          type: 'hls',
+          url: streamUrl,
+          rawUrl: kisskh.rawUrl || streamUrl,
+          title: currentSource.title,
+          showTitle: currentSource.showTitle,
+          platform: 'KissKH Native HLS (Fallback)',
+          mediaType,
+          tmdbId,
+          season,
+          episode,
+          poster: currentSource.poster,
+          backdrop: currentSource.backdrop,
+          codec: 'h264',
+          subtitles: (kisskh.subtitles && kisskh.subtitles.length > 0) ? kisskh.subtitles : (currentSource.subtitles || []),
+          time: savedTime,
+          playing: true,
+        };
+
+        const socket = getSocket();
+        if (socket.connected) {
+          socket.emit('source', newSource);
+        } else {
+          setSource(newSource);
+        }
+      } else {
+        toast('⚠️ Fallback player could not find an alternative stream.');
+      }
+    } catch (err) {
+      console.warn('[KissKH Fallback Error]:', err);
+    } finally {
+      setTimeout(() => {
+        fallbackLockRef.current = false;
+      }, 5000);
+    }
+  };
+
   // HLS stream / direct video stream lifecycle (for PH & direct online streams)
   useEffect(() => {
     const video = videoRef.current;
@@ -2813,6 +2900,13 @@ export default function Room() {
 
     // 1. DASH Native Stream (VidLink .mpd)
     if ((source?.type === 'dash' || source?.url?.includes('.mpd')) && source.url) {
+      // Upfront HEVC Capability Check: If stream is HEVC and browser lacks MSE HEVC support, auto-fallback to KissKH
+      const isHevcStream = (source.codec === 'hevc' || source.codec === 'h265');
+      if (isHevcStream && !canPlayHevc()) {
+        console.warn('[DASH] HEVC video stream unsupported by this browser, triggering KissKH fallback');
+        triggerKisskhFallback(source);
+        return;
+      }
       setPlayDisabled(false);
       fileLoadedRef.current = true;
       try {
@@ -2939,6 +3033,13 @@ export default function Room() {
                   setCurrentAudioTrack(cur.index !== undefined ? cur.index : 0);
                 }
               }
+
+              // HEVC MSE check: If audio bound but 0 video representations exist (HEVC failure)
+              if (aTracks.length > 0 && reps.length === 0 && !canPlayHevc()) {
+                console.warn('[DASH] Audio bound but 0 video representations supported (HEVC MSE failure). Fallback to KissKH.');
+                triggerKisskhFallback(source);
+                return;
+              }
             }
           } catch (e) {
             console.warn('[DASH] updateDashQualities error:', e);
@@ -2968,7 +3069,13 @@ export default function Room() {
           }
           updateDashQualities();
         });
-        dashPlayer.on('error', (e) => console.warn('[DASH] error:', e));
+        dashPlayer.on('error', (e) => {
+          console.warn('[DASH] error:', e);
+          const errStr = JSON.stringify(e || {}).toLowerCase();
+          if (errStr.includes('codec') || errStr.includes('capability') || errStr.includes('mediasource') || errStr.includes('unsupported')) {
+            triggerKisskhFallback(source);
+          }
+        });
 
         video.addEventListener('loadedmetadata', updateDashQualities);
         video.addEventListener('playing', updateDashQualities);
@@ -3908,6 +4015,7 @@ export default function Room() {
             tmdbId: item.tmdbId || item.id,
             poster: item.poster,
             backdrop: item.backdrop,
+            codec: hls.codec || (sType === 'dash' ? (hls.codec || 'h264') : 'h264'),
             subtitles: hls.subtitles || [],
           };
           const seekTime = Number(startTime) || Number(item.time) || 0;
@@ -4053,6 +4161,7 @@ export default function Room() {
           showTitle: epPayload.showTitle,
           poster: epPayload.poster,
           backdrop: epPayload.backdrop,
+          codec: hls.codec || (sType === 'dash' ? (hls.codec || 'h264') : 'h264'),
           subtitles: hls.subtitles || [],
         };
         const seekTime = Number(startTime) || Number(epPayload.time) || 0;
@@ -4111,6 +4220,7 @@ export default function Room() {
         episodeTitle: `Episode ${nextEp}`,
         showTitle: cleanShowTitle,
         title: `${cleanShowTitle} · S${season}:E${nextEp}`,
+        codec: hls.codec || (sType === 'dash' ? (hls.codec || 'h264') : 'h264'),
         subtitles: hls.subtitles || [],
         playing: true,
       };
@@ -5948,7 +6058,7 @@ export default function Room() {
                   <div className="sub-row">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '4px' }}>
                       <span className="sub-label">Appearance (only you)</span>
-                      <span className="sub-hint" style={{ margin: 0 }}>{subStyle.size}px · {subStyle.pos >= 24 ? 'High' : subStyle.pos >= 16 ? 'Mid (Netflix)' : 'Low'}</span>
+                      <span className="sub-hint" style={{ margin: 0 }}>{subStyle.size}px · {subStyle.pos >= 12 ? 'High' : subStyle.pos >= 7 ? 'Mid (Netflix)' : 'Low'}</span>
                     </div>
                     <input
                       type="range"
