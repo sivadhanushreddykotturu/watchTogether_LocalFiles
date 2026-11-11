@@ -83,14 +83,44 @@ function parseRes(v) {
   return Number.isInteger(n) && n >= 0 && n <= 7 ? String(n) : String(DEFAULT_RES);
 }
 
-async function createHls(token, torrentId, fileId, resIdx = String(DEFAULT_RES)) {
+// Preferred audio language. Multi-audio releases (e.g. Tam+Hin+Tel+Eng) put one language first, so
+// asking for track 0 plays whatever that is. We read the file's audio list and pick the right track.
+// Values are ISO 639-2 codes as TorBox reports them ("eng", "hin", "tam", "tel", "mal", "kan").
+const LANG_NAMES = { eng: 'english', hin: 'hindi', tam: 'tamil', tel: 'telugu', mal: 'malayalam', kan: 'kannada' };
+function parseAudioLang(v) {
+  const s = String(v || '').toLowerCase();
+  return LANG_NAMES[s] ? s : ''; // '' = no preference, keep the first track
+}
+function audioMatches(a, lang) {
+  const code = String(a?.language || '').toLowerCase();
+  const full = String(a?.language_full || '').toLowerCase();
+  return code === lang || code.startsWith(lang.slice(0, 2)) || full.includes(LANG_NAMES[lang]) || String(a?.title || '').toLowerCase().includes(LANG_NAMES[lang]);
+}
+
+async function createStreamCall(token, torrentId, fileId, resIdx, audioIdx) {
+  const res = await fetch(
+    `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${fileId}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=${audioIdx}&chosen_resolution_index=${resIdx}`,
+    { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12000) }
+  );
+  if (!res.ok) return null;
+  return (await res.json())?.data || null;
+}
+
+async function createHls(token, torrentId, fileId, resIdx = String(DEFAULT_RES), audioLang = '') {
   try {
-    const res = await fetch(
-      `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${fileId}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=${resIdx}`,
-      { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12000) }
-    );
-    if (!res.ok) return null;
-    return (await res.json())?.data?.hls_url || null;
+    let data = await createStreamCall(token, torrentId, fileId, resIdx, 0);
+    if (!data) return null;
+    // The first call lists the audio tracks; if the preferred language isn't track 0, ask again for it.
+    // TorBox wants the position in the list (0,1,2...), not the track's own "index" value.
+    const audios = data.metadata?.audios;
+    if (audioLang && Array.isArray(audios) && audios.length > 1) {
+      const pos = audios.findIndex((a) => audioMatches(a, audioLang));
+      if (pos > 0) {
+        const picked = await createStreamCall(token, torrentId, fileId, resIdx, pos);
+        if (picked?.hls_url) data = picked;
+      }
+    }
+    return data.hls_url || null;
   } catch {
     return null;
   }
@@ -224,8 +254,9 @@ function isUniversalWebVideo(fileName) {
 
 export async function POST(req) {
   try {
-    let { title, year, imdbId, tmdbId, mediaType, season, episode, dryRun, resolutionIndex } = await req.json();
+    let { title, year, imdbId, tmdbId, mediaType, season, episode, dryRun, resolutionIndex, audioLang: audioLangRaw } = await req.json();
     const resIdx = parseRes(resolutionIndex);
+    const audioLang = parseAudioLang(audioLangRaw);
     // The key is the viewer's own, saved in their browser and sent per request.
     const token = (req.headers.get('x-torbox-key') || '').trim();
 
@@ -255,7 +286,7 @@ export async function POST(req) {
       if (dryRun) {
         return NextResponse.json({ success: true, dryRun: true, source: 'library', torrentId: own.torrentId, file: own.file, quality: own.quality || null, title: label });
       }
-      const ownHls = await createHls(token, own.torrentId, own.file.id, resIdx);
+      const ownHls = await createHls(token, own.torrentId, own.file.id, resIdx, audioLang);
       if (ownHls) {
         return NextResponse.json({
           success: true,
@@ -477,19 +508,7 @@ export async function POST(req) {
         } catch {}
       } else {
         // MKV / HEVC: Requires TorBox HLS live transcoding
-        try {
-          const hlsRes = await fetch(
-            `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${epFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=${resIdx}`,
-            {
-              headers: { Authorization: `Bearer ${token}` },
-              signal: AbortSignal.timeout(12000),
-            }
-          );
-          if (hlsRes.ok) {
-            const hlsData = await hlsRes.json();
-            hlsUrl = hlsData?.data?.hls_url || null;
-          }
-        } catch {}
+        hlsUrl = await createHls(token, torrentId, epFile.id, resIdx, audioLang);
       }
 
       if (canDirect && directUrl) {
@@ -645,19 +664,7 @@ export async function POST(req) {
         }
       } catch {}
     } else {
-      try {
-        const hlsRes = await fetch(
-          `https://api.torbox.app/v1/api/stream/createstream?id=${torrentId}&file_id=${videoFile.id}&type=torrent&chosen_subtitle_index=null&chosen_audio_index=0&chosen_resolution_index=${resIdx}`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            signal: AbortSignal.timeout(12000),
-          }
-        );
-        if (hlsRes.ok) {
-          const hlsData = await hlsRes.json();
-          hlsUrl = hlsData?.data?.hls_url || null;
-        }
-      } catch {}
+      hlsUrl = await createHls(token, torrentId, videoFile.id, resIdx, audioLang);
     }
 
     if (canDirect && directUrl) {

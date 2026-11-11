@@ -14,7 +14,7 @@ import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
 import { searchSpotify, resolveSpotifyTrack } from '../../../lib/spotify';
 import { parseMediaUrl, resolveMediaUrl, searchPornhub, resolveNativeHlsStream } from '../../../lib/mediaEmbeds';
-import { getTorboxKey, setTorboxKey, clearTorboxKey, verifyTorboxKey, getTorboxQuality, setTorboxQuality, TORBOX_QUALITIES } from '../../../lib/torboxKey';
+import { getTorboxKey, setTorboxKey, clearTorboxKey, verifyTorboxKey, getTorboxQuality, setTorboxQuality, TORBOX_QUALITIES, getTorboxAudioLang, setTorboxAudioLang, TORBOX_AUDIO_LANGS } from '../../../lib/torboxKey';
 import { buildVidfastUrl, buildVidloveUrl, searchTmdb, fetchTmdbTrending, fetchTmdbTvDetails, fetchTmdbSeason, fetchTmdbSources } from '../../../lib/tmdb';
 import TmdbEpisodeModal from '../../components/TmdbEpisodeModal';
 import { VoiceSession } from '../../../lib/voice';
@@ -181,9 +181,11 @@ export default function Room() {
   const [torboxBusy, setTorboxBusy] = useState(false);
   const [torboxInfo, setTorboxInfo] = useState(''); // e.g. "Pro" or an error message
   const [torboxQuality, setTorboxQualityState] = useState('5'); // default 1080p
+  const [torboxAudio, setTorboxAudioState] = useState('eng'); // default English audio
   useEffect(() => {
     setTorboxConnected(Boolean(getTorboxKey()));
     setTorboxQualityState(getTorboxQuality());
+    setTorboxAudioState(getTorboxAudioLang());
   }, []);
   const [transportMore, setTransportMore] = useState(false);
   const [reactTrayOpen, setReactTrayOpen] = useState(false);
@@ -5050,7 +5052,19 @@ export default function Room() {
                           ))}
                         </select>
                       </label>
-                      <p className="torbox-hint">Applies to the next thing you play. Higher quality needs a faster connection (1080p ≈ 5–8 Mbps, 4K ≈ 13+ Mbps).</p>
+                      <label className="torbox-field">
+                        <span>Audio language</span>
+                        <select
+                          className="torbox-input"
+                          value={torboxAudio}
+                          onChange={(e) => { setTorboxAudioState(e.target.value); setTorboxAudioLang(e.target.value); }}
+                        >
+                          {TORBOX_AUDIO_LANGS.map((l) => (
+                            <option key={l.value || 'first'} value={l.value}>{l.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <p className="torbox-hint">Applies to the next thing you play. If a file doesn’t have that language it plays the first track. Higher quality needs a faster connection (1080p ≈ 5–8 Mbps, 4K ≈ 13+ Mbps).</p>
                       <button type="button" className="torbox-btn danger" onClick={removeTorboxKey}>Remove API key</button>
                     </>
                   ) : (
