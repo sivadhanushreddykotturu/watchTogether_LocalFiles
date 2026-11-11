@@ -106,6 +106,16 @@ async function createStreamCall(token, torrentId, fileId, resIdx, audioIdx) {
   return (await res.json())?.data || null;
 }
 
+// The file's audio tracks as [{ pos, code, label, channels }]; pos is the position TorBox wants back.
+function audioListFrom(info) {
+  return (info?.metadata?.audios || []).map((a, pos) => ({
+    pos,
+    code: String(a.language || '').toLowerCase(),
+    label: a.language_full || a.language || `Track ${pos + 1}`,
+    channels: a.channel_layout || '',
+  }));
+}
+
 async function createHls(token, torrentId, fileId, resIdx = String(DEFAULT_RES), audioLang = '', audioPos = null) {
   try {
     // An explicit audio position (from the player's Audio menu) wins over the language preference.
@@ -259,7 +269,7 @@ function isUniversalWebVideo(fileName) {
 
 export async function POST(req) {
   try {
-    let { title, year, imdbId, tmdbId, mediaType, season, episode, dryRun, resolutionIndex, audioLang: audioLangRaw, audioIndex, listAudios } = await req.json();
+    let { title, year, imdbId, tmdbId, mediaType, season, episode, dryRun, resolutionIndex, audioLang: audioLangRaw, audioIndex, listAudios, torrentId: torrentIdIn, fileId: fileIdIn } = await req.json();
     const resIdx = parseRes(resolutionIndex);
     const audioLang = parseAudioLang(audioLangRaw);
     // Position in the file's audio list (0,1,2...), or null when the caller has no explicit pick.
@@ -271,6 +281,30 @@ export async function POST(req) {
 
     if (!token) {
       return NextResponse.json({ success: false, error: 'TorBox API key not set' }, { status: 401 });
+    }
+
+    // Direct mode: the caller already knows the exact TorBox file (the Audio menu does). No title
+    // search, no library lookup: just list that file's audio tracks or make a stream with one of them.
+    const directTid = Number(torrentIdIn);
+    const directFid = Number(fileIdIn);
+    if (torrentIdIn != null && fileIdIn != null && Number.isInteger(directTid) && directTid > 0 && Number.isInteger(directFid) && directFid >= 0) {
+      if (listAudios) {
+        const info = await createStreamCall(token, directTid, directFid, resIdx, 0).catch(() => null);
+        return NextResponse.json(info ? { success: true, audios: audioListFrom(info) } : { success: false, reason: 'Could not read audio tracks' });
+      }
+      const directHls = await createHls(token, directTid, directFid, resIdx, audioLang, audioPos);
+      if (!directHls) return NextResponse.json({ success: false, reason: 'Could not create the stream' });
+      return NextResponse.json({
+        success: true,
+        cached: true,
+        torrentId: directTid,
+        fileId: directFid,
+        streamType: 'hls',
+        streamUrl: directHls,
+        hlsUrl: directHls,
+        directUrl: null,
+        canDirect: false,
+      });
     }
 
     const isTv = mediaType === 'tv' || (season !== undefined && episode !== undefined);
@@ -299,13 +333,7 @@ export async function POST(req) {
         // For the player's Audio menu: the audio tracks in this file, in the order TorBox wants them.
         try {
           const info = await createStreamCall(token, own.torrentId, own.file.id, resIdx, 0);
-          const audios = (info?.metadata?.audios || []).map((a, pos) => ({
-            pos,
-            code: String(a.language || '').toLowerCase(),
-            label: a.language_full || a.language || `Track ${pos + 1}`,
-            channels: a.channel_layout || '',
-          }));
-          return NextResponse.json({ success: true, audios });
+          return NextResponse.json({ success: true, audios: audioListFrom(info) });
         } catch {
           return NextResponse.json({ success: false, reason: 'Could not read audio tracks' });
         }
@@ -316,6 +344,8 @@ export async function POST(req) {
           success: true,
           cached: true,
           source: 'library',
+          torrentId: own.torrentId,
+          fileId: own.file.id,
           streamType: 'hls',
           streamUrl: ownHls,
           directUrl: null,
@@ -557,6 +587,8 @@ export async function POST(req) {
         return NextResponse.json({
           success: true,
           cached: true,
+          torrentId,
+          fileId: epFile.id,
           streamType: 'hls',
           streamUrl: hlsUrl,
           directUrl: null,
@@ -714,6 +746,8 @@ export async function POST(req) {
       return NextResponse.json({
         success: true,
         cached: true,
+        torrentId,
+        fileId: videoFile.id,
         streamType: 'hls',
         streamUrl: hlsUrl,
         directUrl: null,

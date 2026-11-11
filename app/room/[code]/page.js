@@ -14,7 +14,7 @@ import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
 import { searchSpotify, resolveSpotifyTrack } from '../../../lib/spotify';
 import { parseMediaUrl, resolveMediaUrl, searchPornhub, resolveNativeHlsStream, resolveTorboxStream, listTorboxAudios } from '../../../lib/mediaEmbeds';
-import { getTorboxKey, setTorboxKey, clearTorboxKey, verifyTorboxKey, getTorboxQuality, setTorboxQuality, TORBOX_QUALITIES, getTorboxAudioLang, setTorboxAudioLang, TORBOX_AUDIO_LANGS } from '../../../lib/torboxKey';
+import { getTorboxKey, setTorboxKey, clearTorboxKey, verifyTorboxKey, getTorboxQuality, setTorboxQuality, TORBOX_QUALITIES, getTorboxAudioLang, setTorboxAudioLang, TORBOX_AUDIO_LANGS, getActiveTorboxKey, isTorboxEnabled, setTorboxEnabled } from '../../../lib/torboxKey';
 import { buildVidfastUrl, buildVidloveUrl, searchTmdb, fetchTmdbTrending, fetchTmdbTvDetails, fetchTmdbSeason, fetchTmdbSources } from '../../../lib/tmdb';
 import TmdbEpisodeModal from '../../components/TmdbEpisodeModal';
 import { VoiceSession } from '../../../lib/voice';
@@ -176,6 +176,7 @@ export default function Room() {
   const roomMenuRef = useRef(null);
   // TorBox (viewer's own API key, kept only in this browser)
   const [torboxConnected, setTorboxConnected] = useState(false);
+  const [torboxEnabled, setTorboxEnabledState] = useState(true); // on/off switch; key stays saved when off
   const [torboxPanelOpen, setTorboxPanelOpen] = useState(false);
   const [torboxKeyInput, setTorboxKeyInput] = useState('');
   const [torboxBusy, setTorboxBusy] = useState(false);
@@ -188,6 +189,7 @@ export default function Room() {
   const [torboxAudio, setTorboxAudioState] = useState('eng'); // default English audio
   useEffect(() => {
     setTorboxConnected(Boolean(getTorboxKey()));
+    setTorboxEnabledState(isTorboxEnabled());
     setTorboxQualityState(getTorboxQuality());
     setTorboxAudioState(getTorboxAudioLang());
   }, []);
@@ -642,9 +644,10 @@ export default function Room() {
   const toggleAudioMenu = async () => {
     const next = !audioMenuOpen;
     setAudioMenuOpen(next);
-    if (!next || !source?.tmdbId) return;
+    if (!next || (!source?.torbox && !source?.tmdbId)) return;
     setAudioLoading(true);
     const tracks = await listTorboxAudios({
+      torbox: source.torbox || null, // exact file when the room knows it, else look the title up
       tmdbId: source.tmdbId,
       type: source.mediaType === 'tv' ? 'tv' : 'movie',
       season: source.season,
@@ -657,13 +660,14 @@ export default function Room() {
   // Switch the audio track for everyone: new TorBox stream with that track, resumed at the current time.
   const switchTorboxAudio = async (pos) => {
     setAudioMenuOpen(false);
-    if (pos === torboxAudioPos() || !source?.tmdbId) return;
+    if (pos === torboxAudioPos() || (!source?.torbox && !source?.tmdbId)) return;
     const socket = getSocket();
     if (!socket.connected) return;
     const resumeAt = currentTimeAny();
     const wasPlaying = playing;
     toast('Switching audio…');
     const tb = await resolveTorboxStream({
+      torbox: source.torbox || null,
       tmdbId: source.tmdbId,
       type: source.mediaType === 'tv' ? 'tv' : 'movie',
       season: source.season,
@@ -674,7 +678,7 @@ export default function Room() {
       toast('⚠️ Could not switch audio');
       return;
     }
-    socket.emit('source', { ...source, type: 'hls', url: tb.streamUrl, rawUrl: tb.streamUrl, playing: wasPlaying, time: resumeAt });
+    socket.emit('source', { ...source, type: 'hls', url: tb.streamUrl, rawUrl: tb.streamUrl, torbox: tb.torbox || source.torbox || null, playing: wasPlaying, time: resumeAt });
     toast('Audio changed for everyone');
   };
 
@@ -4106,6 +4110,7 @@ export default function Room() {
             backdrop: item.backdrop,
             codec: hls.codec || (sType === 'dash' ? (hls.codec || 'h264') : 'h264'),
             subtitles: hls.subtitles || [],
+            torbox: hls.torbox || null,
           };
           const seekTime = Number(startTime) || Number(item.time) || 0;
           if (playNow) {
@@ -4252,6 +4257,7 @@ export default function Room() {
           backdrop: epPayload.backdrop,
           codec: hls.codec || (sType === 'dash' ? (hls.codec || 'h264') : 'h264'),
           subtitles: hls.subtitles || [],
+          torbox: hls.torbox || null,
         };
         const seekTime = Number(startTime) || Number(epPayload.time) || 0;
         if (playNow) {
@@ -4311,6 +4317,7 @@ export default function Room() {
         title: `${cleanShowTitle} · S${season}:E${nextEp}`,
         codec: hls.codec || (sType === 'dash' ? (hls.codec || 'h264') : 'h264'),
         subtitles: hls.subtitles || [],
+        torbox: hls.torbox || null,
         playing: true,
       };
       socket.emit('source', payload);
@@ -5078,15 +5085,27 @@ export default function Room() {
               >
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
                 <span>TorBox</span>
-                <span className={'torbox-state' + (torboxConnected ? ' on' : '')}>{torboxConnected ? 'Connected' : 'Off'}</span>
+                <span className={'torbox-state' + (torboxConnected && torboxEnabled ? ' on' : '')}>{torboxConnected ? (torboxEnabled ? 'On' : 'Paused') : 'Off'}</span>
               </button>
 
               {torboxPanelOpen && (
                 <div className="torbox-panel">
                   {torboxConnected ? (
                     <>
+                      <button
+                        type="button"
+                        className="room-menu-item"
+                        role="menuitemcheckbox"
+                        aria-checked={torboxEnabled}
+                        onClick={() => { const next = !torboxEnabled; setTorboxEnabledState(next); setTorboxEnabled(next); toast(next ? 'TorBox on' : 'TorBox off — everything plays as before'); }}
+                      >
+                        <span>Use TorBox</span>
+                        <span className={'min-switch sm' + (torboxEnabled ? ' on' : '')} aria-hidden="true"><span className="switch-dot" /></span>
+                      </button>
                       <p className="torbox-hint">
-                        Movies and series now try your TorBox account first (cached files up to 5 GB), then fall back to the usual sources.
+                        {torboxEnabled
+                          ? 'Movies and series try your TorBox account first (cached files up to 5 GB), then fall back to the usual sources.'
+                          : 'TorBox is off. Titles play from the usual sources exactly as before. Your key stays saved.'}
                         {torboxInfo ? ` ${torboxInfo}.` : ''}
                       </p>
                       <label className="torbox-field">
@@ -6543,7 +6562,7 @@ export default function Room() {
               </button>
               </div>
 
-              {source?.type === 'hls' && source?.tmdbId && /tb-cdn\./i.test(source?.url || '') && getTorboxKey() && (
+              {source?.type === 'hls' && (source?.torbox || source?.tmdbId) && /tb-cdn\./i.test(source?.url || '') && torboxEnabled && torboxConnected && (
                 <div className="audio-wrap">
                   <button
                     type="button"
