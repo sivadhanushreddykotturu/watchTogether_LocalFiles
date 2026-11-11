@@ -13,7 +13,7 @@ import { detectMediaTracks, parseExternalSubtitle, parseSrtOrVtt } from '../../.
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
 import { searchSpotify, resolveSpotifyTrack } from '../../../lib/spotify';
-import { parseMediaUrl, resolveMediaUrl, searchPornhub, resolveNativeHlsStream, resolveTorboxStream, listTorboxAudios } from '../../../lib/mediaEmbeds';
+import { parseMediaUrl, resolveMediaUrl, searchPornhub, searchEporner, resolveEporner, resolveNativeHlsStream, resolveTorboxStream, listTorboxAudios } from '../../../lib/mediaEmbeds';
 import { getTorboxKey, setTorboxKey, clearTorboxKey, verifyTorboxKey, getTorboxQuality, setTorboxQuality, TORBOX_QUALITIES, getTorboxAudioLang, setTorboxAudioLang, TORBOX_AUDIO_LANGS, getActiveTorboxKey, isTorboxEnabled, setTorboxEnabled } from '../../../lib/torboxKey';
 import { buildVidfastUrl, buildVidloveUrl, searchTmdb, fetchTmdbTrending, fetchTmdbTvDetails, fetchTmdbSeason, fetchTmdbSources } from '../../../lib/tmdb';
 import TmdbEpisodeModal from '../../components/TmdbEpisodeModal';
@@ -64,6 +64,19 @@ function canPlayHevc() {
 // VLC semantics: positive = subtitles appear later.
 const fmtOffset = (o) => (o > 0 ? `+${o} ms` : o < 0 ? `−${Math.abs(o)} ms` : '0 ms');
 
+// 18+ search: the sources you can switch between, and Eporner's sort orders
+const ADULT_SOURCES = [
+  { id: 'ph', label: 'Pornhub' },
+  { id: 'ep', label: 'Eporner' },
+];
+const EP_SORTS = [
+  { id: 'top-weekly', label: 'Top this week' },
+  { id: 'most-popular', label: 'Most popular' },
+  { id: 'top-rated', label: 'Top rated' },
+  { id: 'latest', label: 'Newest' },
+  { id: 'longest', label: 'Longest' },
+];
+
 export default function Room() {
   const params = useParams();
   const router = useRouter();
@@ -113,7 +126,12 @@ export default function Room() {
   const [ytPanelOpen, setYtPanelOpen] = useState(false);
   const [ytUrl, setYtUrl] = useState('');
   const [ytSearchModalOpen, setYtSearchModalOpen] = useState(false);
-  const [searchPlatform, setSearchPlatform] = useState('tmdb'); // 'tmdb' | 'youtube' | 'ph'
+  const [searchPlatform, setSearchPlatform] = useState('tmdb'); // 'tmdb' | 'youtube' | 'ph' | 'ep' (ph + ep are the 18+ sources)
+  const [searchPage, setSearchPage] = useState(1); // 18+ sources are paged
+  const [searchHasMore, setSearchHasMore] = useState(false);
+  const [searchTotalPages, setSearchTotalPages] = useState(1);
+  const [epOrder, setEpOrder] = useState('top-weekly'); // Eporner sort order
+  const isAdultSearch = searchPlatform === 'ph' || searchPlatform === 'ep';
   const [tmdbFilter, setTmdbFilter] = useState('all'); // 'all' | 'movie' | 'tv' | 'anime' | 'kdrama'
   const [tmdbEpisodeModalOpen, setTmdbEpisodeModalOpen] = useState(false);
   const [selectedSeriesForEpisodes, setSelectedSeriesForEpisodes] = useState(null);
@@ -128,7 +146,7 @@ export default function Room() {
   const [ytError, setYtError] = useState('');
 
   useEffect(() => {
-    if (!adultMode && searchPlatform === 'ph') {
+    if (!adultMode && (searchPlatform === 'ph' || searchPlatform === 'ep')) {
       setSearchPlatform('youtube');
     }
   }, [adultMode, searchPlatform]);
@@ -3984,10 +4002,13 @@ export default function Room() {
     setYtPanelOpen(false);
   };
 
-  const executeSearch = async (queryText, platformOverride, tmdbFilterOverride) => {
+  const executeSearch = async (queryText, platformOverride, tmdbFilterOverride, pageOverride, orderOverride) => {
     const q = String(queryText || '').trim();
     const platform = platformOverride || searchPlatform;
     const currentTmdbFilter = tmdbFilterOverride || tmdbFilter;
+    const page = Math.max(1, Number(pageOverride) || 1);
+    const order = orderOverride || epOrder;
+    setSearchPage(page);
 
     if (searchAbortRef.current) {
       searchAbortRef.current.abort();
@@ -4004,12 +4025,25 @@ export default function Room() {
         } else {
           results = await searchTmdb(q, { type: currentTmdbFilter, signal: ctrl.signal });
         }
+      } else if (platform === 'ep') {
+        // Eporner also browses with an empty query (top of the chosen sort order)
+        const ep = await searchEporner(q, ctrl.signal, { page, order });
+        results = ep.results;
+        if (!ctrl.signal.aborted) {
+          setSearchHasMore(ep.hasMore);
+          setSearchTotalPages(ep.totalPages);
+        }
       } else if (!q) {
         setYtSearchResults([]);
         setYtSearching(false);
         return;
       } else if (platform === 'ph') {
-        results = await searchPornhub(q, ctrl.signal);
+        results = await searchPornhub(q, ctrl.signal, page);
+        // Pornhub gives no page count, so another page is assumed while a page comes back full-ish
+        if (!ctrl.signal.aborted) {
+          setSearchHasMore(results.length >= 12);
+          setSearchTotalPages(0);
+        }
       } else if (platform === 'spotify') {
         results = await searchSpotify(q, ctrl.signal);
       } else {
@@ -4033,21 +4067,109 @@ export default function Room() {
     setSearchPlatform(platform);
     setYtSearchResults([]);
     setYtSearchError('');
+    setSearchPage(1);
+    setSearchHasMore(false);
     clearTimeout(searchDebounceRef.current);
-    executeSearch(ytSearchQuery, platform);
+    executeSearch(ytSearchQuery, platform, undefined, 1);
   };
+
+  // Go to another page of the 18+ results (keeps the query and sort order)
+  const goToSearchPage = (page) => {
+    if (page < 1) return;
+    clearTimeout(searchDebounceRef.current);
+    executeSearch(ytSearchQuery, searchPlatform, undefined, page);
+    try { document.querySelector('.sm-body')?.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
+  };
+
+  // An Eporner MP4 link that stops working (expired, e.g. a queued item played much later) gets a fresh link
+  // once, resuming where it was. Each viewer does this locally; the room's shared state doesn't change.
+  const epRetryRef = useRef('');
+  const recoverEporner = async () => {
+    const v = videoRef.current;
+    const s = sourceRef.current;
+    if (!v || !s || s.platform !== 'EP' || !s.viewkey) return;
+    if (epRetryRef.current === s.url) return; // already tried a fresh link for this one
+    epRetryRef.current = s.url;
+    const ep = await resolveEporner(s.viewkey);
+    if (!ep || ep.url === v.src) {
+      toast('⚠️ Could not load this video. Try another one.');
+      return;
+    }
+    const t = v.currentTime || latestStateRef.current.time || 0;
+    v.src = ep.url;
+    v.currentTime = t;
+    if (latestStateRef.current.playing) v.play().catch(() => {});
+  };
+
+  const changeEpOrder = (order) => {
+    setEpOrder(order);
+    clearTimeout(searchDebounceRef.current);
+    executeSearch(ytSearchQuery, 'ep', undefined, 1, order);
+  };
+
+  // Source switcher (+ sort for Eporner) shown under the search box while the 18+ tab is open
+  const renderAdultControls = () => (
+    <div className="adult-src">
+      <div className="adult-src-row" role="group" aria-label="18+ source">
+        {ADULT_SOURCES.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            aria-pressed={searchPlatform === s.id}
+            className={'sidebar-filter-chip' + (searchPlatform === s.id ? ' active' : '')}
+            onClick={() => { if (searchPlatform !== s.id) switchSearchPlatform(s.id); }}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+      {searchPlatform === 'ep' && (
+        <div className="adult-src-row" role="group" aria-label="Sort">
+          {EP_SORTS.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              aria-pressed={epOrder === o.id}
+              className={'sidebar-filter-chip' + (epOrder === o.id ? ' active' : '')}
+              onClick={() => { if (epOrder !== o.id) changeEpOrder(o.id); }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  // Previous / next page for the 18+ results
+  const renderAdultPager = () =>
+    isAdultSearch && ytSearchResults.length > 0 && (searchPage > 1 || searchHasMore) ? (
+      <div className="sm-pager">
+        <button type="button" className="min-btn ghost" disabled={searchPage <= 1 || ytSearching} onClick={() => goToSearchPage(searchPage - 1)}>
+          ← Prev
+        </button>
+        <span className="sm-pager-label">
+          Page {searchPage}
+          {searchTotalPages > 1 ? ` of ${searchTotalPages.toLocaleString()}` : ''}
+        </span>
+        <button type="button" className="min-btn ghost" disabled={!searchHasMore || ytSearching} onClick={() => goToSearchPage(searchPage + 1)}>
+          Next →
+        </button>
+      </div>
+    ) : null;
 
   const handleSearchInputChange = (text) => {
     setYtSearchQuery(text);
     clearTimeout(searchDebounceRef.current);
-    if (!text.trim() && searchPlatform !== 'tmdb') {
+    if (!text.trim() && searchPlatform !== 'tmdb' && searchPlatform !== 'ep') {
       setYtSearchResults([]);
       setYtSearching(false);
       return;
     }
+    // Eporner allows about one search a second, so wait a little longer before searching while typing
     searchDebounceRef.current = setTimeout(() => {
-      executeSearch(text);
-    }, 450);
+      executeSearch(text, undefined, undefined, 1);
+    }, searchPlatform === 'ep' ? 800 : 450);
   };
 
   const handleSelectSearchResult = async (item, playNow = true, startTime = 0) => {
@@ -4152,6 +4274,26 @@ export default function Room() {
       if (playNow) {
         socket.emit('source', { ...payload, playing: true });
         toast(`Playing "${item.title}" on Spotify`);
+        setYtSearchModalOpen(false);
+        setYtPanelOpen(false);
+      } else {
+        socket.emit('queue-add', { ...payload, playNow: false });
+        toast(`Added "${item.title}" to queue`);
+      }
+      return;
+    }
+
+    // Eporner: resolve the video to a direct MP4 (plays for every viewer straight from Eporner's CDN)
+    if (searchPlatform === 'ep' || item.platform === 'EP') {
+      if (playNow) toast(`Loading "${item.title}"…`);
+      const ep = await resolveEporner(item.id);
+      const payload = ep
+        ? { type: 'direct', url: ep.url, title: item.title || ep.title, poster: item.thumbnail, viewkey: item.id, platform: 'EP' }
+        // Direct link unavailable: fall back to Eporner's own embedded player
+        : { type: 'embed', embedUrl: item.embedUrl || `https://www.eporner.com/embed/${item.id}/`, title: item.title, poster: item.thumbnail, viewkey: item.id, platform: 'EP' };
+
+      if (playNow) {
+        socket.emit('source', { ...payload, playing: true });
         setYtSearchModalOpen(false);
         setYtPanelOpen(false);
       } else {
@@ -5272,6 +5414,10 @@ export default function Room() {
               style={{ transform: `scale(${zoom})`, objectFit: fitMode }}
               onError={() => {
                 const err = videoRef.current?.error;
+                if (err && source?.type === 'direct' && source.platform === 'EP') {
+                  recoverEporner();
+                  return;
+                }
                 if (err && source?.type === 'direct') {
                   if (err.code === 4) {
                     toast('⚠️ Format not supported by your browser. Ensure S3 file is MP4 (H.264/AAC).');
@@ -7063,9 +7209,9 @@ export default function Room() {
                       <button
                         type="button"
                         role="tab"
-                        aria-selected={searchPlatform === 'ph'}
-                        className={'seg-btn' + (searchPlatform === 'ph' ? ' active' : '')}
-                        onClick={() => switchSearchPlatform('ph')}
+                        aria-selected={isAdultSearch}
+                        className={'seg-btn' + (isAdultSearch ? ' active' : '')}
+                        onClick={() => { if (!isAdultSearch) switchSearchPlatform('ph'); }}
                       >
                         18+
                       </button>
@@ -7104,6 +7250,8 @@ export default function Room() {
                           ? 'Search movies, anime, K-dramas…'
                           : searchPlatform === 'ph'
                           ? 'Search Pornhub videos…'
+                          : searchPlatform === 'ep'
+                          ? 'Search Eporner, or browse below…'
                           : 'Search YouTube videos…'
                       }
                       value={ytSearchQuery}
@@ -7128,6 +7276,8 @@ export default function Room() {
                       </button>
                     )}
                   </div>
+
+                  {isAdultSearch && renderAdultControls()}
 
                   {searchPlatform === 'tmdb' && (
                     <div className="sidebar-subfilters">
@@ -7160,7 +7310,7 @@ export default function Room() {
                         <button type="button" className="qsr-clear" onClick={() => { setYtSearchResults([]); setYtSearchQuery(''); }}>Clear</button>
                       </div>
                       <div className="queue-search-items">
-                        {ytSearchResults.slice(0, 10).map((video) => (
+                        {(isAdultSearch ? ytSearchResults : ytSearchResults.slice(0, 10)).map((video) => (
                           <div key={video.id || video.tmdbId || video.viewkey} className="queue-search-item">
                             <div className="qsi-thumb-wrap">
                               <img
@@ -7187,7 +7337,7 @@ export default function Room() {
                                   ? '📺 Series'
                                   : video.mediaType === 'movie'
                                   ? `🎬 Movie ${video.year ? `(${video.year})` : ''}`
-                                  : video.author || (searchPlatform === 'ph' ? 'Pornhub' : 'YouTube')}
+                                  : video.author || (searchPlatform === 'ph' ? 'Pornhub' : searchPlatform === 'ep' ? 'Eporner' : 'YouTube')}
                               </div>
                             </div>
                             <div className="qsi-actions">
@@ -7211,6 +7361,7 @@ export default function Room() {
                           </div>
                         ))}
                       </div>
+                      {renderAdultPager()}
                     </div>
                   )}
                 </div>
@@ -7402,6 +7553,8 @@ export default function Room() {
                       ? 'Search movies, series, anime…'
                       : searchPlatform === 'ph'
                       ? 'Search by title or tag…'
+                      : searchPlatform === 'ep'
+                      ? 'Search Eporner by title or tag, or browse…'
                       : 'Search YouTube…'
                   }
                   aria-label="Search"
@@ -7437,7 +7590,7 @@ export default function Room() {
                     YouTube
                   </button>
                   {adultMode && (
-                    <button type="button" role="tab" aria-selected={searchPlatform === 'ph'} className={'seg-btn' + (searchPlatform === 'ph' ? ' active' : '')} onClick={() => switchSearchPlatform('ph')}>
+                    <button type="button" role="tab" aria-selected={isAdultSearch} className={'seg-btn' + (isAdultSearch ? ' active' : '')} onClick={() => { if (!isAdultSearch) switchSearchPlatform('ph'); }}>
                       18+
                     </button>
                   )}
@@ -7465,6 +7618,27 @@ export default function Room() {
                       </button>
                     ))}
                   </div>
+                ) : isAdultSearch ? (
+                  <>
+                    {renderAdultControls()}
+                    {searchPlatform === 'ph' && !ytSearchQuery && (
+                      <div className="sm-chips" role="group" aria-label="Suggestions">
+                        {['Trending', 'Japanese', 'Anime', 'VR', '4K', 'Cosplay'].map((tag) => (
+                          <button
+                            key={tag}
+                            type="button"
+                            className="sidebar-filter-chip"
+                            onClick={() => {
+                              setYtSearchQuery(tag);
+                              executeSearch(tag, undefined, undefined, 1);
+                            }}
+                          >
+                            {tag}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 ) : !ytSearchQuery ? (
                   <div className="sm-chips" role="group" aria-label="Suggestions">
                     {(searchPlatform === 'ph'
@@ -7599,11 +7773,12 @@ export default function Room() {
               ) : (
                 <div className="sm-state">
                   <p className="sm-state-title">
-                    {searchPlatform === 'ph' ? 'Search to get started' : 'Search YouTube to watch together'}
+                    {searchPlatform === 'ph' || searchPlatform === 'ep' ? 'Search to get started' : 'Search YouTube to watch together'}
                   </p>
                   <p className="sm-state-sub">Type above or pick a suggestion. Results play for the whole room.</p>
                 </div>
               )}
+              {renderAdultPager()}
             </div>
           </div>
         </div>
