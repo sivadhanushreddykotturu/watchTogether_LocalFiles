@@ -43,8 +43,8 @@ export { getAppleEmojiUrl };
 
 // ---------- subtitles & media ----------
 const SUB_COLORS = ['#ffffff', '#facc15', '#86efac', '#67e8f9'];
-const SUB_STYLE_DEFAULT = { size: 20, color: '#ffffff', bg: true, pos: 10 };
-const SUB_POSITIONS = [[4, 'Low'], [10, 'Mid'], [18, 'High']];
+const SUB_STYLE_DEFAULT = { size: 20, color: '#ffffff', bg: false, pos: 18 };
+const SUB_POSITIONS = [[12, 'Low'], [18, 'Mid'], [26, 'High']];
 
 // VLC semantics: positive = subtitles appear later.
 const fmtOffset = (o) => (o > 0 ? `+${o} ms` : o < 0 ? `−${Math.abs(o)} ms` : '0 ms');
@@ -2279,7 +2279,11 @@ export default function Room() {
     // --- saved subtitle appearance + zoom (per person, this device only) ---
     try {
       const saved = JSON.parse(localStorage.getItem('reelsync:substyle') || 'null');
-      if (saved) setSubStyle({ ...SUB_STYLE_DEFAULT, ...saved });
+      if (saved) {
+        const pos = saved.pos && saved.pos > 10 ? saved.pos : 18;
+        const bg = saved.bg !== undefined && saved.pos > 10 ? saved.bg : false;
+        setSubStyle({ ...SUB_STYLE_DEFAULT, ...saved, pos, bg });
+      }
     } catch { /* ignore corrupt prefs */ }
     try {
       const savedZoom = Number(localStorage.getItem('reelsync:zoom'));
@@ -5509,11 +5513,13 @@ export default function Room() {
 
             {subsOn && subText && (
               <div
-                className="sub-overlay"
+                className={'sub-overlay' + (subStyle.bg ? ' has-bg' : ' netflix-style')}
                 style={{
-                  fontSize: subStyle.size + 'px',
+                  '--sub-size': subStyle.size + 'px',
+                  '--sub-pos': subStyle.pos + '%',
+                  fontSize: 'var(--sub-size)',
                   color: subStyle.color,
-                  bottom: subStyle.pos + '%',
+                  bottom: 'var(--sub-pos)',
                   background: subStyle.bg ? 'rgba(0, 0, 0, 0.65)' : 'transparent',
                 }}
               >
@@ -5940,11 +5946,14 @@ export default function Room() {
                   </div>
 
                   <div className="sub-row">
-                    <span className="sub-label">Appearance (only you)</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '4px' }}>
+                      <span className="sub-label">Appearance (only you)</span>
+                      <span className="sub-hint" style={{ margin: 0 }}>{subStyle.size}px · {subStyle.pos >= 24 ? 'High' : subStyle.pos >= 16 ? 'Mid (Netflix)' : 'Low'}</span>
+                    </div>
                     <input
                       type="range"
                       className="sub-size"
-                      min="14" max="34"
+                      min="14" max="32"
                       value={subStyle.size}
                       onChange={(e) => setSubStyle({ ...subStyle, size: Number(e.target.value) })}
                       title="Size"
