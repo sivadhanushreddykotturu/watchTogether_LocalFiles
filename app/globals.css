@@ -827,10 +827,7 @@ input[type="text"]::placeholder { color: #525b70; }
   paint-order: stroke fill;
 }
 
-/* Lift subs when seek bar is visible so it never covers dialogue */
-.screen:not(.idle-playing) .sub-overlay {
-  bottom: calc(var(--sub-pos, 8%) + 24px) !important;
-}
+/* Subs always sit above the letterbox — same position regardless of control visibility */
 
 /* Legacy full-bg mode (user opted in via toggle) */
 .sub-overlay.has-bg .sub-line {

@@ -5628,7 +5628,7 @@ export default function Room() {
                   '--sub-size': subStyle.size + 'px',
                   '--sub-pos': subStyle.pos + '%',
                   '--sub-color': subStyle.color,
-                  bottom: 'var(--sub-pos)',
+                  bottom: 'calc(var(--sub-pos) + 24px)',
                 }}
               >
                 {subText.split('\n').filter(Boolean).map((line, i) => (
