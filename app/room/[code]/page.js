@@ -13,7 +13,7 @@ import { detectMediaTracks, parseExternalSubtitle, parseSrtOrVtt } from '../../.
 import { transcodeAudioToMp3, getFFmpeg } from '../../../lib/audioTranscoder';
 import { loadYouTubeApi, parseYouTubeId, fetchYouTubeInfo, searchYouTube } from '../../../lib/youtube';
 import { searchSpotify, resolveSpotifyTrack } from '../../../lib/spotify';
-import { parseMediaUrl, resolveMediaUrl, searchPornhub, resolveNativeHlsStream } from '../../../lib/mediaEmbeds';
+import { parseMediaUrl, resolveMediaUrl, searchPornhub, resolveNativeHlsStream, resolveTorboxStream, listTorboxAudios } from '../../../lib/mediaEmbeds';
 import { getTorboxKey, setTorboxKey, clearTorboxKey, verifyTorboxKey, getTorboxQuality, setTorboxQuality, TORBOX_QUALITIES, getTorboxAudioLang, setTorboxAudioLang, TORBOX_AUDIO_LANGS } from '../../../lib/torboxKey';
 import { buildVidfastUrl, buildVidloveUrl, searchTmdb, fetchTmdbTrending, fetchTmdbTvDetails, fetchTmdbSeason, fetchTmdbSources } from '../../../lib/tmdb';
 import TmdbEpisodeModal from '../../components/TmdbEpisodeModal';
@@ -181,6 +181,10 @@ export default function Room() {
   const [torboxBusy, setTorboxBusy] = useState(false);
   const [torboxInfo, setTorboxInfo] = useState(''); // e.g. "Pro" or an error message
   const [torboxQuality, setTorboxQualityState] = useState('5'); // default 1080p
+  // In-player Audio menu for TorBox streams (changing it changes the stream for the whole room)
+  const [audioMenuOpen, setAudioMenuOpen] = useState(false);
+  const [audioTracks, setAudioTracks] = useState([]);
+  const [audioLoading, setAudioLoading] = useState(false);
   const [torboxAudio, setTorboxAudioState] = useState('eng'); // default English audio
   useEffect(() => {
     setTorboxConnected(Boolean(getTorboxKey()));
@@ -627,6 +631,51 @@ export default function Room() {
     setTorboxConnected(true);
     setTorboxInfo(check.isPro ? `${check.plan} plan` : `${check.plan} plan — streaming needs Pro`);
     toast(check.isPro ? 'TorBox connected' : 'TorBox saved, but streaming needs a Pro plan');
+  };
+
+  // Audio position of the TorBox stream that's playing, read from its link (.../<res>/<sub>/<audio>/playlist.m3u8).
+  const torboxAudioPos = () => {
+    const m = String(source?.url || '').match(/\/stream\/[^/]+\/[^/]+\/[^/]+\/(\d+)\/playlist/);
+    return m ? Number(m[1]) : 0;
+  };
+
+  const toggleAudioMenu = async () => {
+    const next = !audioMenuOpen;
+    setAudioMenuOpen(next);
+    if (!next || !source?.tmdbId) return;
+    setAudioLoading(true);
+    const tracks = await listTorboxAudios({
+      tmdbId: source.tmdbId,
+      type: source.mediaType === 'tv' ? 'tv' : 'movie',
+      season: source.season,
+      episode: source.episode,
+    });
+    setAudioTracks(tracks);
+    setAudioLoading(false);
+  };
+
+  // Switch the audio track for everyone: new TorBox stream with that track, resumed at the current time.
+  const switchTorboxAudio = async (pos) => {
+    setAudioMenuOpen(false);
+    if (pos === torboxAudioPos() || !source?.tmdbId) return;
+    const socket = getSocket();
+    if (!socket.connected) return;
+    const resumeAt = currentTimeAny();
+    const wasPlaying = playing;
+    toast('Switching audio…');
+    const tb = await resolveTorboxStream({
+      tmdbId: source.tmdbId,
+      type: source.mediaType === 'tv' ? 'tv' : 'movie',
+      season: source.season,
+      episode: source.episode,
+      audioIndex: pos,
+    });
+    if (!tb) {
+      toast('⚠️ Could not switch audio');
+      return;
+    }
+    socket.emit('source', { ...source, type: 'hls', url: tb.streamUrl, rawUrl: tb.streamUrl, playing: wasPlaying, time: resumeAt });
+    toast('Audio changed for everyone');
   };
 
   const removeTorboxKey = () => {
@@ -6493,6 +6542,41 @@ export default function Room() {
                 </svg>
               </button>
               </div>
+
+              {source?.type === 'hls' && source?.tmdbId && /tb-cdn\./i.test(source?.url || '') && getTorboxKey() && (
+                <div className="audio-wrap">
+                  <button
+                    type="button"
+                    className={'t-btn' + (audioMenuOpen ? ' active' : '')}
+                    onClick={toggleAudioMenu}
+                    aria-haspopup="menu"
+                    aria-expanded={audioMenuOpen}
+                    title="Audio language (changes it for everyone in the room)"
+                  >
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>
+                  </button>
+                  {audioMenuOpen && (
+                    <div className="audio-menu" role="menu">
+                      <div className="audio-menu-head">Audio · changes for everyone</div>
+                      {audioLoading && <div className="audio-menu-note">Loading tracks…</div>}
+                      {!audioLoading && audioTracks.length === 0 && <div className="audio-menu-note">No other audio tracks found</div>}
+                      {!audioLoading && audioTracks.map((t) => (
+                        <button
+                          key={t.pos}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={t.pos === torboxAudioPos()}
+                          className={'audio-menu-item' + (t.pos === torboxAudioPos() ? ' on' : '')}
+                          onClick={() => switchTorboxAudio(t.pos)}
+                        >
+                          <span>{t.label}{t.channels ? ` · ${t.channels}` : ''}</span>
+                          {t.pos === torboxAudioPos() && <span aria-hidden="true">✓</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <button
                 className={'t-btn cc' + (source?.type === 'youtube' ? (ytCcOn ? ' active on' : '') : (subPanelOpen ? ' active' : '') + (subsOn ? ' on' : ''))}

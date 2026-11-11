@@ -106,8 +106,13 @@ async function createStreamCall(token, torrentId, fileId, resIdx, audioIdx) {
   return (await res.json())?.data || null;
 }
 
-async function createHls(token, torrentId, fileId, resIdx = String(DEFAULT_RES), audioLang = '') {
+async function createHls(token, torrentId, fileId, resIdx = String(DEFAULT_RES), audioLang = '', audioPos = null) {
   try {
+    // An explicit audio position (from the player's Audio menu) wins over the language preference.
+    if (audioPos !== null) {
+      const picked = await createStreamCall(token, torrentId, fileId, resIdx, audioPos);
+      return picked?.hls_url || null;
+    }
     let data = await createStreamCall(token, torrentId, fileId, resIdx, 0);
     if (!data) return null;
     // The first call lists the audio tracks; if the preferred language isn't track 0, ask again for it.
@@ -254,9 +259,13 @@ function isUniversalWebVideo(fileName) {
 
 export async function POST(req) {
   try {
-    let { title, year, imdbId, tmdbId, mediaType, season, episode, dryRun, resolutionIndex, audioLang: audioLangRaw } = await req.json();
+    let { title, year, imdbId, tmdbId, mediaType, season, episode, dryRun, resolutionIndex, audioLang: audioLangRaw, audioIndex, listAudios } = await req.json();
     const resIdx = parseRes(resolutionIndex);
     const audioLang = parseAudioLang(audioLangRaw);
+    // Position in the file's audio list (0,1,2...), or null when the caller has no explicit pick.
+    const audioPos = audioIndex !== null && audioIndex !== undefined && audioIndex !== '' && Number.isInteger(Number(audioIndex)) && Number(audioIndex) >= 0
+      ? Number(audioIndex)
+      : null;
     // The key is the viewer's own, saved in their browser and sent per request.
     const token = (req.headers.get('x-torbox-key') || '').trim();
 
@@ -286,7 +295,22 @@ export async function POST(req) {
       if (dryRun) {
         return NextResponse.json({ success: true, dryRun: true, source: 'library', torrentId: own.torrentId, file: own.file, quality: own.quality || null, title: label });
       }
-      const ownHls = await createHls(token, own.torrentId, own.file.id, resIdx, audioLang);
+      if (listAudios) {
+        // For the player's Audio menu: the audio tracks in this file, in the order TorBox wants them.
+        try {
+          const info = await createStreamCall(token, own.torrentId, own.file.id, resIdx, 0);
+          const audios = (info?.metadata?.audios || []).map((a, pos) => ({
+            pos,
+            code: String(a.language || '').toLowerCase(),
+            label: a.language_full || a.language || `Track ${pos + 1}`,
+            channels: a.channel_layout || '',
+          }));
+          return NextResponse.json({ success: true, audios });
+        } catch {
+          return NextResponse.json({ success: false, reason: 'Could not read audio tracks' });
+        }
+      }
+      const ownHls = await createHls(token, own.torrentId, own.file.id, resIdx, audioLang, audioPos);
       if (ownHls) {
         return NextResponse.json({
           success: true,
@@ -303,6 +327,9 @@ export async function POST(req) {
           title: label,
         });
       }
+    }
+    if (listAudios) {
+      return NextResponse.json({ success: false, reason: 'This title is not in your TorBox library' });
     }
     if (dryRun) {
       return NextResponse.json({ success: false, dryRun: true, reason: 'Not in your TorBox library under 5 GB (a torrent-site search would follow)' });
@@ -508,7 +535,7 @@ export async function POST(req) {
         } catch {}
       } else {
         // MKV / HEVC: Requires TorBox HLS live transcoding
-        hlsUrl = await createHls(token, torrentId, epFile.id, resIdx, audioLang);
+        hlsUrl = await createHls(token, torrentId, epFile.id, resIdx, audioLang, audioPos);
       }
 
       if (canDirect && directUrl) {
@@ -664,7 +691,7 @@ export async function POST(req) {
         }
       } catch {}
     } else {
-      hlsUrl = await createHls(token, torrentId, videoFile.id, resIdx, audioLang);
+      hlsUrl = await createHls(token, torrentId, videoFile.id, resIdx, audioLang, audioPos);
     }
 
     if (canDirect && directUrl) {
