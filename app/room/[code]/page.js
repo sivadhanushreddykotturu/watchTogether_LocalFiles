@@ -214,7 +214,7 @@ export default function Room() {
   const [torboxQuality, setTorboxQualityState] = useState('5'); // default 1080p
   // In-player Audio menu for TorBox streams (changing it changes the stream for the whole room)
   const [audioMenuOpen, setAudioMenuOpen] = useState(false);
-  const [audioTracks, setAudioTracks] = useState([]);
+  const [torboxAudioTracks, setTorboxAudioTracks] = useState([]); // (not `audioTracks`: that name is the embedded-track list below)
   const [audioLoading, setAudioLoading] = useState(false);
   const [torboxAudio, setTorboxAudioState] = useState('eng'); // default English audio
   useEffect(() => {
@@ -683,7 +683,7 @@ export default function Room() {
       season: source.season,
       episode: source.episode,
     });
-    setAudioTracks(tracks);
+    setTorboxAudioTracks(tracks);
     setAudioLoading(false);
   };
 
@@ -6753,8 +6753,8 @@ export default function Room() {
                     <div className="audio-menu" role="menu">
                       <div className="audio-menu-head">Audio · changes for everyone</div>
                       {audioLoading && <div className="audio-menu-note">Loading tracks…</div>}
-                      {!audioLoading && audioTracks.length === 0 && <div className="audio-menu-note">No other audio tracks found</div>}
-                      {!audioLoading && audioTracks.map((t) => (
+                      {!audioLoading && torboxAudioTracks.length === 0 && <div className="audio-menu-note">No other audio tracks found</div>}
+                      {!audioLoading && torboxAudioTracks.map((t) => (
                         <button
                           key={t.pos}
                           type="button"
