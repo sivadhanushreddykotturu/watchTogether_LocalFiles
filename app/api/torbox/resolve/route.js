@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { findViaTorrentio } from '../../../../lib/torrentio';
 
 const execFileAsync = promisify(execFile);
 const YTS_DOMAINS = ['yts.am', 'yts.pm', 'yts.do', 'yts.rs'];
 
-// Hard cap: never pick (or add to the account) anything larger than 5 GB.
-const MAX_BYTES = 5 * 1024 * 1024 * 1024;
+// Hard cap: never pick (or add to the account) a file larger than this.
+const MAX_GB = 10;
+const MAX_BYTES = MAX_GB * 1024 * 1024 * 1024;
 const withinCap = (bytes) => !bytes || Number(bytes) <= MAX_BYTES;
 
 // Always hand the browser an HLS stream from TorBox's transcoder (H.264 + AAC),
@@ -26,7 +28,7 @@ function qualityOf(name) {
 }
 
 // Look through the viewer's own TorBox library for a finished video file that matches the
-// title (movie: title + year, series: title + SxxExx). The 5 GB cap applies to the FILE, so a
+// title (movie: title + year, series: title + SxxExx). The size cap applies to the FILE, so a
 // small episode/movie inside a big pack still qualifies. Returns { torrentId, file, quality } or null.
 async function findInLibrary({ token, title, year, isTv, season, episode }) {
   try {
@@ -158,6 +160,21 @@ async function fetchTmdbMeta(tmdbId, isTv) {
       year: date ? date.slice(0, 4) : undefined,
       imdbId: isTv ? j.external_ids?.imdb_id : j.imdb_id,
     };
+  } catch {
+    return null;
+  }
+}
+
+// The IMDb id Torrentio needs. Callers usually only have the TMDB id.
+async function lookupImdbId(tmdbId, isTv) {
+  if (!tmdbId) return null;
+  try {
+    const key = process.env.TMDB_API_KEY || 'baf435afe9fef24b14b2a137359e4124';
+    const res = await fetch(`https://api.themoviedb.org/3/${isTv ? 'tv' : 'movie'}/${encodeURIComponent(tmdbId)}/external_ids?api_key=${key}`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return null;
+    return (await res.json())?.imdb_id || null;
   } catch {
     return null;
   }
@@ -362,10 +379,46 @@ export async function POST(req) {
       return NextResponse.json({ success: false, reason: 'This title is not in your TorBox library' });
     }
     if (dryRun) {
-      return NextResponse.json({ success: false, dryRun: true, reason: 'Not in your TorBox library under 5 GB (a torrent-site search would follow)' });
+      return NextResponse.json({ success: false, dryRun: true, reason: `Not in your TorBox library under ${MAX_GB} GB (a Torrentio search would follow)` });
     }
 
-    // 2) Not in the library: fall through to the torrent search + TorBox cache check below.
+    // 2) Torrentio: ~15 trackers by IMDb id (movie or exact episode), cache-checked against the viewer's TorBox.
+    //    Falls through to the older YTS / PirateBay search below if Torrentio finds nothing playable.
+    const imdbForSearch = imdbId || (await lookupImdbId(tmdbId, isTv));
+    if (imdbForSearch) {
+      const tio = await findViaTorrentio({
+        token,
+        imdbId: imdbForSearch,
+        isTv,
+        season,
+        episode,
+        maxBytes: MAX_BYTES,
+        createHls: (torrentId, fileId) => createHls(token, torrentId, fileId, resIdx, audioLang, audioPos),
+      }).catch((e) => ({ ok: false, reason: String(e?.message || e) }));
+
+      if (tio.ok && tio.hls) {
+        const label = isTv ? `${title} S${String(Number(season) || 1).padStart(2, '0')}:E${String(Number(episode) || 1).padStart(2, '0')}` : title;
+        return NextResponse.json({
+          success: true,
+          cached: true,
+          source: 'torrentio',
+          torrentId: tio.torrentId,
+          fileId: tio.file.id,
+          streamType: 'hls',
+          streamUrl: tio.hls,
+          directUrl: null,
+          hlsUrl: tio.hls,
+          canDirect: false,
+          quality: tio.candidate.res || '1080p',
+          fileSize: tio.file.size,
+          fileName: tio.file.name,
+          title: label,
+        });
+      }
+      console.warn(`[torbox] Torrentio found nothing playable for ${imdbForSearch}: ${tio.reason || 'unknown'}; trying the older search`);
+    }
+
+    // 3) Older search (YTS for movies, PirateBay for series) + TorBox cache check below.
 
     // ──────────────────────────────────────────
     // TV SERIES RESOLVER
@@ -460,7 +513,7 @@ export async function POST(req) {
       const epRegex = new RegExp(`(?:s${sStr}e${eStr}|${sNum}x${eStr}|episode\\s*0?${eNum}\\b)`, 'i');
       const seasonRegex = new RegExp(`(?:s${sStr}\\b|season\\s*0?${sNum}\\b)`, 'i');
 
-      // The 5 GB cap is per file: either the whole torrent is small, or it lists an episode file that is.
+      // The size cap is per file: either the whole torrent is small, or it lists an episode file that is.
       const hasFittingEpisodeFile = (c) =>
         Array.isArray(c.files) &&
         c.files.some((f) => VIDEO_EXT.test(f.name || '') && !/\bsample\b/i.test(f.name) && epRegex.test(baseName(f.name)) && withinCap(f.size));
@@ -469,7 +522,7 @@ export async function POST(req) {
       // Filter cached torrents strictly matching the show title first
       const validCached = cachedList.filter((c) => matchesShowTitle(c.name || '', candidateTitles) && fitsCap(c));
       if (validCached.length === 0) {
-        return NextResponse.json({ success: false, cached: false, reason: `No cached copy of S${sStr}E${eStr} with a file under 5 GB` });
+        return NextResponse.json({ success: false, cached: false, reason: `No cached copy of S${sStr}E${eStr} with a file under ${MAX_GB} GB` });
       }
 
       // Prioritize x264/h264 over heavy x265/hevc so TorBox's live transcoder never chokes with 504 timeouts
@@ -545,7 +598,7 @@ export async function POST(req) {
       }
 
       if (!withinCap(epFile.size)) {
-        return NextResponse.json({ success: false, cached: false, reason: 'Episode file is larger than 5 GB' });
+        return NextResponse.json({ success: false, cached: false, reason: `Episode file is larger than ${MAX_GB} GB` });
       }
 
       const canDirect = !FORCE_HLS && isUniversalWebVideo(epFile.name);
@@ -631,7 +684,7 @@ export async function POST(req) {
       return NextResponse.json({
         success: false,
         cached: false,
-        reason: allTorrents.length ? 'Every release is larger than 5 GB' : 'No torrent candidates found',
+        reason: allTorrents.length ? `Every release is larger than ${MAX_GB} GB` : 'No torrent candidates found',
       });
     }
 
@@ -659,7 +712,7 @@ export async function POST(req) {
     const cacheJson = await cacheRes.json();
     const cachedList = (Array.isArray(cacheJson.data) ? cacheJson.data : []).filter((c) => withinCap(c.size));
     if (cachedList.length === 0) {
-      return NextResponse.json({ success: false, cached: false, reason: 'No cached stream under 5 GB available on TorBox' });
+      return NextResponse.json({ success: false, cached: false, reason: `No cached stream under ${MAX_GB} GB available on TorBox` });
     }
 
     const cachedHashes = new Set(cachedList.map((c) => c.hash.toLowerCase()));
@@ -705,7 +758,7 @@ export async function POST(req) {
     }
 
     if (!withinCap(videoFile.size)) {
-      return NextResponse.json({ success: false, cached: false, reason: 'Video file is larger than 5 GB' });
+      return NextResponse.json({ success: false, cached: false, reason: `Video file is larger than ${MAX_GB} GB` });
     }
 
     const canDirect = !FORCE_HLS && isUniversalWebVideo(videoFile.name);
