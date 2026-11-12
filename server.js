@@ -26,6 +26,7 @@ const PORT = process.env.PORT || 3000;
 
 const https = require('https');
 const urlModule = require('url');
+const { handleEpVideoProxy } = require('./epProxy');
 
 async function resolveFreshPhHls(viewkey) {
   if (!viewkey) return null;
@@ -243,6 +244,12 @@ app.prepare().then(() => {
     // Universal zero-copy HLS stream & image proxy
     if (req.url.startsWith('/api/proxy/hls') || req.url.startsWith('/api/ph/stream') || req.url.startsWith('/api/ph/thumb')) {
       handleHlsProxy(req, res);
+      return;
+    }
+
+    // Eporner MP4s: their CDN serves a placeholder clip to browsers, so the video is streamed through here
+    if (req.url.startsWith('/api/ep/stream')) {
+      handleEpVideoProxy(req, res);
       return;
     }
 
