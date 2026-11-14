@@ -403,6 +403,9 @@ export default function Room() {
   const ytLastRef = useRef({ t: 0, at: 0, playing: false }); // seek detection
   const ytTickRef = useRef(null);
   const ytStallRef = useRef(false); // "playing" but clock frozen = ad (or stall)
+  const ytQuietUntilRef = useRef(0); // after any seek, tick/heartbeat stay hands-off until this time
+  const ytBufferRef = useRef(false); // player is buffering (its clock is unreliable)
+  const ytRemoteSeekRef = useRef({ t: -99, at: 0 }); // last seek we applied from the room (dedupe)
   const hlsRef = useRef(null);
   const dashRef = useRef(null);
   const voiceRef = useRef(null); // VoiceSession, created lazily
@@ -1441,12 +1444,18 @@ export default function Room() {
       const yt = ytRef.current;
       const guard = guardRef.current;
       if (!yt || !yt.seekTo) { updateTimeline(); return; }
-      if (Math.abs(yt.getCurrentTime() - state.time) > 0.5) {
-        guard.seek++;
+      const nowMs = Date.now();
+      const rs = ytRemoteSeekRef.current;
+      const dupSeek = nowMs - rs.at < 2000 && Math.abs(rs.t - state.time) < 2;
+      if (Math.abs(yt.getCurrentTime() - state.time) > 0.5 && !dupSeek) {
+        // a duplicate seek to the same spot would restart buffering — that was the 5s loop
+        ytRemoteSeekRef.current = { t: state.time, at: nowMs };
+        ytQuietUntilRef.current = nowMs + 3500;
+        ytLastRef.current = { t: state.time, at: nowMs, playing: false };
         yt.seekTo(state.time, true);
       }
       if (state.playing) {
-        guard.play++;
+        if (!ytPlayingRef.current) guard.play++;
         yt.playVideo();
         setResumeOpen(false);
         // autoplay blocked = no PLAYING event arrives — undo the guard and ask for a tap
@@ -1606,8 +1615,10 @@ export default function Room() {
         const cur = yt.getCurrentTime();
         const drift = expected - cur;
 
-        if (playing && ytPlayingRef.current && !ytStallRef.current && Math.abs(drift) > 2.0 && Date.now() - lastLocalSeekRef.current > 4000) {
-          guardRef.current.seek++;
+        const calm = !ytBufferRef.current && Date.now() > ytQuietUntilRef.current;
+        if (playing && ytPlayingRef.current && !ytStallRef.current && calm && Math.abs(drift) > 2.5 && Date.now() - lastLocalSeekRef.current > 4000) {
+          ytQuietUntilRef.current = Date.now() + 3500;
+          ytLastRef.current = { t: expected, at: Date.now(), playing: false };
           yt.seekTo(expected, true);
         } else if (playing && !ytPlayingRef.current && Date.now() - lastLocalPauseRef.current > 5000) {
           setResumeOpen(true);
@@ -2402,11 +2413,13 @@ export default function Room() {
         setAdBreak(stalled);
       }
 
-      if (last.playing && ytPlayingRef.current && !ytStallRef.current) {
+      // Only treat a clock jump as a user seek when we're not mid-seek/buffering and
+      // haven't just seeked ourselves (onScrub already announced its own seek).
+      if (now > ytQuietUntilRef.current && !ytBufferRef.current && last.playing && ytPlayingRef.current && !ytStallRef.current) {
         const expected = last.t + (now - last.at) / 1000;
-        if (Math.abs(cur - expected) > 1.2) {
-          if (guardRef.current.seek > 0) guardRef.current.seek--;
-          else emitPlayback('seek');
+        if (Math.abs(cur - expected) > 1.5) {
+          ytQuietUntilRef.current = now + 2500;
+          if (now - lastLocalSeekRef.current > 1500) emitPlayback('seek');
         }
       }
       ytLastRef.current = { t: cur, at: now, playing: ytPlayingRef.current };
@@ -2883,6 +2896,7 @@ export default function Room() {
           },
           onStateChange: (e) => {
             const S = window.YT.PlayerState;
+            ytBufferRef.current = e.data === S.BUFFERING;
             if (e.data === S.PLAYING) {
               ytPlayingRef.current = true;
               setPlaying(true);
@@ -2929,6 +2943,31 @@ export default function Room() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source?.videoId, source?.type]);
+
+  // Phone keyboard: browsers scroll the page up to reveal the focused chat box, pushing the
+  // video off-screen. Pin the room to the visible area (above the keyboard) instead.
+  useEffect(() => {
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    if (!vv) return undefined;
+    const root = document.documentElement;
+    const update = () => {
+      const kb = window.innerHeight - vv.height > 120 && window.innerWidth <= 768;
+      root.style.setProperty('--vvh', vv.height + 'px');
+      root.style.setProperty('--vvtop', vv.offsetTop + 'px');
+      root.classList.toggle('kb-open', kb);
+      if (kb && (window.scrollY || document.body.scrollTop)) window.scrollTo(0, 0);
+    };
+    update();
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+      root.classList.remove('kb-open');
+      root.style.removeProperty('--vvh');
+      root.style.removeProperty('--vvtop');
+    };
+  }, []);
 
   const fallbackLockRef = useRef(false);
 
@@ -3867,6 +3906,8 @@ export default function Room() {
       lastLocalSeekRef.current = Date.now();
       latestStateRef.current.time = t;
       if (ytMode()) {
+        ytQuietUntilRef.current = Date.now() + 3500;
+        ytLastRef.current = { t, at: Date.now(), playing: false };
         ytRef.current.seekTo(t, true);
         emitPlayback('seek');
       } else if (sourceRef.current?.type === 'embed') {

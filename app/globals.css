@@ -8706,3 +8706,17 @@ input[type="range"].sub-size { flex: 1; accent-color: var(--accent); }
     font-size: 10.5px;
   }
 }
+
+/* Phone keyboard open: keep the room (video + chat) inside the visible area above the
+   keyboard so the video never scrolls out of view while typing. */
+@media (max-width: 768px) {
+  html.kb-open, html.kb-open body { overflow: hidden !important; overscroll-behavior: none; }
+  html.kb-open .room {
+    position: fixed !important;
+    left: 0; right: 0;
+    top: var(--vvtop, 0px);
+    height: var(--vvh, 100dvh) !important;
+  }
+  html.kb-open .screen-col { min-height: 30%; }
+  html.kb-open .stage.start-mode { height: auto !important; }
+}
